@@ -1236,6 +1236,16 @@ pre.mono { margin: 0; padding: 12px; overflow: auto; }
 .footer { padding: 12px 14px; color: var(--muted); border-top: 1px solid var(--border); }
 
 /* Desktop-like workspace */
+.tag-audit-overlay { display: flex; }
+.tag-audit-overlay .tag-audit-modal { width: min(1200px, 96vw); max-width: 96vw; height: 85vh; display: flex; flex-direction: column; }
+.tag-audit-controls { padding: 12px; flex: 0 0 auto; }
+.tag-audit-controls p { margin: 0 0 10px; }
+.tag-audit-controls input { margin-left: 10px; width: min(340px, 50vw); }
+.tag-audit-controls [role="status"] { margin-top: 10px; }
+.tag-audit-controls pre { white-space: pre-wrap; overflow: auto; max-height: 140px; }
+.tag-audit-results { overflow: auto; flex: 1 1 auto; min-height: 0; padding: 0 12px; }
+.tag-audit-results td { overflow-wrap: anywhere; max-width: 350px; }
+.tag-audit-results th { position: sticky; top: 0; background: #121820; }
 #tab-workspace {
   position: relative;
   --workspace-pane-bg: rgba(18,24,32,.88);

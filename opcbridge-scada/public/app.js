@@ -29173,6 +29173,137 @@ function restartRefreshLoop() {
   state.refreshTimer = window.setInterval(refreshVisible, ms);
 }
 
+document.getElementById('workspaceTagAuditBtn')?.addEventListener('click', () => {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay tag-audit-overlay';
+  overlay.innerHTML = `<section class="modal tag-audit-modal" role="dialog" aria-modal="true" aria-labelledby="tagAuditTitle">
+    <div class="modal-titlebar"><div id="tagAuditTitle" class="modal-title">Tag Cross-Reference</div><button class="btn" data-close>Close</button></div>
+    <div class="tag-audit-controls"><p>On-demand audit of saved configuration across the system. Unsaved edits and external clients are not included. Zero uses means no configured references were found.</p>
+    <button class="btn primary" data-run>Run Audit</button> <button class="btn" data-download disabled>Download CSV</button>
+    <input data-search type="search" placeholder="Filter tag, PLC array, or usage…" aria-label="Filter audit results" />
+    <div data-status role="status" aria-live="polite">Ready.</div><details data-warnings hidden><summary>Audit coverage notes</summary><pre></pre></details></div>
+    <div class="tag-audit-results"><table><thead></thead><tbody></tbody></table></div>
+    <div class="tag-audit-controls"><button class="btn" data-prev disabled>Previous</button> <span data-page></span> <button class="btn" data-next disabled>Next</button></div>
+  </section>`;
+  document.body.appendChild(overlay);
+  const query = selector => overlay.querySelector(selector);
+  let audit = null;
+  let rows = [];
+  let page = 0;
+  const render = () => {
+    const search = query('[data-search]').value.toLowerCase();
+    const filtered = search ? rows.filter(row => row.slice(0, 7).some(value => String(value).toLowerCase().includes(search))) : rows;
+    const pages = Math.max(1, Math.ceil(filtered.length / 250));
+    page = Math.max(0, Math.min(page, pages - 1));
+    const body = query('tbody');
+    body.textContent = '';
+    const fragment = document.createDocumentFragment();
+    filtered.slice(page * 250, (page + 1) * 250).forEach(row => {
+      const tr = document.createElement('tr');
+      row.slice(0, 7).forEach(value => { const td = document.createElement('td'); td.textContent = String(value); tr.appendChild(td); });
+      fragment.appendChild(tr);
+    });
+    body.appendChild(fragment);
+    query('[data-page]').textContent = `${filtered.length} rows · Page ${page + 1} of ${pages}`;
+    query('[data-prev]').disabled = page === 0;
+    query('[data-next]').disabled = page + 1 >= pages;
+  };
+  const close = () => { overlay.remove(); document.getElementById('workspaceTagAuditBtn')?.focus(); };
+  query('[data-close]').addEventListener('click', close);
+  overlay.addEventListener('keydown', event => { if (event.key === 'Escape') close(); });
+  query('[data-search]').addEventListener('input', () => { page = 0; render(); });
+  query('[data-prev]').addEventListener('click', () => { page--; render(); });
+  query('[data-next]').addEventListener('click', () => { page++; render(); });
+  query('[data-download]').addEventListener('click', () => {
+    if (!audit) return;
+    const url = URL.createObjectURL(new Blob(['\uFEFF', audit.csv()], { type: 'text/csv;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `tag-cross-reference-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+  query('[data-run]').addEventListener('click', async () => {
+    query('[data-run]').disabled = true;
+    query('[data-download]').disabled = true;
+    query('[data-warnings]').hidden = true;
+    rows = []; render();
+    const progress = text => { query('[data-status]').textContent = text; };
+    const fetchJson = async url => {
+      const result = await apiGet(url, { timeoutMs: 120000 });
+      if (result?.ok === false) throw new Error(result.error || 'Service returned an error');
+      return result;
+    };
+    try {
+      progress('Loading saved tag definitions…');
+      const tagResult = await fetchJson('/api/opcbridge/config/tags');
+      if (!Array.isArray(tagResult.tags)) throw new Error('Tag catalog did not contain a tag list.');
+      const names = { _memory: 'Memory', _system: 'System' };
+      const connectionWarnings = [];
+      try {
+        const files = await fetchJson('/api/opcbridge/config/files');
+        for (const file of (files.files || []).filter(file => file.kind === 'connection')) {
+          try {
+            const raw = await apiGetText(`/api/opcbridge/config/file?path=${encodeURIComponent(file.path)}`);
+            const config = parseJsonc(raw);
+            const id = String(config.id || config.connection_id || inferConnectionIdFromPath(file.path));
+            names[id] = String(config.description || '').trim() || '(Unnamed connection)';
+          } catch { connectionWarnings.push(`Connection name unavailable for ${file.path}`); }
+        }
+      } catch { connectionWarnings.push('Connection names could not be loaded.'); }
+      audit = TagAudit.create(tagResult.tags, names);
+      connectionWarnings.forEach(warning => audit.warnings.add(warning));
+      const scanConfig = async (component, url, select, patterns = false) => {
+        progress(`Scanning ${component}…`);
+        try {
+          const config = select(await fetchJson(url));
+          if (!config || typeof config !== 'object') throw new Error('Configuration was not returned.');
+          audit.scan(config, component, component, patterns);
+        }
+        catch (err) { audit.warnings.add(`${component} could not be inspected: ${err.message}`); }
+        await new Promise(resolve => setTimeout(resolve, 0));
+      };
+      await scanConfig('Data Logger', '/api/logger/config', data => data.config, true);
+      await scanConfig('Historian', '/api/historian/config', data => data.config, true);
+      await scanConfig('Alarms', '/api/opcbridge/config/alarms', data => data.json);
+      await scanConfig('Flows', '/api/flow/flows', data => {
+        if (!Array.isArray(data.drafts) || !Array.isArray(data.deployed)) throw new Error('Flow definitions were not returned.');
+        return { drafts: data.drafts, deployed: data.deployed };
+      });
+      progress('Scanning Automation…');
+      try {
+        const raw = await apiGetText(`/api/opcbridge/config/file?path=${encodeURIComponent(LOGIC_CONFIG_PATH)}`);
+        audit.scan(parseJsonc(raw), 'Automation', 'Automation');
+      } catch (err) { audit.warnings.add(`Automation could not be inspected: ${err.message}`); }
+      try {
+        progress('Listing HMI screens…');
+        const list = await fetchJson('/api/hmi/api/screens');
+        if (!Array.isArray(list.screens)) throw new Error('Screen listing was unavailable.');
+        for (const [index, screen] of list.screens.entries()) {
+          progress(`Scanning HMI screen ${index + 1} of ${list.screens.length}: ${screen.ref || screen.path}`);
+          try {
+            const data = await fetchJson(`/api/hmi/api/screens/file?path=${encodeURIComponent(screen.path || screen.ref)}`);
+            if (!Array.isArray(data.parsed?.objects)) throw new Error('Screen object list could not be parsed.');
+            audit.scan(data.parsed.objects, 'HMI', String(screen.path || screen.ref));
+          } catch (err) { audit.warnings.add(`HMI ${screen.path || screen.ref}: ${err.message}`); }
+          await new Promise(resolve => setTimeout(resolve, 0));
+        }
+      } catch (err) { audit.warnings.add(`HMI screens could not be inspected: ${err.message}`); }
+      rows = audit.rows(); page = 0;
+      const head = document.createElement('tr');
+      audit.headers.slice(0, 7).forEach(value => { const th = document.createElement('th'); th.textContent = value; head.appendChild(th); });
+      query('thead').replaceChildren(head);
+      render();
+      progress(`Audit finished: ${audit.tagCount} tags, ${rows.length} rows. ${audit.warnings.size ? `${audit.warnings.size} coverage notes — review before interpreting zero uses.` : 'No scan errors reported.'}`);
+      query('[data-warnings]').hidden = !audit.warnings.size;
+      query('[data-warnings] pre').textContent = [...audit.warnings].join('\n');
+      query('[data-download]').disabled = false;
+    } catch (err) { progress(`Audit failed: ${err.message}`); }
+    finally { query('[data-run]').disabled = false; }
+  });
+  query('[data-run]').focus();
+});
+
 async function main() {
   wireThemeUi();
   applyPortalPresentation();
