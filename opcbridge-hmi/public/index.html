@@ -90,6 +90,7 @@
               <div class="menu-group-label">Effects</div>
               <button id="dynamicsAddShadowMenuBtn" class="menu-item" type="button">Box Shadow</button>
               <button id="dynamicsAddDropShadowMenuBtn" class="menu-item" type="button">Drop Shadow</button>
+              <button id="dynamicsAddClickMenuBtn" class="menu-item" type="button">Click</button>
             </div>
           </div>
           <div class="menu-separator"></div>
@@ -183,6 +184,7 @@
           <div class="menu-group-label">Effects</div>
           <button class="left-flyout-item" type="button" data-add-dynamic="box-shadow">Box Shadow</button>
           <button class="left-flyout-item" type="button" data-add-dynamic="drop-shadow">Drop Shadow</button>
+          <button class="left-flyout-item" type="button" data-add-dynamic="click">Click</button>
         </div>
       </div>
       <div class="left-tool-divider" aria-hidden="true"></div>
@@ -406,6 +408,7 @@
           <div id="selectedReferenceHealthProps" class="properties-form reference-properties is-hidden"></div>
           <div id="objectDynamicTabs" class="editor-tabs is-hidden">
             <button id="objectDynamicTabPropertiesBtn" class="editor-tab is-active" type="button">Properties</button>
+            <button id="objectDynamicTabClickBtn" class="editor-tab is-hidden" type="button">Click</button>
             <button id="objectDynamicTabVisibilityBtn" class="editor-tab is-hidden" type="button">Visibility</button>
             <button id="objectDynamicTabColorBtn" class="editor-tab is-hidden" type="button">Color</button>
             <button id="objectDynamicTabLevelBtn" class="editor-tab is-hidden" type="button">Level</button>
@@ -624,143 +627,6 @@
             </div>
             <div class="prop-help">Use <code>{1}</code>, <code>{2}</code>, or <code>{state}</code> as placeholders. Each placeholder can use a tag or an expression. Use <code>{alias:Name}</code> for a value supplied by the screen or calling action.</div>
             <div id="buttonLabelBindingRows" class="text-binding-rows"></div>
-	            <div class="prop-row">
-	              <label for="buttonActionType">Action</label>
-		              <select id="buttonActionType">
-		                <optgroup label="Navigation">
-		                  <option value="navigate">Navigate</option>
-		                  <option value="load-viewport">Load Viewport</option>
-		                  <option value="popup">Popup</option>
-		                  <option value="history-back">Previous Screen</option>
-		                  <option value="history-forward">Next Screen</option>
-		                </optgroup>
-		                <optgroup label="Actions">
-		                  <option value="close-popup">Close Popup</option>
-		                  <option value="auth">Log In / Log Out</option>
-		                </optgroup>
-		                <optgroup label="Writes">
-		                  <option value="momentary-write">Momentary Write</option>
-			                  <option value="toggle-write">Maintained (Toggle)</option>
-			                  <option value="set-write">Maintained (Set Value)</option>
-			                  <option value="prompt-write">Numeric Entry (Prompt)</option>
-		                </optgroup>
-		                <optgroup label="Panels">
-			                  <option value="alarm-filter">Alarm Panel Filter</option>
-		                </optgroup>
-			              </select>
-		            </div>
-            <div class="prop-subgroup is-hidden" id="buttonAuthFields" hidden>
-              <div class="prop-row">
-                <label for="buttonAuthLoggedOutText">Logged out text</label>
-                <input id="buttonAuthLoggedOutText" type="text" placeholder="Log In" />
-              </div>
-              <div class="prop-row">
-                <label for="buttonAuthLoggedInText">Logged in text</label>
-                <input id="buttonAuthLoggedInText" type="text" placeholder="Log Out" />
-              </div>
-            </div>
-            <div class="prop-row" id="buttonTargetRow">
-              <label for="buttonTarget">Target Screen</label>
-              <select id="buttonTarget"></select>
-            </div>
-            <div class="prop-row is-hidden" id="buttonNavigationTargetRow" hidden>
-              <label for="buttonNavigationTarget">Open In</label>
-              <select id="buttonNavigationTarget">
-                <option value="current">Current Container</option>
-                <option value="opener">Popup Opener</option>
-                <option value="main">Main Screen</option>
-              </select>
-            </div>
-            <div id="buttonTargetAliases" class="prop-subgroup is-hidden" hidden></div>
-            <div class="prop-row is-hidden" id="buttonViewportRow">
-              <label for="buttonViewportTarget">Viewport</label>
-              <select id="buttonViewportTarget"></select>
-            </div>
-            <div class="prop-subgroup is-hidden" id="buttonPopupFields" hidden>
-              <div class="prop-group-title">Popup Window</div>
-              <div class="prop-row"><label for="buttonPopupModal">Modal</label><input id="buttonPopupModal" type="checkbox" checked /></div>
-              <div class="prop-row"><label for="buttonPopupMovable">Movable</label><input id="buttonPopupMovable" type="checkbox" /></div>
-              <div class="prop-row"><label for="buttonPopupX">Window X</label><input id="buttonPopupX" type="number" step="1" placeholder="Centered" /></div>
-              <div class="prop-row"><label for="buttonPopupY">Window Y</label><input id="buttonPopupY" type="number" step="1" placeholder="Centered" /></div>
-              <div class="prop-row"><label for="buttonPopupSizeMode">Window Size</label><select id="buttonPopupSizeMode"><option value="screen">Referenced Screen</option><option value="fixed">Fixed</option></select></div>
-              <div id="buttonPopupFixedSizeFields" class="prop-subgroup is-hidden" hidden>
-                <div class="prop-row"><label for="buttonPopupWidth">Window Width</label><input id="buttonPopupWidth" type="number" min="100" step="1" placeholder="640" /></div>
-                <div class="prop-row"><label for="buttonPopupHeight">Window Height</label><input id="buttonPopupHeight" type="number" min="100" step="1" placeholder="480" /></div>
-              </div>
-              <div class="prop-row"><label for="buttonPopupScaleMode">Content Scaling</label><select id="buttonPopupScaleMode"><option value="fit">Scale to Fit</option><option value="crop">Actual Size / Scroll</option></select></div>
-            </div>
-	            <div class="prop-subgroup is-hidden" id="buttonWriteFields" hidden>
-	              <div class="prop-row">
-	                <label for="buttonWriteConnection">Connection</label>
-	                <input id="buttonWriteConnection" type="text" placeholder="Connection name" />
-	              </div>
-	              <div class="prop-row">
-	                <label for="buttonWriteTag">Tag</label>
-	                <div class="prop-inline automation-tag-inline">
-	                  <input id="buttonWriteTag" class="automation-tag-input" type="text" placeholder="tag" />
-	                  <button id="buttonWriteTagPickBtn" class="panel-btn" type="button">Pick…</button>
-	                </div>
-	              </div>
-	              <div class="prop-row" id="buttonWriteOnRow">
-	                <label id="buttonWriteOnLabel" for="buttonWriteOnValue">On Value</label>
-	                <input id="buttonWriteOnValue" type="text" placeholder="1" />
-	              </div>
-	              <div class="prop-row" id="buttonWriteOffRow">
-	                <label for="buttonWriteOffValue">Off Value</label>
-	                <input id="buttonWriteOffValue" type="text" placeholder="0" />
-	              </div>
-	              <div class="prop-row is-hidden" id="buttonPromptDefaultRow">
-	                <label for="buttonPromptDefault">Default</label>
-	                <input id="buttonPromptDefault" type="number" step="any" placeholder="0" />
-	              </div>
-	              <div class="prop-row is-hidden" id="buttonPromptMinRow">
-	                <label for="buttonPromptMin">Min</label>
-	                <input id="buttonPromptMin" type="number" step="any" />
-	              </div>
-	              <div class="prop-row is-hidden" id="buttonPromptMaxRow">
-	                <label for="buttonPromptMax">Max</label>
-	                <input id="buttonPromptMax" type="number" step="any" />
-	              </div>
-		              <div class="prop-row is-hidden" id="buttonPromptStepRow">
-		                <label for="buttonPromptStep">Step</label>
-		                <input id="buttonPromptStep" type="number" step="any" placeholder="1" />
-		              </div>
-		            </div>
-		            <div class="prop-subgroup is-hidden" id="buttonAlarmFilterFields" hidden>
-		              <div class="prop-row">
-		                <label for="buttonAlarmFilterTarget">Panel</label>
-		                <input id="buttonAlarmFilterTarget" type="text" list="buttonAlarmFilterTargetList" placeholder="All alarm panels" />
-		                <datalist id="buttonAlarmFilterTargetList"></datalist>
-		              </div>
-		              <div class="prop-row">
-		                <label for="buttonAlarmFilterSites">Site</label>
-		                <input id="buttonAlarmFilterSites" type="text" placeholder="Plant, Field" />
-		              </div>
-		              <div class="prop-row">
-		                <label for="buttonAlarmFilterGroups">Group</label>
-		                <input id="buttonAlarmFilterGroups" type="text" placeholder="Lift Stations" />
-		              </div>
-		              <div class="prop-row">
-		                <label for="buttonAlarmFilterAlarms">Alarm</label>
-		                <input id="buttonAlarmFilterAlarms" type="text" placeholder="Alarm name or ID" />
-		              </div>
-		              <div class="prop-row">
-		                <label for="buttonAlarmFilterSeverities">Severity</label>
-		                <input id="buttonAlarmFilterSeverities" type="text" placeholder="1, 2, 3" />
-		              </div>
-		              <div class="prop-row">
-		                <label for="buttonAlarmFilterStatuses">Status</label>
-		                <input id="buttonAlarmFilterStatuses" type="text" placeholder="active, acked, unacked, returned, badquality" />
-		              </div>
-		              <div class="prop-row">
-		                <label for="buttonAlarmFilterSources">Source</label>
-		                <input id="buttonAlarmFilterSources" type="text" placeholder="Connection, tag, or connection:tag" />
-		              </div>
-		              <div class="prop-row">
-		                <label for="buttonAlarmFilterClear">Clear Button Filter</label>
-		                <input id="buttonAlarmFilterClear" type="checkbox" />
-		              </div>
-		            </div>
 		            <div class="prop-group-title">Object Position</div>
 		            <div class="prop-row">
 		              <label for="buttonX">X</label>
@@ -2201,8 +2067,151 @@
             </div>
 	          </div>
 
+          <div id="buttonClickProps" class="properties-form is-hidden">
+            <div id="buttonClickActionList"></div>
+	            <div class="prop-row">
+	              <label for="buttonActionType">Action</label>
+		              <select id="buttonActionType">
+		                <optgroup label="Navigation">
+		                  <option value="navigate">Navigate</option>
+		                  <option value="load-viewport">Load Viewport</option>
+		                  <option value="popup">Popup</option>
+		                  <option value="history-back">Previous Screen</option>
+		                  <option value="history-forward">Next Screen</option>
+		                </optgroup>
+		                <optgroup label="Actions">
+		                  <option value="close-popup">Close Popup</option>
+		                  <option value="auth">Log In / Log Out</option>
+		                </optgroup>
+		                <optgroup label="Writes">
+		                  <option value="momentary-write">Momentary Write</option>
+			                  <option value="toggle-write">Maintained (Toggle)</option>
+			                  <option value="set-write">Maintained (Set Value)</option>
+			                  <option value="prompt-write">Numeric Entry (Prompt)</option>
+		                </optgroup>
+		                <optgroup label="Panels">
+			                  <option value="alarm-filter">Alarm Panel Filter</option>
+		                </optgroup>
+			              </select>
+		            </div>
+            <div class="prop-subgroup is-hidden" id="buttonAuthFields" hidden>
+              <div class="prop-row">
+                <label for="buttonAuthLoggedOutText">Logged out text</label>
+                <input id="buttonAuthLoggedOutText" type="text" placeholder="Log In" />
+              </div>
+              <div class="prop-row">
+                <label for="buttonAuthLoggedInText">Logged in text</label>
+                <input id="buttonAuthLoggedInText" type="text" placeholder="Log Out" />
+              </div>
+            </div>
+            <div class="prop-row" id="buttonTargetRow">
+              <label for="buttonTarget">Target Screen</label>
+              <select id="buttonTarget"></select>
+            </div>
+            <div class="prop-row is-hidden" id="buttonNavigationTargetRow" hidden>
+              <label for="buttonNavigationTarget">Open In</label>
+              <select id="buttonNavigationTarget">
+                <option value="current">Current Container</option>
+                <option value="opener">Popup Opener</option>
+                <option value="main">Main Screen</option>
+              </select>
+            </div>
+            <div id="buttonTargetAliases" class="prop-subgroup is-hidden" hidden></div>
+            <div class="prop-row is-hidden" id="buttonViewportRow">
+              <label for="buttonViewportTarget">Viewport</label>
+              <select id="buttonViewportTarget"></select>
+            </div>
+            <div class="prop-subgroup is-hidden" id="buttonPopupFields" hidden>
+              <div class="prop-group-title">Popup Window</div>
+              <div class="prop-row"><label for="buttonPopupModal">Modal</label><input id="buttonPopupModal" type="checkbox" checked /></div>
+              <div class="prop-row"><label for="buttonPopupMovable">Movable</label><input id="buttonPopupMovable" type="checkbox" /></div>
+              <div class="prop-row"><label for="buttonPopupX">Window X</label><input id="buttonPopupX" type="number" step="1" placeholder="Centered" /></div>
+              <div class="prop-row"><label for="buttonPopupY">Window Y</label><input id="buttonPopupY" type="number" step="1" placeholder="Centered" /></div>
+              <div class="prop-row"><label for="buttonPopupSizeMode">Window Size</label><select id="buttonPopupSizeMode"><option value="screen">Referenced Screen</option><option value="fixed">Fixed</option></select></div>
+              <div id="buttonPopupFixedSizeFields" class="prop-subgroup is-hidden" hidden>
+                <div class="prop-row"><label for="buttonPopupWidth">Window Width</label><input id="buttonPopupWidth" type="number" min="100" step="1" placeholder="640" /></div>
+                <div class="prop-row"><label for="buttonPopupHeight">Window Height</label><input id="buttonPopupHeight" type="number" min="100" step="1" placeholder="480" /></div>
+              </div>
+              <div class="prop-row"><label for="buttonPopupScaleMode">Content Scaling</label><select id="buttonPopupScaleMode"><option value="fit">Scale to Fit</option><option value="crop">Actual Size / Scroll</option></select></div>
+            </div>
+	            <div class="prop-subgroup is-hidden" id="buttonWriteFields" hidden>
+	              <div class="prop-row">
+	                <label for="buttonWriteConnection">Connection</label>
+	                <input id="buttonWriteConnection" type="text" placeholder="Connection name" />
+	              </div>
+	              <div class="prop-row">
+	                <label for="buttonWriteTag">Tag</label>
+	                <div class="prop-inline automation-tag-inline">
+	                  <input id="buttonWriteTag" class="automation-tag-input" type="text" placeholder="tag" />
+	                  <button id="buttonWriteTagPickBtn" class="panel-btn" type="button">Pick…</button>
+	                </div>
+	              </div>
+	              <div class="prop-row" id="buttonWriteOnRow">
+	                <label id="buttonWriteOnLabel" for="buttonWriteOnValue">On Value</label>
+	                <input id="buttonWriteOnValue" type="text" placeholder="1" />
+	              </div>
+	              <div class="prop-row" id="buttonWriteOffRow">
+	                <label for="buttonWriteOffValue">Off Value</label>
+	                <input id="buttonWriteOffValue" type="text" placeholder="0" />
+	              </div>
+	              <div class="prop-row is-hidden" id="buttonPromptDefaultRow">
+	                <label for="buttonPromptDefault">Default</label>
+	                <input id="buttonPromptDefault" type="number" step="any" placeholder="0" />
+	              </div>
+	              <div class="prop-row is-hidden" id="buttonPromptMinRow">
+	                <label for="buttonPromptMin">Min</label>
+	                <input id="buttonPromptMin" type="number" step="any" />
+	              </div>
+	              <div class="prop-row is-hidden" id="buttonPromptMaxRow">
+	                <label for="buttonPromptMax">Max</label>
+	                <input id="buttonPromptMax" type="number" step="any" />
+	              </div>
+		              <div class="prop-row is-hidden" id="buttonPromptStepRow">
+		                <label for="buttonPromptStep">Step</label>
+		                <input id="buttonPromptStep" type="number" step="any" placeholder="1" />
+		              </div>
+		            </div>
+		            <div class="prop-subgroup is-hidden" id="buttonAlarmFilterFields" hidden>
+		              <div class="prop-row">
+		                <label for="buttonAlarmFilterTarget">Panel</label>
+		                <input id="buttonAlarmFilterTarget" type="text" list="buttonAlarmFilterTargetList" placeholder="All alarm panels" />
+		                <datalist id="buttonAlarmFilterTargetList"></datalist>
+		              </div>
+		              <div class="prop-row">
+		                <label for="buttonAlarmFilterSites">Site</label>
+		                <input id="buttonAlarmFilterSites" type="text" placeholder="Plant, Field" />
+		              </div>
+		              <div class="prop-row">
+		                <label for="buttonAlarmFilterGroups">Group</label>
+		                <input id="buttonAlarmFilterGroups" type="text" placeholder="Lift Stations" />
+		              </div>
+		              <div class="prop-row">
+		                <label for="buttonAlarmFilterAlarms">Alarm</label>
+		                <input id="buttonAlarmFilterAlarms" type="text" placeholder="Alarm name or ID" />
+		              </div>
+		              <div class="prop-row">
+		                <label for="buttonAlarmFilterSeverities">Severity</label>
+		                <input id="buttonAlarmFilterSeverities" type="text" placeholder="1, 2, 3" />
+		              </div>
+		              <div class="prop-row">
+		                <label for="buttonAlarmFilterStatuses">Status</label>
+		                <input id="buttonAlarmFilterStatuses" type="text" placeholder="active, acked, unacked, returned, badquality" />
+		              </div>
+		              <div class="prop-row">
+		                <label for="buttonAlarmFilterSources">Source</label>
+		                <input id="buttonAlarmFilterSources" type="text" placeholder="Connection, tag, or connection:tag" />
+		              </div>
+		              <div class="prop-row">
+		                <label for="buttonAlarmFilterClear">Clear Button Filter</label>
+		                <input id="buttonAlarmFilterClear" type="checkbox" />
+		              </div>
+		            </div>
+          </div>
+
 	          <div id="objectActionProps" class="properties-form is-hidden">
 	            <div class="prop-group-title">Click Action</div>
+              <div id="objectClickActionList"></div>
+              <button id="removeObjectClickBtn" class="panel-btn" type="button">Remove Click</button>
 	            <div class="prop-row">
 	              <label for="groupActionType">Action</label>
 	              <select id="groupActionType">
@@ -3129,6 +3138,7 @@
 	      </div>
 	    </div>
 	  </div>
+      <script src="/js/click-actions.js"></script>
 	  <script src="/js/hmi.js?v=20260910-working-overlay-v1"></script>
 	</body>
 	</html>

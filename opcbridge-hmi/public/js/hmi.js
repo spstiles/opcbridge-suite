@@ -268,6 +268,69 @@ const screenFileDuplicateBtn = document.getElementById("screenFileDuplicateBtn")
 const screenFileDeleteBtn = document.getElementById("screenFileDeleteBtn");
 const screenFileRefreshBtn = document.getElementById("screenFileRefreshBtn");
 const objectDynamicTabs = document.getElementById("objectDynamicTabs");
+const objectDynamicTabClickBtn = document.getElementById("objectDynamicTabClickBtn");
+const buttonClickProps = document.getElementById("buttonClickProps");
+const dynamicsAddClickMenuBtn = document.getElementById("dynamicsAddClickMenuBtn");
+const hasClickTab = (obj) => Boolean(obj && (obj.type === "button" || obj.clickEnabled || obj.action?.type));
+const clickActionSelection = new WeakMap();
+const getEditedClickAction = (obj) => {
+  const actions = HmiClickActions.list(obj?.action);
+  return actions[Math.min(clickActionSelection.get(obj) || 0, Math.max(0, actions.length - 1))] || {};
+};
+const replaceEditedClickAction = (obj, action) => {
+  const actions = HmiClickActions.list(obj.action).slice();
+  const index = Math.min(clickActionSelection.get(obj) || 0, Math.max(0, actions.length - 1));
+  actions[index] = action;
+  obj.action = HmiClickActions.pack(actions);
+};
+const renderClickActionList = (obj) => {
+  for (const id of ['buttonClickActionList', 'objectClickActionList']) {
+    const host = document.getElementById(id);
+    if (!host) continue;
+    host.replaceChildren();
+    if (!obj || (id === 'buttonClickActionList') !== (obj.type === 'button')) continue;
+    const actions = HmiClickActions.list(obj.action);
+    const selected = Math.min(clickActionSelection.get(obj) || 0, Math.max(0, actions.length - 1));
+    const commit = (next, index) => {
+      recordHistory();
+      obj.action = HmiClickActions.pack(next);
+      obj.clickEnabled = true;
+      clickActionSelection.set(obj, Math.max(0, index));
+      setDirty(true);
+      renderScreen();
+      syncEditorFromScreen();
+      updatePropertiesPanel();
+    };
+    const makeButton = (label, callback, disabled = false) => {
+      const button = document.createElement('button');
+      button.type = 'button'; button.className = 'panel-btn'; button.textContent = label;
+      button.disabled = disabled; button.addEventListener('click', callback); return button;
+    };
+    actions.forEach((action, index) => {
+      const row = document.createElement('div'); row.className = 'prop-inline';
+      const label = [...buttonActionSelect.options].find(option => option.value === action.type)?.textContent || action.type || 'Choose action';
+      const select = makeButton(`${index + 1}. ${label}`, () => {
+        clickActionSelection.set(obj, index); syncPropertiesFromSelection(); renderClickActionList(obj);
+      });
+      select.setAttribute('aria-pressed', String(index === selected));
+      select.classList.toggle('is-active', index === selected);
+      row.append(select, makeButton('↑', () => {
+        const next = actions.slice(); [next[index - 1], next[index]] = [next[index], next[index - 1]]; commit(next, index - 1);
+      }, index === 0), makeButton('↓', () => {
+        const next = actions.slice(); [next[index + 1], next[index]] = [next[index], next[index + 1]]; commit(next, index + 1);
+      }, index === actions.length - 1), makeButton('Remove', () => commit(actions.filter((_, i) => i !== index), Math.min(index, actions.length - 2))));
+      host.append(row);
+    });
+    const standalone = actions.some(action => action.type && !HmiClickActions.supported.has(action.type));
+    host.append(makeButton('Add Action', () => commit([...actions, {type: 'navigate', screenId: ''}], actions.length), standalone));
+    const help = document.createElement('div'); help.className = 'prop-help';
+    help.textContent = 'Actions run top to bottom. A failure stops the remaining actions. Momentary writes, prompts, and login/logout currently require a single action.';
+    host.append(help);
+    for (const option of buttonActionSelect.options) {
+      option.disabled = actions.length > 1 && !HmiClickActions.supported.has(option.value);
+    }
+  }
+};
 const objectDynamicTabPropertiesBtn = document.getElementById("objectDynamicTabPropertiesBtn");
 const objectDynamicTabVisibilityBtn = document.getElementById("objectDynamicTabVisibilityBtn");
 const objectDynamicTabColorBtn = document.getElementById("objectDynamicTabColorBtn");
@@ -2550,6 +2613,7 @@ const setObjectDynamicTab = (tab) => {
     isVisibilityDynamicTab(normalized) ? getVisibilityDynamicTabKey(getVisibilityDynamicTabIndex(normalized)) :
     isColorDynamicTab(normalized) ? getColorDynamicTabKey(getColorDynamicTabIndex(normalized)) :
     normalized === "level" ? "level" :
+    normalized === "click" ? "click" :
     normalized === "states" ? "states" :
     normalized === "rotation" ? "rotation" :
     normalized === "motion" ? "motion" :
@@ -2557,6 +2621,7 @@ const setObjectDynamicTab = (tab) => {
     normalized === "drop-shadow" ? "drop-shadow" :
     "properties";
   currentObjectDynamicTab = next;
+  objectDynamicTabClickBtn?.classList.toggle("is-active", next === "click");
   if (isVisibilityDynamicTab(next)) {
     const obj = getSelectedVisibilityDynamicObject();
     if (obj && rectVisibilityDraftObject === obj && rectVisibilityDraft) {
@@ -2586,6 +2651,18 @@ const setObjectDynamicTab = (tab) => {
   if (objectDynamicTabDropShadowBtn) objectDynamicTabDropShadowBtn.classList.toggle("is-active", next === "drop-shadow");
   syncObjectDynamicVisibilityTabs(getSelectedVisibilityDynamicObject());
   syncObjectDynamicColorTabs(getSelectedColorDynamicObject());
+};
+
+const ensureClickForSelectedObject = () => {
+  const obj = selectedIndices.length === 1 ? getActiveObjects()?.[selectedIndices[0]] : null;
+  if (!obj) return;
+  if (!hasClickTab(obj)) {
+    recordHistory();
+    obj.clickEnabled = true;
+    setDirty(true);
+  }
+  setObjectDynamicTab("click");
+  updatePropertiesPanel();
 };
 
 const ensureShadowEffectForSelectedObject = () => {
@@ -8583,7 +8660,7 @@ const runtimeNavigateTo = (screenId, action = null, parentContext = currentScree
   runtimeScreenHistory.push(id);
   runtimeScreenAliasHistory.push(currentScreenAliasContext);
   runtimeScreenHistoryIndex = runtimeScreenHistory.length - 1;
-  loadScreenById(id);
+  return loadScreenById(id);
 };
 
 const runtimeGoBack = () => {
@@ -8592,7 +8669,7 @@ const runtimeGoBack = () => {
   runtimeScreenHistoryIndex -= 1;
   currentScreenAliasContext = runtimeScreenAliasHistory[runtimeScreenHistoryIndex] || {};
   pendingMainAliasNavigation = { screenId: runtimeScreenHistory[runtimeScreenHistoryIndex], resolvedContext: currentScreenAliasContext };
-  loadScreenById(runtimeScreenHistory[runtimeScreenHistoryIndex]);
+  return loadScreenById(runtimeScreenHistory[runtimeScreenHistoryIndex]);
 };
 
 const runtimeGoForward = () => {
@@ -8601,7 +8678,7 @@ const runtimeGoForward = () => {
   runtimeScreenHistoryIndex += 1;
   currentScreenAliasContext = runtimeScreenAliasHistory[runtimeScreenHistoryIndex] || {};
   pendingMainAliasNavigation = { screenId: runtimeScreenHistory[runtimeScreenHistoryIndex], resolvedContext: currentScreenAliasContext };
-  loadScreenById(runtimeScreenHistory[runtimeScreenHistoryIndex]);
+  return loadScreenById(runtimeScreenHistory[runtimeScreenHistoryIndex]);
 };
 
 const clearSelectedPolygonVertex = () => {
@@ -11079,8 +11156,8 @@ const updateMenuState = () => {
   toggleFlipItem(flipMenuVertical);
   toggleReorderItem(moveToFrontMenuBtn);
   toggleReorderItem(moveToBackMenuBtn);
-  toggleDynamicMenuItem(dynamicsMenuBtn, canOpenDynamics || canAddShadow);
-  toggleDynamicMenuItem(toolbarDynamicsBtn, canOpenDynamics || canAddShadow);
+  toggleDynamicMenuItem(dynamicsMenuBtn, canOpenDynamics || canAddShadow || Boolean(selectedObject));
+  toggleDynamicMenuItem(toolbarDynamicsBtn, canOpenDynamics || canAddShadow || Boolean(selectedObject));
   toggleDynamicMenuItem(dynamicsAddVisibilityMenuBtn, canOpenDynamics);
   toggleDynamicMenuItem(dynamicsAddColorMenuBtn, canAddColorDynamic);
   toggleDynamicMenuItem(dynamicsAddStatesMenuBtn, canAddStatesDynamic);
@@ -11088,9 +11165,11 @@ const updateMenuState = () => {
   toggleDynamicMenuItem(dynamicsAddMotionMenuBtn, canAddMotionDynamic);
   toggleDynamicMenuItem(dynamicsAddShadowMenuBtn, canAddShadow && !selectedObject?.shadow);
   toggleDynamicMenuItem(dynamicsAddDropShadowMenuBtn, canAddShadow && !selectedObject?.dropShadow);
+  toggleDynamicMenuItem(dynamicsAddClickMenuBtn, Boolean(selectedObject) && !hasClickTab(selectedObject));
   toolbarDynamicsFlyout?.querySelectorAll("[data-add-dynamic]").forEach((button) => {
     const kind = button.dataset.addDynamic;
-    const enabled = kind === "box-shadow" ? canAddShadow && !selectedObject?.shadow
+    const enabled = kind === "click" ? Boolean(selectedObject) && !hasClickTab(selectedObject)
+      : kind === "box-shadow" ? canAddShadow && !selectedObject?.shadow
       : kind === "drop-shadow" ? canAddShadow && !selectedObject?.dropShadow
       : kind === "color" ? canAddColorDynamic
       : kind === "states" ? canAddStatesDynamic
@@ -14953,8 +15032,72 @@ const navigatePopupOpener = (screenId, action = {}) => {
   return true;
 };
 
+const activeClickSequences = new Set();
+const startClickSequence = (obj, context = {}) => {
+  const key = `${currentScreenId}:${context.popup ? currentPopupScreenId : context.viewportId || ''}:${obj?.id}`;
+  if (activeClickSequences.has(key)) return;
+  activeClickSequences.add(key);
+  const captured = JSON.parse(JSON.stringify(obj));
+  const aliasContext = JSON.parse(JSON.stringify(context.popup ? currentPopupAliasContext : (viewportAliasContexts.get(context.viewportId) || currentScreenAliasContext)));
+  const opener = JSON.parse(JSON.stringify(currentPopupOptions?.opener || {type: 'main'}));
+  const audit = { screen_id: currentScreenId, screen: currentScreenFilename || currentScreenId, object_id: obj.id, object_label: obj.label || '' };
+  void HmiClickActions.run(captured.action, async (action, index) => {
+    if (isEditMode) throw new Error('Runtime was stopped.');
+    if (['navigate', 'popup', 'load-viewport'].includes(action.type)) {
+      if (!await getScreenForAliases(action.screenId)) throw new Error(`Screen could not be loaded: ${action.screenId}`);
+    }
+    if (action.type === 'set-write' || action.type === 'toggle-write') {
+      if (isViewOnlyRuntime()) throw new Error('Writes are disabled for this session.');
+      let value = action.onValue;
+      if (action.type === 'toggle-write') {
+        await seedTagValuesForKeys([normalizeWsTagKey(action.connection_id, action.tag)]);
+        const key = normalizeTagCacheKey(action.connection_id, action.tag);
+        if (!tagValueCache.has(key) || isExplicitBadQuality(tagQualityCache.get(key))) throw new Error('Current tag value is unavailable; cannot toggle.');
+        value = matchesToggleOnValue(tagValueCache.get(key), action.onValue) ? action.offValue : action.onValue;
+      }
+      await apiWriteTag({connection_id: action.connection_id, tag: action.tag, value,
+        audit: {...audit, action: action.type, click_action_index: index + 1}});
+      return;
+    }
+    if (action.type === 'load-viewport') {
+      if (!currentScreenObj?.objects?.some(item => item.type === 'viewport' && item.id === action.viewportId)) throw new Error('Target viewport is not present.');
+      loadViewportTarget(action.viewportId, action.screenId, action, aliasContext); return;
+    }
+    if (action.type === 'close-popup') { if (currentPopupScreenId) closePopup(); return; }
+    if (action.type === 'popup') {
+      beginPopup(action.screenId, {...action, parentAliasContext: aliasContext,
+        opener: context.popup ? opener : context.viewportId ? {type:'viewport', viewportId:context.viewportId} : {type:'main'}}); return;
+    }
+    if (action.type === 'navigate') {
+      if (context.popup && action.navigationTarget !== 'main') {
+        if (action.navigationTarget === 'opener') {
+          if (opener.type === 'viewport') { loadViewportTarget(opener.viewportId, action.screenId, action, aliasContext); return; }
+        } else {
+          if (!navigatePopupTo(action.screenId, action)) throw new Error('The originating popup is no longer open.');
+          return;
+        }
+      } else if (context.viewportId && action.navigationTarget !== 'main') {
+        loadViewportTarget(context.viewportId, action.screenId, action, aliasContext); return;
+      }
+      if (context.popup && currentPopupScreenId) closePopup();
+      if (await runtimeNavigateTo(action.screenId, action, aliasContext) === false) throw new Error('Target screen failed to load.');
+      return;
+    }
+    if (action.type === 'alarm-filter') { applyAlarmPanelRuntimeFilterAction(action); return; }
+    const back = action.type === 'history-back';
+    if (context.popup) popupGoHistory(back ? -1 : 1);
+    else if (context.viewportId) (back ? viewportGoBack : viewportGoForward)(context.viewportId);
+    else await (back ? runtimeGoBack : runtimeGoForward)();
+  }).catch(error => window.alert(`Click actions stopped.\n${error.message}`))
+    .finally(() => activeClickSequences.delete(key));
+};
+
 const runPopupScreenAction = (action, obj = null) => {
   if (!action?.type) return false;
+  if (action.type === 'sequence') {
+    startClickSequence({...obj, action}, {popup: true});
+    return true;
+  }
   if (action.type === "close-popup") {
     closePopup();
     return true;
@@ -15613,7 +15756,8 @@ const getSelectedActionOwner = (kind) => {
   const objects = getActiveObjects();
   const obj = selectedIndices.length === 1 ? objects?.[selectedIndices[0]] : null;
   if (!obj) return null;
-  return kind === "button" ? (obj.type === "button" ? obj : null) : (obj.type !== "button" ? obj : null);
+  const owner = { ...obj, action: getEditedClickAction(obj) };
+  return kind === "button" ? (obj.type === "button" ? owner : null) : (obj.type !== "button" ? owner : null);
 };
 
 let targetAliasRenderSequence = 0;
@@ -15809,6 +15953,7 @@ const syncPropertiesFromSelection = () => {
   const index = selectedIndices[0];
   const obj = activeObjects[index];
   if (!obj) return;
+  const selectedAction = getEditedClickAction(obj);
   refreshAliasInsertionControls();
   syncLevelAutomationControl(obj);
   if (obj.type === "group") {
@@ -15821,21 +15966,21 @@ const syncPropertiesFromSelection = () => {
 	  if (obj.type !== "button") {
 	    refreshViewportIdOptions();
 	    refreshGroupActionScreenOptions();
-	    const actionType = String(obj.action?.type || "");
+	    const actionType = String(selectedAction?.type || "");
 	    if (groupActionTypeSelect) setSelectValueSafe(groupActionTypeSelect, actionType);
 	    setGroupActionRows(actionType);
-	    if (groupActionViewportIdSelect) setSelectValueSafe(groupActionViewportIdSelect, String(obj.action?.viewportId || ""));
-	    if (groupActionScreenIdSelect) setSelectValueSafe(groupActionScreenIdSelect, String(obj.action?.screenId || ""));
-      if (groupNavigationTargetSelect) setSelectValueSafe(groupNavigationTargetSelect, String(obj.action?.navigationTarget || "current"));
-      renderTargetAliasEditor("group", String(obj.action?.screenId || ""), obj.action || {});
-      if (groupPopupModalInput) groupPopupModalInput.checked = obj.action?.modal !== false;
-      if (groupPopupMovableInput) groupPopupMovableInput.checked = Boolean(obj.action?.movable);
-      setInputValueSafe(groupPopupXInput, obj.action?.popupX ?? "");
-      setInputValueSafe(groupPopupYInput, obj.action?.popupY ?? "");
-      setSelectValueSafe(groupPopupSizeModeSelect, obj.action?.popupSizeMode === "fixed" ? "fixed" : "screen");
-      setInputValueSafe(groupPopupWidthInput, obj.action?.popupWidth ?? "");
-      setInputValueSafe(groupPopupHeightInput, obj.action?.popupHeight ?? "");
-      setSelectValueSafe(groupPopupScaleModeSelect, obj.action?.popupScaleMode === "crop" ? "crop" : "fit");
+	    if (groupActionViewportIdSelect) setSelectValueSafe(groupActionViewportIdSelect, String(selectedAction?.viewportId || ""));
+	    if (groupActionScreenIdSelect) setSelectValueSafe(groupActionScreenIdSelect, String(selectedAction?.screenId || ""));
+      if (groupNavigationTargetSelect) setSelectValueSafe(groupNavigationTargetSelect, String(selectedAction?.navigationTarget || "current"));
+      renderTargetAliasEditor("group", String(selectedAction?.screenId || ""), selectedAction || {});
+      if (groupPopupModalInput) groupPopupModalInput.checked = selectedAction?.modal !== false;
+      if (groupPopupMovableInput) groupPopupMovableInput.checked = Boolean(selectedAction?.movable);
+      setInputValueSafe(groupPopupXInput, selectedAction?.popupX ?? "");
+      setInputValueSafe(groupPopupYInput, selectedAction?.popupY ?? "");
+      setSelectValueSafe(groupPopupSizeModeSelect, selectedAction?.popupSizeMode === "fixed" ? "fixed" : "screen");
+      setInputValueSafe(groupPopupWidthInput, selectedAction?.popupWidth ?? "");
+      setInputValueSafe(groupPopupHeightInput, selectedAction?.popupHeight ?? "");
+      setSelectValueSafe(groupPopupScaleModeSelect, selectedAction?.popupScaleMode === "crop" ? "crop" : "fit");
       setPopupFixedSizeFieldsVisible(groupPopupFixedSizeFields, groupPopupSizeModeSelect?.value);
 	  }
 	  if (obj.type === "text") {
@@ -15916,27 +16061,27 @@ const syncPropertiesFromSelection = () => {
     if (buttonStrokeWidthInput) buttonStrokeWidthInput.value = Number(obj.strokeWidth ?? 1);
     if (buttonAlignSelect) buttonAlignSelect.value = obj.align || "center";
     if (buttonValignSelect) buttonValignSelect.value = obj.valign || "middle";
-    if (buttonTargetSelect) buttonTargetSelect.value = obj.action?.screenId || "";
-    if (buttonActionSelect) buttonActionSelect.value = obj.action?.type || "navigate";
-    if (buttonNavigationTargetSelect) setSelectValueSafe(buttonNavigationTargetSelect, String(obj.action?.navigationTarget || "current"));
+    if (buttonTargetSelect) buttonTargetSelect.value = selectedAction?.screenId || "";
+    if (buttonActionSelect) buttonActionSelect.value = selectedAction?.type || "navigate";
+    if (buttonNavigationTargetSelect) setSelectValueSafe(buttonNavigationTargetSelect, String(selectedAction?.navigationTarget || "current"));
     refreshViewportIdOptions();
     refreshAlarmPanelTargetOptions();
-    if (buttonViewportSelect) buttonViewportSelect.value = obj.action?.viewportId || "";
-    if (buttonPopupModalInput) buttonPopupModalInput.checked = obj.action?.modal !== false;
-    if (buttonPopupMovableInput) buttonPopupMovableInput.checked = Boolean(obj.action?.movable);
-    setInputValueSafe(buttonPopupXInput, obj.action?.popupX ?? "");
-    setInputValueSafe(buttonPopupYInput, obj.action?.popupY ?? "");
-    setSelectValueSafe(buttonPopupSizeModeSelect, obj.action?.popupSizeMode === "fixed" ? "fixed" : "screen");
-    setInputValueSafe(buttonPopupWidthInput, obj.action?.popupWidth ?? "");
-    setInputValueSafe(buttonPopupHeightInput, obj.action?.popupHeight ?? "");
-    setSelectValueSafe(buttonPopupScaleModeSelect, obj.action?.popupScaleMode === "crop" ? "crop" : "fit");
+    if (buttonViewportSelect) buttonViewportSelect.value = selectedAction?.viewportId || "";
+    if (buttonPopupModalInput) buttonPopupModalInput.checked = selectedAction?.modal !== false;
+    if (buttonPopupMovableInput) buttonPopupMovableInput.checked = Boolean(selectedAction?.movable);
+    setInputValueSafe(buttonPopupXInput, selectedAction?.popupX ?? "");
+    setInputValueSafe(buttonPopupYInput, selectedAction?.popupY ?? "");
+    setSelectValueSafe(buttonPopupSizeModeSelect, selectedAction?.popupSizeMode === "fixed" ? "fixed" : "screen");
+    setInputValueSafe(buttonPopupWidthInput, selectedAction?.popupWidth ?? "");
+    setInputValueSafe(buttonPopupHeightInput, selectedAction?.popupHeight ?? "");
+    setSelectValueSafe(buttonPopupScaleModeSelect, selectedAction?.popupScaleMode === "crop" ? "crop" : "fit");
     setPopupFixedSizeFieldsVisible(buttonPopupFixedSizeFields, buttonPopupSizeModeSelect?.value);
     const authText = getAuthButtonTextConfig(obj);
     if (buttonAuthLoggedOutTextInput) setInputValueSafe(buttonAuthLoggedOutTextInput, authText.loggedOutText);
     if (buttonAuthLoggedInTextInput) setInputValueSafe(buttonAuthLoggedInTextInput, authText.loggedInText);
-    updateButtonActionUI(obj.action?.type || "navigate");
-    renderTargetAliasEditor("button", String(obj.action?.screenId || ""), obj.action || {});
-    const alarmFilterAction = obj.action?.type === "alarm-filter" ? normalizeAlarmFilterAction(obj.action) : normalizeAlarmFilterAction({});
+    updateButtonActionUI(selectedAction?.type || "navigate");
+    renderTargetAliasEditor("button", String(selectedAction?.screenId || ""), selectedAction || {});
+    const alarmFilterAction = selectedAction?.type === "alarm-filter" ? normalizeAlarmFilterAction(selectedAction) : normalizeAlarmFilterAction({});
     if (buttonAlarmFilterTargetInput) setInputValueSafe(buttonAlarmFilterTargetInput, alarmFilterAction.target || "");
     if (buttonAlarmFilterSitesInput) setInputValueSafe(buttonAlarmFilterSitesInput, joinAlarmFilterValues(alarmFilterAction.filters.sites));
     if (buttonAlarmFilterGroupsInput) setInputValueSafe(buttonAlarmFilterGroupsInput, joinAlarmFilterValues(alarmFilterAction.filters.groups));
@@ -15946,7 +16091,7 @@ const syncPropertiesFromSelection = () => {
     if (buttonAlarmFilterSourcesInput) setInputValueSafe(buttonAlarmFilterSourcesInput, joinAlarmFilterValues(alarmFilterAction.filters.sources));
     if (buttonAlarmFilterClearInput) buttonAlarmFilterClearInput.checked = Boolean(alarmFilterAction.clear);
 
-    const writeAction = (obj.action?.type === "momentary-write" || obj.action?.type === "toggle-write" || obj.action?.type === "set-write" || obj.action?.type === "prompt-write") ? obj.action : null;
+    const writeAction = (selectedAction?.type === "momentary-write" || selectedAction?.type === "toggle-write" || selectedAction?.type === "set-write" || selectedAction?.type === "prompt-write") ? selectedAction : null;
     if (buttonWriteConnectionInput) setFriendlyConnectionInputValue(buttonWriteConnectionInput, writeAction?.connection_id || "");
     if (buttonWriteTagSelect) {
       const tagName = String(writeAction?.tag || "");
@@ -17042,6 +17187,7 @@ const updatePropertiesPanel = () => {
   const activeObjects = getActiveObjects();
   const obj = isSingle ? activeObjects?.[selectedIndices[0]] : null;
   renderSelectedReferenceProperties(obj);
+  renderClickActionList(obj);
   if (editorPaneTitle) {
     editorPaneTitle.textContent = isMulti ? "Multiple Properties" : getPropertiesPaneTitle(obj);
   }
@@ -17071,11 +17217,15 @@ const updatePropertiesPanel = () => {
   const supportsShadow = Boolean(obj && !["alarms-panel", "viewport"].includes(obj.type));
   const hasShadow = Boolean(supportsShadow && obj.shadow);
   const hasDropShadow = Boolean(supportsShadow && obj.dropShadow);
+  const showClick = hasClickTab(obj);
+  if (!showClick && currentObjectDynamicTab === "click") currentObjectDynamicTab = "properties";
   if (screenProps) screenProps.classList.toggle("is-hidden", isMulti || showText || showButton || showGroup || showViewport || showRect || showEllipse || showCircle || showLine || showCurve || showPolyline || showSpline || showPolygon || showBar || showNumberInput || showIndicator);
   if (textProps) textProps.classList.toggle("is-hidden", !showText);
   if (buttonProps) buttonProps.classList.toggle("is-hidden", !showButton);
   if (groupProps) groupProps.classList.toggle("is-hidden", !showGroup);
-  if (objectActionProps) objectActionProps.classList.toggle("is-hidden", !obj || showButton);
+  if (objectActionProps) objectActionProps.classList.toggle("is-hidden", !showClick || showButton || currentObjectDynamicTab !== "click");
+  buttonClickProps?.classList.toggle("is-hidden", !showButton || currentObjectDynamicTab !== "click");
+  objectDynamicTabClickBtn?.classList.toggle("is-hidden", !showClick);
   if (numberInputProps) numberInputProps.classList.toggle("is-hidden", !showNumberInput);
   if (indicatorProps) indicatorProps.classList.toggle("is-hidden", !showIndicator);
   if (viewportProps) viewportProps.classList.toggle("is-hidden", !showViewport);
@@ -17107,7 +17257,7 @@ const updatePropertiesPanel = () => {
   if (((showDynamicRect && !hasRectMotionDynamic(obj)) || (showDynamicLine && !hasLineMotionDynamic(obj)) || (showDynamicEllipse && !hasEllipseMotionDynamic(obj)) || (showDynamicText && !hasTextMotionDynamic(obj)) || (showDynamicButton && !hasButtonMotionDynamic(obj)) || (showDynamicCircle && !hasCircleMotionDynamic(obj)) || (showDynamicGroup && !hasGroupMotionDynamic(obj))) && currentObjectDynamicTab === "motion") currentObjectDynamicTab = "properties";
   if (!hasShadow && currentObjectDynamicTab === "box-shadow") currentObjectDynamicTab = "properties";
   if (!hasDropShadow && currentObjectDynamicTab === "drop-shadow") currentObjectDynamicTab = "properties";
-  if (!showDynamicRect && !showDynamicLine && !showDynamicEllipse && !showDynamicText && !showDynamicButton && !showDynamicGroup && !showDynamicCircle && !showDynamicPolygon && !hasShadow && !hasDropShadow) {
+  if (!showDynamicRect && !showDynamicLine && !showDynamicEllipse && !showDynamicText && !showDynamicButton && !showDynamicGroup && !showDynamicCircle && !showDynamicPolygon && !hasShadow && !hasDropShadow && !showClick) {
     currentObjectDynamicTab = "properties";
     rectVisibilityDraft = null;
     rectVisibilityDraftObject = null;
@@ -17118,7 +17268,7 @@ const updatePropertiesPanel = () => {
     rectMotionDraft = null;
     rectMotionDraftObject = null;
   }
-  if (objectDynamicTabs) objectDynamicTabs.classList.toggle("is-hidden", !(showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle || showDynamicPolygon || hasShadow || hasDropShadow));
+  if (objectDynamicTabs) objectDynamicTabs.classList.toggle("is-hidden", !(showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle || showDynamicPolygon || hasShadow || hasDropShadow || showClick));
   syncObjectDynamicVisibilityTabs(obj);
   syncObjectDynamicColorTabs(obj);
   if (objectDynamicTabLevelBtn) objectDynamicTabLevelBtn.classList.toggle("is-hidden", !hasLevelDynamic);
@@ -17127,7 +17277,7 @@ const updatePropertiesPanel = () => {
   if (objectDynamicTabMotionBtn) objectDynamicTabMotionBtn.classList.toggle("is-hidden", !((showDynamicRect && hasRectMotionDynamic(obj)) || (showDynamicLine && hasLineMotionDynamic(obj)) || (showDynamicEllipse && hasEllipseMotionDynamic(obj)) || (showDynamicText && hasTextMotionDynamic(obj)) || (showDynamicButton && hasButtonMotionDynamic(obj)) || (showDynamicCircle && hasCircleMotionDynamic(obj)) || (showDynamicGroup && hasGroupMotionDynamic(obj))));
   if (objectDynamicTabShadowBtn) objectDynamicTabShadowBtn.classList.toggle("is-hidden", !hasShadow);
   if (objectDynamicTabDropShadowBtn) objectDynamicTabDropShadowBtn.classList.toggle("is-hidden", !hasDropShadow);
-  if (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle || showDynamicPolygon || hasShadow || hasDropShadow) setObjectDynamicTab(currentObjectDynamicTab);
+  if (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle || showDynamicPolygon || hasShadow || hasDropShadow || showClick) setObjectDynamicTab(currentObjectDynamicTab);
   const showRectVisibilityTab = (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle || showDynamicPolygon) && isVisibilityDynamicTab(currentObjectDynamicTab) && hasVisibilityDynamic(obj);
   const showRectColorTab = (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicCircle || showDynamicPolygon || showDynamicGroup) && hasEditableColorDynamic(obj) && isColorDynamicTab(currentObjectDynamicTab);
   const showRectLevelTab = hasLevelDynamic && currentObjectDynamicTab === "level";
@@ -17151,6 +17301,9 @@ const updatePropertiesPanel = () => {
   if (showDynamicGroup && groupProps) groupProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectStatesTab || showRectRotationTab || showRectMotionTab);
   if (showDynamicCircle && circleProps) circleProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectLevelTab || showRectStatesTab || showRectMotionTab);
   if (showDynamicPolygon && polygonProps) polygonProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectLevelTab);
+  if (currentObjectDynamicTab === "click") {
+    [screenProps, textProps, buttonProps, groupProps, viewportProps, numberInputProps, indicatorProps, rectProps, ellipseProps, circleProps, lineProps, curveProps, polylineProps, splineProps, polygonProps, barProps].forEach((panel) => panel?.classList.add("is-hidden"));
+  }
   if (showShadowTab || showDropShadowTab) {
     [textProps, buttonProps, groupProps, objectActionProps, numberInputProps, indicatorProps, rectProps, ellipseProps, circleProps, lineProps, curveProps, polylineProps, splineProps, polygonProps, barProps].forEach((panel) => panel?.classList.add("is-hidden"));
   }
@@ -17293,6 +17446,11 @@ const updateButtonProperty = (patch) => {
   const obj = activeObjects[index];
   if (!obj || obj.type !== "button") return;
   recordHistory();
+  if (Object.prototype.hasOwnProperty.call(patch, 'action')) {
+    replaceEditedClickAction(obj, patch.action);
+    renderClickActionList(obj);
+    patch = { ...patch }; delete patch.action;
+  }
   Object.assign(obj, patch);
   if (Object.prototype.hasOwnProperty.call(patch || {}, "label")) {
     pruneInactiveTemplateBindings(obj);
@@ -18948,7 +19106,7 @@ const loadScreenById = (id) => {
   if (screenTitle) screenTitle.textContent = currentScreenId;
   if (editorFilename) editorFilename.textContent = currentScreenFilename;
   if (screenList) screenList.value = id;
-  loadJsonc();
+  return loadJsonc();
 };
 
 async function refreshScreensList() {
@@ -19441,6 +19599,11 @@ function bindScreenManager() {
     });
   }
 
+  dynamicsAddClickMenuBtn?.addEventListener("click", () => {
+    setDynamicsFlyoutOpen(false);
+    setMenuOpen(false);
+    ensureClickForSelectedObject();
+  });
   dynamicsAddShadowMenuBtn?.addEventListener("click", () => {
     setDynamicsFlyoutOpen(false);
     setMenuOpen(false);
@@ -19461,6 +19624,7 @@ function bindScreenManager() {
     if (!(button instanceof HTMLButtonElement) || button.disabled) return;
     setToolbarDynamicsOpen(false);
     const actions = {
+      click: ensureClickForSelectedObject,
       visibility: ensureVisibilityDynamicForSelectedObject,
       color: ensureRectColorDynamic,
       states: ensureMultiStateDynamic,
@@ -20251,11 +20415,13 @@ const loadJsonc = async () => {
       if (editorStatus) {
         editorStatus.textContent = `Parse error in ${currentScreenFilename}: ${parseError.message}`;
       }
+      return false;
     }
   } catch (error) {
     if (editorStatus) {
       editorStatus.textContent = `Failed to load ${currentScreenFilename}: ${error.message}`;
     }
+    return false;
   }
 };
 
@@ -21151,6 +21317,7 @@ const apiWriteTag = async ({ connection_id, tag, value, audit = {} }) => {
     throw new Error(`HTTP ${response.status} ${text}`.trim());
 	  }
 	  const payload = await response.json().catch(() => ({}));
+	  if (payload?.ok === false) throw new Error(payload.error || payload.message || 'Tag write failed.');
 	  const cacheKey = normalizeTagCacheKey(connectionId, tagName);
 	  if (!cacheKey) return payload;
 	  if (payload && Object.prototype.hasOwnProperty.call(payload, "value")) {
@@ -22081,11 +22248,13 @@ const updateSelectedGroupAction = (patch) => {
   const obj = activeObjects[selectedIndices[0]];
   if (!obj || obj.type === "button") return;
   recordHistory();
-  const next = { ...(obj.action || {}), ...patch };
+  const next = { ...getEditedClickAction(obj), ...patch };
   if (!next.type) {
-    delete obj.action;
+    const actions = HmiClickActions.list(obj.action).slice();
+    actions.splice(clickActionSelection.get(obj) || 0, 1);
+    obj.action = HmiClickActions.pack(actions);
   } else {
-    obj.action = next;
+    replaceEditedClickAction(obj, next);
   }
   renderScreen();
   syncEditorFromScreen();
@@ -22186,8 +22355,9 @@ if (groupNavigationTargetSelect) {
 
 const updateButtonPopupSettings = () => {
   const obj = getAutomationObject();
-  if (!obj || obj.type !== "button" || obj.action?.type !== "popup") return;
-  updateButtonProperty({ action: { ...obj.action, ...buttonPopupSettingsFromInputs() } });
+  const action = getEditedClickAction(obj);
+  if (!obj || obj.type !== "button" || action.type !== "popup") return;
+  updateButtonProperty({ action: { ...action, ...buttonPopupSettingsFromInputs() } });
 };
 
 [buttonPopupModalInput, buttonPopupMovableInput, buttonPopupXInput, buttonPopupYInput, buttonPopupSizeModeSelect, buttonPopupWidthInput, buttonPopupHeightInput, buttonPopupScaleModeSelect].forEach((input) => input?.addEventListener("change", () => {
@@ -24990,7 +25160,7 @@ function registerCompactTagBinding(config) {
 function updateButtonWriteBinding(patch) {
   const actionType = String(buttonActionSelect?.value || "");
   if (!["momentary-write", "toggle-write", "set-write", "prompt-write"].includes(actionType)) return;
-  const current = getActiveObjects()?.[selectedIndices[0]]?.action || {};
+  const current = getEditedClickAction(getActiveObjects()?.[selectedIndices[0]]);
   const next = {
     ...current,
     type: actionType,
@@ -32478,6 +32648,22 @@ if (editorPaneTitlebar && editorPane) {
 
 applyEditorZoom(1);
 
+objectDynamicTabClickBtn?.addEventListener("click", () => {
+  setObjectDynamicTab("click");
+  updatePropertiesPanel();
+});
+document.getElementById("removeObjectClickBtn")?.addEventListener("click", () => {
+  const obj = selectedIndices.length === 1 ? getActiveObjects()?.[selectedIndices[0]] : null;
+  if (!obj || obj.type === "button") return;
+  recordHistory();
+  delete obj.action;
+  delete obj.clickEnabled;
+  setObjectDynamicTab("properties");
+  setDirty(true);
+  renderScreen();
+  syncEditorFromScreen();
+  updatePropertiesPanel();
+});
 if (objectDynamicTabPropertiesBtn) {
   objectDynamicTabPropertiesBtn.addEventListener("click", () => {
     setObjectDynamicTab("properties");
@@ -33074,6 +33260,10 @@ if (hmiSvg) {
           const hotspot = findRuntimeGroupHotspot(point);
 	          if (hotspot) {
 	            const action = hotspot.obj.action || {};
+              if (action.type === 'sequence') {
+                startClickSequence(hotspot.obj, {viewportId: hotspot.viewportId});
+                return;
+              }
 	            if (action.type === "navigate") {
                 if (hotspot.viewportId && action.navigationTarget !== "main") {
                   loadViewportTarget(hotspot.viewportId, action.screenId, action);
@@ -33115,6 +33305,11 @@ if (hmiSvg) {
           }
         }
 		      if (!hitMeta) return;
+          if (obj?.action?.type === 'sequence') {
+            const viewport = hitMeta.type === 'viewport' ? currentScreenObj?.objects?.[hitMeta.index] : null;
+            startClickSequence(obj, {viewportId: viewport?.id});
+            return;
+          }
 		      const writesDisabled = isViewOnlyRuntime();
 		      if (obj?.action?.type === "momentary-write") {
 		        return;
