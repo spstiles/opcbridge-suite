@@ -1786,6 +1786,11 @@
 
           <div id="polylineProps" class="properties-form is-hidden">
             <div id="polylinePropsTitle" class="prop-group-title">Polyline</div>
+            <div id="polylineGeometryRows">
+              <div class="prop-row"><label for="polylineX">X</label><input id="polylineX" type="number" step="any" /></div>
+              <div class="prop-row"><label for="polylineY">Y</label><input id="polylineY" type="number" step="any" /></div>
+              <div class="prop-row"><label for="polylinePoints">Vertices</label><textarea id="polylinePoints" rows="3" placeholder="x,y x,y x,y"></textarea></div>
+            </div>
 	            <div id="polylineFillRow" class="prop-row is-hidden">
 	              <label for="polylineFill">Fill</label>
 	              <div class="prop-inline">
@@ -2330,13 +2335,6 @@
             </div>
           </div>
 
-          <div id="automationLaunchRow" class="properties-form is-hidden">
-            <div class="prop-row">
-              <label for="automationLaunchBtn">Automation</label>
-              <button id="automationLaunchBtn" class="panel-btn" type="button">Automation…</button>
-            </div>
-          </div>
-
           <div id="alignTools" class="properties-form is-hidden">
             <div class="prop-group-title">Align Selected</div>
             <div class="align-grid">
@@ -2366,35 +2364,7 @@
       </aside>
     </div>
   </main>
-  <div id="automationPanelStore" hidden aria-hidden="true"></div>
-  <div id="automationPanel" class="automation-panel is-hidden" role="dialog" aria-modal="false" aria-hidden="true">
-    <div id="automationPanelTitlebar" class="automation-panel-titlebar" aria-label="Automation panel window">
-      <div id="automationPanelTitle" class="automation-panel-title">Automation</div>
-      <button id="automationPanelCloseBtn" class="toolbar-btn automation-panel-close" type="button" title="Close">✕</button>
-    </div>
-    <div id="automationPanelTabs" class="automation-panel-tabs" role="tablist" aria-label="Automation tabs">
-      <button id="automationTabMotion" class="automation-tab" type="button" data-tab="motion" role="tab" aria-selected="false">Motion</button>
-      <button id="automationTabRotation" class="automation-tab" type="button" data-tab="rotation" role="tab" aria-selected="false">Rotation</button>
-      <button id="automationTabVisibility" class="automation-tab" type="button" data-tab="visibility" role="tab" aria-selected="false">Visibility</button>
-      <button id="automationTabText" class="automation-tab" type="button" data-tab="text" role="tab" aria-selected="false">Text</button>
-      <button id="automationTabColor" class="automation-tab" type="button" data-tab="color" role="tab" aria-selected="false">Color</button>
-      <button id="automationTabLevel" class="automation-tab" type="button" data-tab="level" role="tab" aria-selected="false">Level</button>
-      <button id="automationTabFill" class="automation-tab" type="button" data-tab="fill" role="tab" aria-selected="false">Fill</button>
-      <button id="automationTabStroke" class="automation-tab" type="button" data-tab="stroke" role="tab" aria-selected="false">Stroke</button>
-      <button id="automationTabValue" class="automation-tab" type="button" data-tab="value" role="tab" aria-selected="false">Value</button>
-    </div>
-    <div class="automation-panel-body">
-      <div id="automationTabPanelMotion" class="automation-tab-panel is-hidden" data-tab-panel="motion" role="tabpanel"></div>
-      <div id="automationTabPanelRotation" class="automation-tab-panel is-hidden" data-tab-panel="rotation" role="tabpanel"></div>
-      <div id="automationTabPanelVisibility" class="automation-tab-panel is-hidden" data-tab-panel="visibility" role="tabpanel"></div>
-      <div id="automationTabPanelText" class="automation-tab-panel is-hidden" data-tab-panel="text" role="tabpanel"></div>
-      <div id="automationTabPanelColor" class="automation-tab-panel is-hidden" data-tab-panel="color" role="tabpanel"></div>
-      <div id="automationTabPanelLevel" class="automation-tab-panel is-hidden" data-tab-panel="level" role="tabpanel"></div>
-      <div id="automationTabPanelFill" class="automation-tab-panel is-hidden" data-tab-panel="fill" role="tabpanel"></div>
-      <div id="automationTabPanelStroke" class="automation-tab-panel is-hidden" data-tab-panel="stroke" role="tabpanel"></div>
-      <div id="automationTabPanelValue" class="automation-tab-panel is-hidden" data-tab-panel="value" role="tabpanel"></div>
-    </div>
-  </div>
+  <div id="automationControlStore" hidden aria-hidden="true"></div>
 	  <div id="popupOverlay" class="popup-overlay is-hidden" role="dialog" aria-modal="true" aria-hidden="true">
 	    <div class="popup-modal">
 	      <div class="popup-header">

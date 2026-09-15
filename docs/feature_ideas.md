@@ -1,5 +1,31 @@
 # Feature Ideas
 
+## Native HMI Arc Objects
+
+Add native, editable circular and elliptical arcs to the HMI rather than representing them as sampled splines.
+
+- Support center/radii, start and end angles, direction, stroke color, and line width.
+- Provide drawing and editing controls consistent with other native HMI objects, including grouping and automation support.
+- Import source arcs as native arcs when their geometry can be recovered.
+- Discuss open arcs versus closed chord/sector variants when designing the tool.
+
+Motivation: the GraphWorX32 wall-screen recovery converted 257 quarter-turn elbows into editable spline approximations. The result is useful, but native arcs would preserve the underlying geometry and make future editing more natural. This is a future feature, not a requirement to finish the one-time recovery.
+
+## HMI Frame Animation
+
+Add a frame-animation automation that cycles through an ordered set of images or
+drawn objects while a tag/expression condition is active. Unlike rotation, this
+changes which frame is visible rather than transforming a single object.
+
+- Configure frame order, frame timing, and the activation condition.
+- Define the inactive appearance explicitly, such as a designated stopped frame.
+- Use the standard automation tabs and menus.
+- Eventually map GraphWorX32 Animator dynamics to this native capability.
+
+Motivation: the recovered wall screen contains Animator dynamics. This is deferred
+future work, not a requirement for the current static visual recovery or a reason
+to begin implementing automation now.
+
 ## Debian Package Distribution
 
 Idea:

@@ -8,31 +8,9 @@ const editorPaneDockRightBtn = document.getElementById("editorPaneDockRightBtn")
 const editorZoomOutBtn = document.getElementById("editorZoomOutBtn");
 const editorZoomResetBtn = document.getElementById("editorZoomResetBtn");
 const editorZoomInBtn = document.getElementById("editorZoomInBtn");
-const automationLaunchRow = document.getElementById("automationLaunchRow");
-const automationLaunchBtn = document.getElementById("automationLaunchBtn");
-const automationPanel = document.getElementById("automationPanel");
-const automationPanelStore = document.getElementById("automationPanelStore");
-const automationPanelTitlebar = document.getElementById("automationPanelTitlebar");
-const automationPanelTitle = document.getElementById("automationPanelTitle");
-const automationPanelCloseBtn = document.getElementById("automationPanelCloseBtn");
-const automationTabMotionBtn = document.getElementById("automationTabMotion");
-const automationTabRotationBtn = document.getElementById("automationTabRotation");
-const automationTabVisibilityBtn = document.getElementById("automationTabVisibility");
-const automationTabTextBtn = document.getElementById("automationTabText");
-const automationTabColorBtn = document.getElementById("automationTabColor");
-const automationTabLevelBtn = document.getElementById("automationTabLevel");
-const automationTabFillBtn = document.getElementById("automationTabFill");
-const automationTabStrokeBtn = document.getElementById("automationTabStroke");
-const automationTabValueBtn = document.getElementById("automationTabValue");
-const automationTabPanelMotion = document.getElementById("automationTabPanelMotion");
-const automationTabPanelRotation = document.getElementById("automationTabPanelRotation");
-const automationTabPanelVisibility = document.getElementById("automationTabPanelVisibility");
-const automationTabPanelText = document.getElementById("automationTabPanelText");
-const automationTabPanelColor = document.getElementById("automationTabPanelColor");
-const automationTabPanelLevel = document.getElementById("automationTabPanelLevel");
-const automationTabPanelFill = document.getElementById("automationTabPanelFill");
-const automationTabPanelStroke = document.getElementById("automationTabPanelStroke");
-const automationTabPanelValue = document.getElementById("automationTabPanelValue");
+const automationControlStore = document.getElementById("automationControlStore");
+const isPathDynamicObject = (obj) => Boolean(obj && ["line", "curve", "polyline", "spline"].includes(obj.type));
+const isClosedDynamicPath = (obj) => Boolean(obj && ["polyline", "spline"].includes(obj.type) && obj.closed);
 const runtimeBtn = document.getElementById("runtimeBtn");
 const wsStatus = document.getElementById("wsStatus");
 const alarmsBadge = document.getElementById("alarmsBadge");
@@ -431,11 +409,7 @@ const waitForHmiBusyPaint = () => new Promise((resolve) => {
 
 // Editor pane docking / floating state
 const EDITOR_PANE_STATE_KEY = "opcbridge-hmi.editorPane.v2";
-const AUTOMATION_PANEL_STATE_KEY = "opcbridge-hmi.automationPanel.v1";
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
-let automationPanelOpen = false;
-let automationPanelPrevEditorVisible = false;
-let currentAutomationTab = "motion";
 let currentObjectDynamicTab = "properties";
 let rectVisibilityDraft = null;
 let rectVisibilityDraftObject = null;
@@ -454,7 +428,6 @@ let visibilityExpressionInsertTargetBtn = null;
 let rectColorExpressionDraftValue = "";
 let rectColorExpressionInsertTargetBtn = null;
 const visibilityExpressionFunctionCache = new Map();
-const lastAutomationTabByType = new Map();
 const automationSectionConfigs = [];
 let additionalAutomationSectionsInitialized = false;
 
@@ -548,48 +521,6 @@ const setEditorPaneDock = (dock) => {
   applyEditorPaneState(next);
 };
 
-const getAutomationPanelState = () => {
-  try {
-    const raw = window.localStorage.getItem(AUTOMATION_PANEL_STATE_KEY);
-    const parsed = raw ? JSON.parse(raw) : null;
-    if (!parsed || typeof parsed !== "object") return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-};
-
-const saveAutomationPanelState = (state) => {
-  try {
-    window.localStorage.setItem(AUTOMATION_PANEL_STATE_KEY, JSON.stringify(state));
-  } catch {
-    // ignore
-  }
-};
-
-const applyAutomationPanelState = (state) => {
-  if (!automationPanel) return;
-  automationPanel.style.left = "";
-  automationPanel.style.top = "";
-  automationPanel.style.right = "";
-  automationPanel.style.bottom = "";
-  automationPanel.style.width = "";
-  automationPanel.style.height = "";
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
-  const toolbarH = Number(getComputedStyle(document.documentElement).getPropertyValue("--toolbar-height").replace("px", "")) || 48;
-  const defaultW = Math.min(520, Math.max(360, Math.floor(vw * 0.34)));
-  const defaultH = Math.min(Math.floor(vh * 0.72), Math.max(320, vh - toolbarH - 40));
-  const w = clamp(Number(state?.w) || defaultW, 320, Math.floor(vw * 0.92));
-  const h = clamp(Number(state?.h) || defaultH, 260, Math.floor(vh * 0.9));
-  const x = clamp(Number(state?.x) || (vw - w - 16), Number(getComputedStyle(document.documentElement).getPropertyValue("--left-toolbar-width").replace("px", "")) + 12, vw - w - 10);
-  const y = clamp(Number(state?.y) || (toolbarH + 12), toolbarH + 4, vh - h - 10);
-  automationPanel.style.width = `${w}px`;
-  automationPanel.style.height = `${h}px`;
-  automationPanel.style.left = `${x}px`;
-  automationPanel.style.top = `${y}px`;
-};
-
 const getAutomationObject = () => {
   const activeObjects = getActiveObjects();
   return (selectedIndices.length === 1 && Array.isArray(activeObjects)) ? activeObjects[selectedIndices[0]] : null;
@@ -602,7 +533,7 @@ const getSelectedRectObject = () => {
 
 const getSelectedLineObject = () => {
   const obj = getAutomationObject();
-  return obj && obj.type === "line" ? obj : null;
+  return obj && isPathDynamicObject(obj) ? obj : null;
 };
 
 const getSelectedEllipseObject = () => {
@@ -637,12 +568,12 @@ const getSelectedPolygonObject = () => {
 
 const getSelectedVisibilityDynamicObject = () => {
   const obj = getAutomationObject();
-  return obj && (obj.type === "rect" || obj.type === "line" || obj.type === "pipe" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "group" || obj.type === "circle" || obj.type === "polygon") ? obj : null;
+  return obj && (obj.type === "rect" || isPathDynamicObject(obj) || obj.type === "pipe" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "group" || obj.type === "circle" || obj.type === "polygon") ? obj : null;
 };
 
 const getSelectedColorDynamicObject = () => {
   const obj = getAutomationObject();
-  return obj && (obj.type === "rect" || obj.type === "line" || obj.type === "pipe" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "polygon" || obj.type === "group") ? obj : null;
+  return obj && (obj.type === "rect" || isPathDynamicObject(obj) || obj.type === "pipe" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "polygon" || obj.type === "group") ? obj : null;
 };
 
 const getSelectedRotationDynamicObject = () => {
@@ -652,7 +583,7 @@ const getSelectedRotationDynamicObject = () => {
 
 const getSelectedMultiStateDynamicObject = () => {
   const obj = getAutomationObject();
-  return obj && (obj.type === "rect" || obj.type === "line" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "group") ? obj : null;
+  return obj && (obj.type === "rect" || isPathDynamicObject(obj) || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "group") ? obj : null;
 };
 
 const getSelectedMotionDynamicObject = () => {
@@ -784,7 +715,6 @@ const hasGroupMotionDynamic = (obj) => {
   return Boolean(obj.motion && typeof obj.motion === "object" && Object.keys(obj.motion).length);
 };
 
-const isLineColorDynamicTarget = (obj) => Boolean(obj && (obj.type === "line" || obj.type === "pipe"));
 
 const cloneVisibilityState = (value) => {
   if (!value || typeof value !== "object") return { enabled: true };
@@ -802,8 +732,8 @@ const getDefaultColorRuleForObject = (obj) => ({
   flashEnabled: false,
   flashRate: "slow",
   flashWhen: true,
-  fillEnabled: Boolean(obj && obj.type !== "line" && obj.type !== "pipe"),
-  strokeEnabled: Boolean(obj && (obj.type === "line" || obj.type === "pipe")),
+  fillEnabled: Boolean(obj && (!isPathDynamicObject(obj) || isClosedDynamicPath(obj)) && obj.type !== "pipe"),
+  strokeEnabled: Boolean(obj && ((isPathDynamicObject(obj) && !isClosedDynamicPath(obj)) || obj.type === "pipe")),
   textEnabled: false,
   backgroundEnabled: false,
   borderEnabled: false
@@ -873,11 +803,11 @@ const normalizeRectColorDraft = (obj, value) => {
 };
 
 const buildColorRulesFromObject = (obj) => {
-  if (!obj || !["rect", "line", "pipe", "ellipse", "text", "button", "circle", "polygon", "group"].includes(String(obj.type || ""))) return [];
+  if (!obj || !["rect", "line", "curve", "polyline", "spline", "pipe", "ellipse", "text", "button", "circle", "polygon", "group"].includes(String(obj.type || ""))) return [];
   const metaRules = Array.isArray(obj.colorAutomationRules)
     ? normalizeRectColorDraft(obj, { rules: obj.colorAutomationRules }).rules
     : [];
-  const fillAuto = (obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "polygon" || obj.type === "group") ? getColorAutomationRules(obj.fillAutomation) : [];
+  const fillAuto = (obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "polygon" || isClosedDynamicPath(obj) || obj.type === "group") ? getColorAutomationRules(obj.fillAutomation) : [];
   const strokeAuto = (obj.type === "text") ? getColorAutomationRules(obj.backgroundAutomation) : (obj.type === "button" ? getColorAutomationRules(obj.textColorAutomation) : getColorAutomationRules(obj.strokeAutomation));
   const textAuto = obj.type === "group" ? getColorAutomationRules(obj.textColorAutomation) : [];
   const backgroundAuto = obj.type === "group" ? getColorAutomationRules(obj.backgroundAutomation) : [];
@@ -907,7 +837,7 @@ const buildColorRulesFromObject = (obj) => {
       sourceTarget: source.sourceTarget || meta.sourceTarget || "",
       fillEnabled: ("fillEnabled" in meta) ? Boolean(meta.fillEnabled) : Boolean(fillAuto[index]),
       fillColor: fillAuto[index]?.onColor || meta.fillColor || "",
-      strokeEnabled: (obj.type === "line" || obj.type === "pipe") ? true : (("strokeEnabled" in meta) ? Boolean(meta.strokeEnabled) : Boolean(strokeAuto[index])),
+      strokeEnabled: ((isPathDynamicObject(obj) && !isClosedDynamicPath(obj)) || obj.type === "pipe") ? true : (("strokeEnabled" in meta) ? Boolean(meta.strokeEnabled) : Boolean(strokeAuto[index])),
       strokeColor: strokeAuto[index]?.onColor || meta.strokeColor || "",
       textEnabled: obj.type === "group" ? (("textEnabled" in meta) ? Boolean(meta.textEnabled) : Boolean(textAuto[index])) : false,
       textColor: textAuto[index]?.onColor || meta.textColor || "",
@@ -1174,7 +1104,7 @@ const normalizeColorAutomationState = (value) => {
 };
 
 const syncRectColorUiFromDraft = (obj, draft) => {
-  const isLine = Boolean(obj && (obj.type === "line" || obj.type === "pipe"));
+  const isLine = Boolean(obj && ((isPathDynamicObject(obj) && !isClosedDynamicPath(obj)) || obj.type === "pipe"));
   const isPipe = Boolean(obj && obj.type === "pipe");
   const isText = Boolean(obj && obj.type === "text");
   const isButton = Boolean(obj && obj.type === "button");
@@ -1430,10 +1360,10 @@ const applyRectColorDraftToObject = () => {
       threshold: rule?.threshold,
       match: rule?.match || ""
     };
-    if ((obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "polygon" || obj.type === "group") && rule?.fillEnabled && String(rule?.fillColor || "").trim()) {
+    if ((obj.type === "rect" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "polygon" || isClosedDynamicPath(obj) || obj.type === "group") && rule?.fillEnabled && String(rule?.fillColor || "").trim()) {
       fillRules[index] = { ...shared, onColor: rule.fillColor };
     }
-    if ((obj.type === "line" || obj.type === "pipe" || obj.type === "rect" || obj.type === "ellipse" || obj.type === "circle" || obj.type === "polygon" || obj.type === "group") && rule?.strokeEnabled && String(rule?.strokeColor || "").trim()) {
+    if ((isPathDynamicObject(obj) || obj.type === "pipe" || obj.type === "rect" || obj.type === "ellipse" || obj.type === "circle" || obj.type === "polygon" || obj.type === "group") && rule?.strokeEnabled && String(rule?.strokeColor || "").trim()) {
       strokeRules[index] = { ...shared, onColor: rule.strokeColor };
     }
     if (obj.type === "text" && rule?.strokeEnabled && String(rule?.strokeColor || "").trim()) {
@@ -2434,7 +2364,7 @@ const isEditingRectVisibilityDynamic = () => {
 
 const isEditingLineVisibilityDynamic = () => {
   const obj = getSelectedVisibilityDynamicObject();
-  return Boolean(obj && (obj.type === "line" || obj.type === "pipe") && isVisibilityDynamicTab() && hasVisibilityDynamic(obj));
+  return Boolean(obj && ((isPathDynamicObject(obj) && !isClosedDynamicPath(obj)) || obj.type === "pipe") && isVisibilityDynamicTab() && hasVisibilityDynamic(obj));
 };
 
 const isEditingEllipseVisibilityDynamic = () => {
@@ -2474,7 +2404,7 @@ const isEditingRectColorDynamic = () => {
 
 const isEditingLineColorDynamic = () => {
   const obj = getSelectedColorDynamicObject();
-  return Boolean(obj && (obj.type === "line" || obj.type === "pipe") && isColorDynamicTab() && hasEditableColorDynamic(obj));
+  return Boolean(obj && ((isPathDynamicObject(obj) && !isClosedDynamicPath(obj)) || obj.type === "pipe") && isColorDynamicTab() && hasEditableColorDynamic(obj));
 };
 
 const isEditingEllipseColorDynamic = () => {
@@ -2514,7 +2444,7 @@ const isEditingRectRotationDynamic = () => {
 
 const isEditingLineRotationDynamic = () => {
   const obj = getSelectedRotationDynamicObject();
-  return Boolean(obj && obj.type === "line" && currentObjectDynamicTab === "rotation" && hasLineRotationDynamic(obj));
+  return Boolean(obj && isPathDynamicObject(obj) && currentObjectDynamicTab === "rotation" && hasLineRotationDynamic(obj));
 };
 
 const isEditingEllipseRotationDynamic = () => {
@@ -2544,7 +2474,7 @@ const isEditingRectMotionDynamic = () => {
 
 const isEditingLineMotionDynamic = () => {
   const obj = getSelectedMotionDynamicObject();
-  return Boolean(obj && obj.type === "line" && currentObjectDynamicTab === "motion" && hasLineMotionDynamic(obj));
+  return Boolean(obj && isPathDynamicObject(obj) && currentObjectDynamicTab === "motion" && hasLineMotionDynamic(obj));
 };
 
 const isEditingEllipseMotionDynamic = () => {
@@ -2573,7 +2503,7 @@ const isEditingGroupMotionDynamic = () => {
 };
 
 const ensureRectVisibilityDraft = (obj) => {
-  if (!obj || (obj.type !== "rect" && obj.type !== "line" && obj.type !== "pipe" && obj.type !== "ellipse" && obj.type !== "text" && obj.type !== "button" && obj.type !== "group" && obj.type !== "circle" && obj.type !== "polygon")) return;
+  if (!obj || (obj.type !== "rect" && !isPathDynamicObject(obj) && obj.type !== "pipe" && obj.type !== "ellipse" && obj.type !== "text" && obj.type !== "button" && obj.type !== "group" && obj.type !== "circle" && obj.type !== "polygon")) return;
   if (rectVisibilityDraftObject !== obj || !rectVisibilityDraft) {
     rectVisibilityDraftObject = obj;
     rectVisibilityDraft = cloneVisibilityState(obj.visibility || { enabled: true });
@@ -2581,7 +2511,7 @@ const ensureRectVisibilityDraft = (obj) => {
 };
 
 const ensureRectColorDraft = (obj) => {
-  if (!obj || (obj.type !== "rect" && obj.type !== "line" && obj.type !== "pipe" && obj.type !== "ellipse" && obj.type !== "text" && obj.type !== "button" && obj.type !== "circle" && obj.type !== "polygon" && obj.type !== "group")) return;
+  if (!obj || (obj.type !== "rect" && !isPathDynamicObject(obj) && obj.type !== "pipe" && obj.type !== "ellipse" && obj.type !== "text" && obj.type !== "button" && obj.type !== "circle" && obj.type !== "polygon" && obj.type !== "group")) return;
   if (rectColorDraftObject !== obj || !rectColorDraft) {
     const rules = buildColorRulesFromObject(obj);
     rectColorDraftObject = obj;
@@ -2591,7 +2521,7 @@ const ensureRectColorDraft = (obj) => {
 };
 
 const ensureRectRotationDraft = (obj) => {
-  if (!obj || (obj.type !== "rect" && obj.type !== "line" && obj.type !== "ellipse" && obj.type !== "text" && obj.type !== "button" && obj.type !== "group")) return;
+  if (!obj || (obj.type !== "rect" && !isPathDynamicObject(obj) && obj.type !== "ellipse" && obj.type !== "text" && obj.type !== "button" && obj.type !== "group")) return;
   if (rectRotationDraftObject !== obj || !rectRotationDraft) {
     rectRotationDraftObject = obj;
     rectRotationDraft = cloneRectRotationDraft({
@@ -2604,7 +2534,7 @@ const ensureRectRotationDraft = (obj) => {
 };
 
 const ensureRectMotionDraft = (obj) => {
-  if (!obj || (obj.type !== "rect" && obj.type !== "line" && obj.type !== "ellipse" && obj.type !== "text" && obj.type !== "button" && obj.type !== "circle" && obj.type !== "group")) return;
+  if (!obj || (obj.type !== "rect" && !isPathDynamicObject(obj) && obj.type !== "ellipse" && obj.type !== "text" && obj.type !== "button" && obj.type !== "circle" && obj.type !== "group")) return;
   if (rectMotionDraftObject !== obj || !rectMotionDraft) {
     rectMotionDraftObject = obj;
     rectMotionDraft = cloneRectMotionDraft(normalizeMotionAutomationState({
@@ -2886,127 +2816,6 @@ const ensureRectMotionDynamic = () => {
 
 const getMotionControlForObject = (obj) => motionControlConfigs.find((control) => obj && control.types.includes(obj.type)) || null;
 const getRotationControlForObject = (obj) => rotationControlConfigs.find((control) => obj && control.types.includes(obj.type)) || null;
-const supportsAutomationPanelForObject = (obj) => Boolean(obj && (visibilityProps || getMotionControlForObject(obj) || getRotationControlForObject(obj)));
-const getAutomationSectionsForObjectByTab = (obj, tab) => automationSectionConfigs.filter((config) => obj && config.tab === tab && config.types.includes(obj.type));
-
-const returnAutomationSectionsToStore = () => {
-  if (!automationPanelStore) return;
-  [
-    automationTabPanelMotion,
-    automationTabPanelRotation,
-    automationTabPanelVisibility,
-    automationTabPanelText,
-    automationTabPanelColor,
-    automationTabPanelLevel,
-    automationTabPanelFill,
-    automationTabPanelStroke,
-    automationTabPanelValue
-  ].forEach((panel) => {
-    if (!panel) return;
-    while (panel.firstChild) automationPanelStore.appendChild(panel.firstChild);
-  });
-};
-
-const setAutomationTab = (nextTab) => {
-  const tab = String(nextTab || "").trim();
-  const buttons = [
-    { id: "motion", el: automationTabMotionBtn, panel: automationTabPanelMotion },
-    { id: "rotation", el: automationTabRotationBtn, panel: automationTabPanelRotation },
-    { id: "visibility", el: automationTabVisibilityBtn, panel: automationTabPanelVisibility },
-    { id: "text", el: automationTabTextBtn, panel: automationTabPanelText },
-    { id: "color", el: automationTabColorBtn, panel: automationTabPanelColor },
-    { id: "level", el: automationTabLevelBtn, panel: automationTabPanelLevel },
-    { id: "fill", el: automationTabFillBtn, panel: automationTabPanelFill },
-    { id: "stroke", el: automationTabStrokeBtn, panel: automationTabPanelStroke },
-    { id: "value", el: automationTabValueBtn, panel: automationTabPanelValue }
-  ];
-  const available = buttons.filter((entry) => entry.el && !entry.el.classList.contains("is-hidden"));
-  const wants = available.some((entry) => entry.id === tab) ? tab : (available[0]?.id || "visibility");
-  currentAutomationTab = wants;
-  buttons.forEach((entry) => {
-    const active = entry.id === wants && available.some((option) => option.id === entry.id);
-    if (entry.el) {
-      entry.el.classList.toggle("is-active", active);
-      entry.el.setAttribute("aria-selected", active ? "true" : "false");
-    }
-    if (entry.panel) entry.panel.classList.toggle("is-hidden", !active);
-  });
-  const obj = getAutomationObject();
-  if (obj) lastAutomationTabByType.set(String(obj.type || ""), wants);
-};
-
-const populateAutomationPanel = () => {
-  if (!automationPanel || !automationPanelStore) return;
-  returnAutomationSectionsToStore();
-  const obj = getAutomationObject();
-  if (!obj || !supportsAutomationPanelForObject(obj)) {
-    closeAutomationPanel();
-    return;
-  }
-  if (automationPanelTitle) automationPanelTitle.textContent = `Automation — ${String(obj.type || "Object")}`;
-  const motionControl = getMotionControlForObject(obj);
-  const rotationControl = getRotationControlForObject(obj);
-  const visibilityAvailable = Boolean(visibilityProps);
-  if (motionControl?.sectionEl && automationTabPanelMotion) {
-    motionControl.sectionEl.classList.remove("is-hidden");
-    automationTabPanelMotion.appendChild(motionControl.sectionEl);
-  }
-  if (rotationControl?.sectionEl && automationTabPanelRotation) {
-    rotationControl.sectionEl.classList.remove("is-hidden");
-    automationTabPanelRotation.appendChild(rotationControl.sectionEl);
-  }
-  if (visibilityAvailable && automationTabPanelVisibility) {
-    visibilityProps.classList.remove("is-hidden");
-    automationTabPanelVisibility.appendChild(visibilityProps);
-  }
-  [["text", automationTabPanelText], ["color", automationTabPanelColor], ["level", automationTabPanelLevel], ["fill", automationTabPanelFill], ["stroke", automationTabPanelStroke], ["value", automationTabPanelValue]].forEach(([tab, panel]) => {
-    if (!panel) return;
-    getAutomationSectionsForObjectByTab(obj, tab).forEach((config) => {
-      if (config.sectionEl) {
-        config.sectionEl.classList.remove("is-hidden");
-        panel.appendChild(config.sectionEl);
-      }
-    });
-  });
-  if (automationTabMotionBtn) automationTabMotionBtn.classList.toggle("is-hidden", !motionControl?.sectionEl);
-  if (automationTabRotationBtn) automationTabRotationBtn.classList.toggle("is-hidden", !rotationControl?.sectionEl);
-  if (automationTabVisibilityBtn) automationTabVisibilityBtn.classList.toggle("is-hidden", !visibilityAvailable);
-  if (automationTabTextBtn) automationTabTextBtn.classList.toggle("is-hidden", getAutomationSectionsForObjectByTab(obj, "text").length === 0);
-  if (automationTabColorBtn) automationTabColorBtn.classList.toggle("is-hidden", getAutomationSectionsForObjectByTab(obj, "color").length === 0);
-  if (automationTabLevelBtn) automationTabLevelBtn.classList.toggle("is-hidden", getAutomationSectionsForObjectByTab(obj, "level").length === 0);
-  if (automationTabFillBtn) automationTabFillBtn.classList.toggle("is-hidden", getAutomationSectionsForObjectByTab(obj, "fill").length === 0);
-  if (automationTabStrokeBtn) automationTabStrokeBtn.classList.toggle("is-hidden", getAutomationSectionsForObjectByTab(obj, "stroke").length === 0);
-  if (automationTabValueBtn) automationTabValueBtn.classList.toggle("is-hidden", getAutomationSectionsForObjectByTab(obj, "value").length === 0);
-  const preferredTab = lastAutomationTabByType.get(String(obj.type || "")) || currentAutomationTab;
-  setAutomationTab(preferredTab);
-};
-
-const openAutomationPanel = () => {
-  const obj = getAutomationObject();
-  if (!isEditMode || !obj || !supportsAutomationPanelForObject(obj) || !automationPanel) return;
-  automationPanelPrevEditorVisible = Boolean(editorPane && !editorPane.classList.contains("is-hidden"));
-  if (editorPane) editorPane.classList.add("is-hidden");
-  document.body.classList.add("automation-panel-open");
-  automationPanel.classList.remove("is-hidden");
-  automationPanel.setAttribute("aria-hidden", "false");
-  automationPanelOpen = true;
-  populateAutomationPanel();
-};
-
-const closeAutomationPanel = () => {
-  if (!automationPanel) return;
-  automationPanel.classList.add("is-hidden");
-  automationPanel.setAttribute("aria-hidden", "true");
-  returnAutomationSectionsToStore();
-  automationPanelOpen = false;
-  document.body.classList.remove("automation-panel-open");
-  if (editorPane && isEditMode && automationPanelPrevEditorVisible) {
-    editorPane.classList.remove("is-hidden");
-    applyEditorPaneState(getEditorPaneState() || { dock: "right" });
-  }
-  automationPanelPrevEditorVisible = false;
-};
-
 // Screen Files (Open / Save As)
 let screenFileMode = "open"; // "open" | "manager" | "saveAs"
 let screenFileSource = "screens"; // "screens" | "images"
@@ -4492,6 +4301,10 @@ const pipeGradientSmoothSelect = document.getElementById("pipeGradientSmooth");
 const getPipeCapDefaultWidth = (cap) => String(cap || "flat").toLowerCase() === "flange" ? 200 : 100;
 const getPipeCapDefaultLength = (cap) => ({ round: 50, triangle: 86.6, square: 50, flange: 50 })[String(cap || "flat").toLowerCase()] || 50;
 const polylineStrokeInput = document.getElementById("polylineStroke");
+const polylineGeometryRows = document.getElementById("polylineGeometryRows");
+const polylineXInput = document.getElementById("polylineX");
+const polylineYInput = document.getElementById("polylineY");
+const polylinePointsInput = document.getElementById("polylinePoints");
 const polylineFillRow = document.getElementById("polylineFillRow");
 const polylineFillInput = document.getElementById("polylineFill");
 const polylineFillTextInput = document.getElementById("polylineFillText");
@@ -10146,7 +9959,7 @@ const applyGroupColorOverridesToObject = (sourceObj, overrides) => {
   const type = String(obj.type || "").trim();
 
   if (overrides.fillColor) {
-    if (["rect", "alarms-panel", "ellipse", "circle", "polygon", "bar", "button", "indicator"].includes(type)) {
+    if ((["rect", "alarms-panel", "ellipse", "circle", "polygon", "bar", "button", "indicator"].includes(type) || isClosedDynamicPath(obj))) {
       obj.fill = overrides.fillColor;
       delete obj.fillAutomation;
     } else if (type === "text") {
@@ -11204,8 +11017,8 @@ const updateMenuState = () => {
   const canAddPipeDynamic = selectedIndices.length === 1 && activeObjects[selectedIndices[0]]?.type === "pipe";
   const canAddColorDynamic = canAddRectDynamic || canAddLineDynamic || canAddPipeDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddCircleDynamic || canAddPolygonDynamic;
   const canAddStatesDynamic = canAddRectDynamic || canAddLineDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddCircleDynamic || canAddGroupDynamic;
-  const canAddRotationDynamic = canAddRectDynamic || canAddLineDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddGroupDynamic;
-  const canAddMotionDynamic = canAddRectDynamic || canAddLineDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddCircleDynamic || canAddGroupDynamic;
+  const canAddRotationDynamic = canAddRectDynamic || Boolean(getSelectedLineObject()?.type === "line") || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddGroupDynamic;
+  const canAddMotionDynamic = canAddRectDynamic || Boolean(getSelectedLineObject()?.type === "line") || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddCircleDynamic || canAddGroupDynamic;
   const canOpenDynamics = canAddRectDynamic || canAddLineDynamic || canAddPipeDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddGroupDynamic || canAddCircleDynamic || canAddPolygonDynamic;
   const selectedObject = selectedIndices.length === 1 ? activeObjects[selectedIndices[0]] : null;
   const canAddShadow = Boolean(selectedObject && !["alarms-panel", "viewport"].includes(selectedObject.type));
@@ -13835,7 +13648,7 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
     image.setAttribute("y", y);
     image.setAttribute("width", w);
     image.setAttribute("height", h);
-    image.setAttribute("preserveAspectRatio", "xMidYMid meet");
+    image.setAttribute("preserveAspectRatio", obj.preserveAspectRatio === "none" ? "none" : "xMidYMid meet");
     setImageHref(image, imgUrl(href));
     if (hasRotation) applyRotationTransform(image, obj);
     parent.appendChild(image);
@@ -15430,8 +15243,9 @@ const renderScreen = ({ refreshReferenceHealth = true } = {}) => {
     hmiSvg.appendChild(borderRect);
   }
 
+  // Alias discovery traverses the whole screen; share one context for this redraw.
+  const screenAliasContext = isEditMode ? buildAliasPreviewContext(currentScreenObj) : currentScreenAliasContext;
   objects.forEach((sourceObj, index) => {
-    const screenAliasContext = isEditMode ? buildAliasPreviewContext(currentScreenObj) : currentScreenAliasContext;
     const obj = getDisplayObject(resolveAliasObject(sourceObj, screenAliasContext));
     if (!shouldRenderObject(obj)) return;
     if (obj?.type !== "number-input" && obj?.type !== "viewport") {
@@ -16477,6 +16291,13 @@ const syncPropertiesFromSelection = () => {
 	    if (curveStrokeWidthInput) curveStrokeWidthInput.value = Number(obj.strokeWidth ?? 2);
 	  }
   if (obj.type === "polyline" || obj.type === "pipe") {
+    polylineGeometryRows?.classList.toggle("is-hidden", obj.type !== "polyline");
+    if (obj.type === "polyline") {
+      const points = Array.isArray(obj.points) ? obj.points : [];
+      if (polylineXInput) setInputValueSafe(polylineXInput, points.length ? Math.min(...points.map(p => Number(p.x))) : 0);
+      if (polylineYInput) setInputValueSafe(polylineYInput, points.length ? Math.min(...points.map(p => Number(p.y))) : 0);
+      if (polylinePointsInput) setInputValueSafe(polylinePointsInput, polygonPointsText(points));
+    }
     const strokeValue = obj.type === "pipe" ? (obj.color || "#d3d3d3") : ((!obj.stroke || obj.stroke === "none") ? "#ffffff" : obj.stroke);
     if (polylineStrokeInput) polylineStrokeInput.value = strokeValue;
     if (polylineStrokeTextInput) polylineStrokeTextInput.value = strokeValue;
@@ -16762,7 +16583,7 @@ function applyMultiStateVisualOverridesToObject(sourceObj) {
   const obj = { ...sourceObj };
   const type = String(obj.type || "").trim();
   if (overrides.fillColor) {
-    if (["rect", "alarms-panel", "ellipse", "circle", "polygon", "bar", "button", "indicator"].includes(type)) {
+    if ((["rect", "alarms-panel", "ellipse", "circle", "polygon", "bar", "button", "indicator"].includes(type) || isClosedDynamicPath(obj))) {
       obj.fill = overrides.fillColor;
       delete obj.fillAutomation;
     } else if (type === "line" || type === "curve" || type === "polyline" || type === "pipe" || type === "spline") {
@@ -17230,7 +17051,7 @@ const updatePropertiesPanel = () => {
   const showViewport = Boolean(obj && obj.type === "viewport");
   const showRect = Boolean(obj && (obj.type === "rect" || obj.type === "alarms-panel"));
   const showDynamicRect = Boolean(obj && obj.type === "rect");
-  const showDynamicLine = Boolean(obj && (obj.type === "line" || obj.type === "pipe"));
+  const showDynamicLine = Boolean(obj && (isPathDynamicObject(obj) || obj.type === "pipe"));
   const showDynamicEllipse = Boolean(obj && obj.type === "ellipse");
   const showDynamicText = Boolean(obj && obj.type === "text");
   const showDynamicButton = Boolean(obj && obj.type === "button");
@@ -17250,7 +17071,6 @@ const updatePropertiesPanel = () => {
   const supportsShadow = Boolean(obj && !["alarms-panel", "viewport"].includes(obj.type));
   const hasShadow = Boolean(supportsShadow && obj.shadow);
   const hasDropShadow = Boolean(supportsShadow && obj.dropShadow);
-  const showAutomationLaunch = Boolean(obj && obj.type !== "alarms-panel" && supportsAutomationPanelForObject(obj) && !showDynamicRect && !showDynamicLine && !showDynamicEllipse && !showDynamicText && !showDynamicButton && !showDynamicGroup && !showDynamicCircle && !showDynamicPolygon && !showBar);
   if (screenProps) screenProps.classList.toggle("is-hidden", isMulti || showText || showButton || showGroup || showViewport || showRect || showEllipse || showCircle || showLine || showCurve || showPolyline || showSpline || showPolygon || showBar || showNumberInput || showIndicator);
   if (textProps) textProps.classList.toggle("is-hidden", !showText);
   if (buttonProps) buttonProps.classList.toggle("is-hidden", !showButton);
@@ -17268,7 +17088,6 @@ const updatePropertiesPanel = () => {
   if (splineProps) splineProps.classList.toggle("is-hidden", !showSpline);
   if (polygonProps) polygonProps.classList.toggle("is-hidden", !showPolygon);
   if (barProps) barProps.classList.toggle("is-hidden", !showBar);
-  if (automationLaunchRow) automationLaunchRow.classList.toggle("is-hidden", !showAutomationLaunch);
   if (alignTools) alignTools.classList.toggle("is-hidden", !isMulti);
   if ((showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle || showDynamicPolygon) && !hasVisibilityDynamic(obj) && isVisibilityDynamicTab(currentObjectDynamicTab)) currentObjectDynamicTab = "properties";
   if (isVisibilityDynamicTab(currentObjectDynamicTab) && hasVisibilityDynamic(obj)) {
@@ -17323,7 +17142,9 @@ const updatePropertiesPanel = () => {
   if (showRectMotionTab) ensureRectMotionDraft(obj);
   if (showDynamicRect && rectProps) rectProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectLevelTab || showRectStatesTab || showRectRotationTab || showRectMotionTab || showShadowTab);
   if (showLine && lineProps) lineProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectStatesTab || showRectRotationTab || showRectMotionTab);
-  if (obj?.type === "pipe" && polylineProps) polylineProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab);
+  if (showPolyline && polylineProps) polylineProps.classList.toggle("is-hidden", currentObjectDynamicTab !== "properties");
+  if (showSpline && splineProps) splineProps.classList.toggle("is-hidden", currentObjectDynamicTab !== "properties");
+  if (showCurve && curveProps) curveProps.classList.toggle("is-hidden", currentObjectDynamicTab !== "properties");
   if (showDynamicEllipse && ellipseProps) ellipseProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectLevelTab || showRectStatesTab || showRectRotationTab || showRectMotionTab);
   if (showDynamicText && textProps) textProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectStatesTab || showRectRotationTab || showRectMotionTab);
   if (showDynamicButton && buttonProps) buttonProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectLevelTab || showRectStatesTab || showRectRotationTab || showRectMotionTab);
@@ -17331,7 +17152,7 @@ const updatePropertiesPanel = () => {
   if (showDynamicCircle && circleProps) circleProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectLevelTab || showRectStatesTab || showRectMotionTab);
   if (showDynamicPolygon && polygonProps) polygonProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectLevelTab);
   if (showShadowTab || showDropShadowTab) {
-    [textProps, buttonProps, groupProps, objectActionProps, numberInputProps, indicatorProps, rectProps, ellipseProps, circleProps, lineProps, curveProps, polylineProps, splineProps, polygonProps, barProps, automationLaunchRow].forEach((panel) => panel?.classList.add("is-hidden"));
+    [textProps, buttonProps, groupProps, objectActionProps, numberInputProps, indicatorProps, rectProps, ellipseProps, circleProps, lineProps, curveProps, polylineProps, splineProps, polygonProps, barProps].forEach((panel) => panel?.classList.add("is-hidden"));
   }
   if (objectDynamicVisibilityHost) objectDynamicVisibilityHost.classList.toggle("is-hidden", !showRectVisibilityTab);
   if (objectDynamicColorHost) objectDynamicColorHost.classList.toggle("is-hidden", !showRectColorTab);
@@ -17402,7 +17223,6 @@ const updatePropertiesPanel = () => {
   if (rectRotationActionRow) rectRotationActionRow.classList.toggle("is-hidden", !showRectRotationTab);
   if (rectMotionActionRow) rectMotionActionRow.classList.toggle("is-hidden", !showRectMotionTab);
   updateMenuState();
-  if (automationPanelOpen) populateAutomationPanel();
 	  if (isMulti) {
 	    return;
 	  }
@@ -17614,11 +17434,11 @@ const updatePolylineProperty = (patch) => {
   setDirty(true);
 };
 
-const updatePipePosition = (axis, value) => {
+const updatePointObjectPosition = (axis, value, objectType) => {
   const activeObjects = getActiveObjects();
   if (!activeObjects || selectedIndices.length !== 1) return;
   const obj = activeObjects[selectedIndices[0]];
-  if (!obj || obj.type !== "pipe" || !Array.isArray(obj.points) || !obj.points.length) return;
+  if (!obj || obj.type !== objectType || !Array.isArray(obj.points) || !obj.points.length) return;
   const coordinate = axis === "y" ? "y" : "x";
   const current = Math.min(...obj.points.map((point) => Number(point?.[coordinate] ?? 0)));
   const delta = Number(value) - current;
@@ -17668,7 +17488,7 @@ const polygonPointsText = (points) => {
     .join(" ");
 };
 
-const parsePolygonPointsText = (rawText) => {
+const parsePolygonPointsText = (rawText, minimumPoints = 3, preservePrecision = false) => {
   const raw = String(rawText || "").trim();
   if (!raw) return { ok: false, error: "Vertices are required." };
   const tokens = raw
@@ -17683,9 +17503,9 @@ const parsePolygonPointsText = (rawText) => {
     const x = Number(parts[0]);
     const y = Number(parts[1]);
     if (!Number.isFinite(x) || !Number.isFinite(y)) return { ok: false, error: `Invalid number in '${tok}'.` };
-    points.push({ x: Math.round(x), y: Math.round(y) });
+    points.push(preservePrecision ? { x, y } : { x: Math.round(x), y: Math.round(y) });
   }
-  if (points.length < 3) return { ok: false, error: "Polygon needs at least 3 vertices." };
+  if (points.length < minimumPoints) return { ok: false, error: `At least ${minimumPoints} vertices are required.` };
   return { ok: true, points };
 };
 
@@ -19827,7 +19647,6 @@ function bindScreenManager() {
 const setMode = (next) => {
   if (isTouchRuntimeEndpoint) next = false;
   if (!next && poseEditSession) cancelPoseEdit({ keepTool: true });
-  if (!next && automationPanelOpen) closeAutomationPanel();
   const wasEditMode = isEditMode;
   if (wasEditMode && !next && authSession) {
     authServerLoggedOutSinceMs = 0;
@@ -20686,12 +20505,6 @@ if (setpointValueInput) {
 
 window.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
-  if (automationPanelOpen) {
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    closeAutomationPanel();
-    return;
-  }
   closePopup();
   closeSetpointPrompt();
   closeSettings();
@@ -23378,12 +23191,34 @@ if (curveStrokeWidthInput) {
 
 if (pipeXInput) pipeXInput.addEventListener("change", () => {
   const value = Number(pipeXInput.value);
-  if (Number.isFinite(value)) updatePipePosition("x", value);
+  if (Number.isFinite(value)) updatePointObjectPosition("x", value, "pipe");
+});
+
+for (const [input, axis] of [[polylineXInput, "x"], [polylineYInput, "y"]]) {
+  input?.addEventListener("change", () => {
+    if (!input.value.trim()) return;
+    const value = Number(input.value);
+    if (!Number.isFinite(value)) return;
+    updatePointObjectPosition(axis, value, "polyline");
+    updatePropertiesPanel();
+  });
+}
+polylinePointsInput?.addEventListener("change", () => {
+  const obj = selectedIndices.length === 1 ? getActiveObjects()?.[selectedIndices[0]] : null;
+  if (obj?.type !== "polyline") return;
+  const parsed = parsePolygonPointsText(polylinePointsInput.value, obj.closed ? 3 : 2, true);
+  if (!parsed.ok) {
+    setEditorStatusSafe(parsed.error);
+    return;
+  }
+  updatePolylineProperty({ points: parsed.points });
+  updatePropertiesPanel();
+  setEditorStatusSafe("Updated polyline vertices.");
 });
 
 if (pipeYInput) pipeYInput.addEventListener("change", () => {
   const value = Number(pipeYInput.value);
-  if (Number.isFinite(value)) updatePipePosition("y", value);
+  if (Number.isFinite(value)) updatePointObjectPosition("y", value, "pipe");
 });
 
 if (polylineStrokeInput) {
@@ -25342,7 +25177,7 @@ initializeCompactTagBindingRows();
 const applyRectRotationDraftToObject = () => {
   const activeObjects = getActiveObjects();
   const obj = getSelectedRotationDynamicObject();
-  if (!activeObjects || !obj || !((isEditingRectRotationDynamic() && obj.type === "rect") || (isEditingLineRotationDynamic() && obj.type === "line") || (isEditingEllipseRotationDynamic() && obj.type === "ellipse") || (isEditingTextRotationDynamic() && obj.type === "text") || (isEditingButtonRotationDynamic() && obj.type === "button") || (isEditingGroupRotationDynamic() && obj.type === "group"))) return false;
+  if (!activeObjects || !obj || !((isEditingRectRotationDynamic() && obj.type === "rect") || (isEditingLineRotationDynamic() && isPathDynamicObject(obj)) || (isEditingEllipseRotationDynamic() && obj.type === "ellipse") || (isEditingTextRotationDynamic() && obj.type === "text") || (isEditingButtonRotationDynamic() && obj.type === "button") || (isEditingGroupRotationDynamic() && obj.type === "group"))) return false;
   ensureRectRotationDraft(obj);
   recordHistory();
   obj.pivotMode = normalizePivotMode(rectRotationDraft?.pivotMode, obj.type);
@@ -25375,7 +25210,7 @@ const updateSelectedObjectRotationConfig = (patch) => {
   if (selectedIndices.length !== 1) return;
   const obj = activeObjects[selectedIndices[0]];
   if (!obj || !ROTATION_PIVOT_TYPES.has(String(obj.type || ""))) return;
-  if ((isEditingRectRotationDynamic() && obj.type === "rect") || (isEditingLineRotationDynamic() && obj.type === "line") || (isEditingEllipseRotationDynamic() && obj.type === "ellipse") || (isEditingTextRotationDynamic() && obj.type === "text") || (isEditingButtonRotationDynamic() && obj.type === "button") || (isEditingGroupRotationDynamic() && obj.type === "group")) {
+  if ((isEditingRectRotationDynamic() && obj.type === "rect") || (isEditingLineRotationDynamic() && isPathDynamicObject(obj)) || (isEditingEllipseRotationDynamic() && obj.type === "ellipse") || (isEditingTextRotationDynamic() && obj.type === "text") || (isEditingButtonRotationDynamic() && obj.type === "button") || (isEditingGroupRotationDynamic() && obj.type === "group")) {
     ensureRectRotationDraft(obj);
     const next = cloneRectRotationDraft(rectRotationDraft || {});
     if ("pivotMode" in patch) {
@@ -25861,7 +25696,7 @@ rectRotationActionRow.appendChild(rectRotationActionInline);
 rectRotationDeleteBtn.addEventListener("click", () => {
   const activeObjects = getActiveObjects();
   const obj = getSelectedRotationDynamicObject();
-  if (!activeObjects || !obj || !((obj.type === "rect" && hasRectRotationDynamic(obj)) || (obj.type === "line" && hasLineRotationDynamic(obj)) || (obj.type === "ellipse" && hasEllipseRotationDynamic(obj)) || (obj.type === "text" && hasTextRotationDynamic(obj)) || (obj.type === "button" && hasButtonRotationDynamic(obj)) || (obj.type === "group" && hasGroupRotationDynamic(obj)))) return;
+  if (!activeObjects || !obj || !((obj.type === "rect" && hasRectRotationDynamic(obj)) || (isPathDynamicObject(obj) && hasLineRotationDynamic(obj)) || (obj.type === "ellipse" && hasEllipseRotationDynamic(obj)) || (obj.type === "text" && hasTextRotationDynamic(obj)) || (obj.type === "button" && hasButtonRotationDynamic(obj)) || (obj.type === "group" && hasGroupRotationDynamic(obj)))) return;
   recordHistory();
   delete obj.rotationAutomation;
   delete obj.pivotMode;
@@ -25954,7 +25789,7 @@ const getMotionSummary = (motion) => {
 const applyRectMotionDraftToObject = () => {
   const activeObjects = getActiveObjects();
   const obj = getSelectedMotionDynamicObject();
-  if (!activeObjects || !obj || !((isEditingRectMotionDynamic() && obj.type === "rect") || (isEditingLineMotionDynamic() && obj.type === "line") || (isEditingEllipseMotionDynamic() && obj.type === "ellipse") || (isEditingTextMotionDynamic() && obj.type === "text") || (isEditingButtonMotionDynamic() && obj.type === "button") || (isEditingCircleMotionDynamic() && obj.type === "circle") || (isEditingGroupMotionDynamic() && obj.type === "group"))) return false;
+  if (!activeObjects || !obj || !((isEditingRectMotionDynamic() && obj.type === "rect") || (isEditingLineMotionDynamic() && isPathDynamicObject(obj)) || (isEditingEllipseMotionDynamic() && obj.type === "ellipse") || (isEditingTextMotionDynamic() && obj.type === "text") || (isEditingButtonMotionDynamic() && obj.type === "button") || (isEditingCircleMotionDynamic() && obj.type === "circle") || (isEditingGroupMotionDynamic() && obj.type === "group"))) return false;
   ensureRectMotionDraft(obj);
   recordHistory();
   obj.motion = cloneRectMotionDraft(normalizeMotionAutomationState(rectMotionDraft || { enabled: true, inputMin: 0, inputMax: 1 }));
@@ -25975,7 +25810,7 @@ const updateSelectedObjectMotionConfig = (patch) => {
   if (selectedIndices.length !== 1) return;
   const obj = activeObjects[selectedIndices[0]];
   if (!supportsMotionPose(obj)) return;
-  if ((isEditingRectMotionDynamic() && obj.type === "rect") || (isEditingLineMotionDynamic() && obj.type === "line") || (isEditingEllipseMotionDynamic() && obj.type === "ellipse") || (isEditingTextMotionDynamic() && obj.type === "text") || (isEditingButtonMotionDynamic() && obj.type === "button") || (isEditingCircleMotionDynamic() && obj.type === "circle") || (isEditingGroupMotionDynamic() && obj.type === "group")) {
+  if ((isEditingRectMotionDynamic() && obj.type === "rect") || (isEditingLineMotionDynamic() && isPathDynamicObject(obj)) || (isEditingEllipseMotionDynamic() && obj.type === "ellipse") || (isEditingTextMotionDynamic() && obj.type === "text") || (isEditingButtonMotionDynamic() && obj.type === "button") || (isEditingCircleMotionDynamic() && obj.type === "circle") || (isEditingGroupMotionDynamic() && obj.type === "group")) {
     ensureRectMotionDraft(obj);
     const next = normalizeMotionAutomationState({ ...(rectMotionDraft || {}), ...(patch || {}) });
     rectMotionDraft = cloneRectMotionDraft(next);
@@ -26018,7 +25853,7 @@ const startPoseEdit = (poseKey) => {
   if (poseEditSession) cancelPoseEdit({ keepTool: true });
   const currentPose = captureMotionPose(obj);
   if (!currentPose) return;
-  const sourceMotion = (((isEditingRectMotionDynamic() && obj.type === "rect") || (isEditingLineMotionDynamic() && obj.type === "line") || (isEditingEllipseMotionDynamic() && obj.type === "ellipse") || (isEditingTextMotionDynamic() && obj.type === "text") || (isEditingButtonMotionDynamic() && obj.type === "button") || (isEditingCircleMotionDynamic() && obj.type === "circle") || (isEditingGroupMotionDynamic() && obj.type === "group")))
+  const sourceMotion = (((isEditingRectMotionDynamic() && obj.type === "rect") || (isEditingLineMotionDynamic() && isPathDynamicObject(obj)) || (isEditingEllipseMotionDynamic() && obj.type === "ellipse") || (isEditingTextMotionDynamic() && obj.type === "text") || (isEditingButtonMotionDynamic() && obj.type === "button") || (isEditingCircleMotionDynamic() && obj.type === "circle") || (isEditingGroupMotionDynamic() && obj.type === "group")))
     ? (ensureRectMotionDraft(obj), rectMotionDraft || {})
     : (obj.motion || {});
   const editPose = sourceMotion?.[poseKey] || currentPose;
@@ -26426,7 +26261,7 @@ function syncRectMotionControlFromDraft(obj) {
 rectMotionDeleteBtn.addEventListener("click", () => {
   const activeObjects = getActiveObjects();
   const obj = getSelectedMotionDynamicObject();
-  if (!activeObjects || !obj || !((obj.type === "rect" && hasRectMotionDynamic(obj)) || (obj.type === "line" && hasLineMotionDynamic(obj)) || (obj.type === "ellipse" && hasEllipseMotionDynamic(obj)) || (obj.type === "text" && hasTextMotionDynamic(obj)) || (obj.type === "button" && hasButtonMotionDynamic(obj)) || (obj.type === "circle" && hasCircleMotionDynamic(obj)) || (obj.type === "group" && hasGroupMotionDynamic(obj)))) return;
+  if (!activeObjects || !obj || !((obj.type === "rect" && hasRectMotionDynamic(obj)) || (isPathDynamicObject(obj) && hasLineMotionDynamic(obj)) || (obj.type === "ellipse" && hasEllipseMotionDynamic(obj)) || (obj.type === "text" && hasTextMotionDynamic(obj)) || (obj.type === "button" && hasButtonMotionDynamic(obj)) || (obj.type === "circle" && hasCircleMotionDynamic(obj)) || (obj.type === "group" && hasGroupMotionDynamic(obj)))) return;
   recordHistory();
   delete obj.motion;
   rectMotionDraft = null;
@@ -26931,22 +26766,22 @@ const initializeAdditionalAutomationSections = () => {
   additionalAutomationSectionsInitialized = true;
 };
 
-const initializeAutomationPanel = () => {
-  if (!automationPanelStore) return;
+const initializeAutomationControlStore = () => {
+  if (!automationControlStore) return;
   initializeAdditionalAutomationSections();
-  if (visibilityProps && visibilityProps.parentNode !== automationPanelStore) automationPanelStore.appendChild(visibilityProps);
+  if (visibilityProps && visibilityProps.parentNode !== automationControlStore) automationControlStore.appendChild(visibilityProps);
   motionControlConfigs.forEach((control) => {
-    if (control.sectionEl && control.sectionEl.parentNode !== automationPanelStore) automationPanelStore.appendChild(control.sectionEl);
+    if (control.sectionEl && control.sectionEl.parentNode !== automationControlStore) automationControlStore.appendChild(control.sectionEl);
   });
   rotationControlConfigs.forEach((control) => {
-    if (control.sectionEl && control.sectionEl.parentNode !== automationPanelStore) automationPanelStore.appendChild(control.sectionEl);
+    if (control.sectionEl && control.sectionEl.parentNode !== automationControlStore) automationControlStore.appendChild(control.sectionEl);
   });
   automationSectionConfigs.forEach((config) => {
-    if (config.sectionEl && config.sectionEl.parentNode !== automationPanelStore) automationPanelStore.appendChild(config.sectionEl);
+    if (config.sectionEl && config.sectionEl.parentNode !== automationControlStore) automationControlStore.appendChild(config.sectionEl);
   });
 };
 
-initializeAutomationPanel();
+initializeAutomationControlStore();
 
 function bindAutomationControls(opts) {
   const {
@@ -32643,12 +32478,6 @@ if (editorPaneTitlebar && editorPane) {
 
 applyEditorZoom(1);
 
-if (automationLaunchBtn) {
-  automationLaunchBtn.addEventListener("click", () => {
-    openAutomationPanel();
-  });
-}
-
 if (objectDynamicTabPropertiesBtn) {
   objectDynamicTabPropertiesBtn.addEventListener("click", () => {
     setObjectDynamicTab("properties");
@@ -32849,74 +32678,6 @@ document.addEventListener("click", (event) => {
   event.preventDefault();
   openRectColorExpressionModal();
 });
-
-if (automationPanelCloseBtn) {
-  automationPanelCloseBtn.addEventListener("click", () => {
-    closeAutomationPanel();
-  });
-}
-
-[
-  automationTabMotionBtn,
-  automationTabRotationBtn,
-  automationTabVisibilityBtn,
-  automationTabTextBtn,
-  automationTabColorBtn,
-  automationTabLevelBtn,
-  automationTabFillBtn,
-  automationTabStrokeBtn,
-  automationTabValueBtn
-].forEach((button) => {
-  if (!button) return;
-  button.addEventListener("click", () => {
-    setAutomationTab(String(button.dataset.tab || "visibility"));
-  });
-});
-
-if (automationPanel) {
-  applyAutomationPanelState(getAutomationPanelState() || {});
-}
-
-if (automationPanelTitlebar && automationPanel) {
-  automationPanelTitlebar.addEventListener("mousedown", (event) => {
-    if (event.button !== 0) return;
-    if (event.target instanceof Element && event.target.closest("button")) return;
-    event.preventDefault();
-    const rect = automationPanel.getBoundingClientRect();
-    const startX = event.clientX;
-    const startY = event.clientY;
-    const offsetX = startX - rect.left;
-    const offsetY = startY - rect.top;
-    const w = rect.width;
-    const h = rect.height;
-
-    const onMove = (e) => {
-      const vw = window.innerWidth;
-      const vh = window.innerHeight;
-      const toolbarH = Number(getComputedStyle(document.documentElement).getPropertyValue("--toolbar-height").replace("px", "")) || 48;
-      const minX = (Number(getComputedStyle(document.documentElement).getPropertyValue("--left-toolbar-width").replace("px", "")) || 38) + 8;
-      const x = clamp(e.clientX - offsetX, minX, vw - w - 10);
-      const y = clamp(e.clientY - offsetY, toolbarH + 4, vh - h - 10);
-      automationPanel.style.left = `${x}px`;
-      automationPanel.style.top = `${y}px`;
-    };
-
-    const onUp = () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-      const rect2 = automationPanel.getBoundingClientRect();
-      saveAutomationPanelState({
-        x: Math.round(rect2.left),
-        y: Math.round(rect2.top),
-        w: Math.round(rect2.width),
-        h: Math.round(rect2.height)
-      });
-    };
-
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  });
-}
 
 if (leftSelectToolBtn) {
   leftSelectToolBtn.addEventListener("click", () => {
