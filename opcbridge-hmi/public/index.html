@@ -76,11 +76,11 @@
           </div>
           <div id="dynamicsMenuWrap" class="menu-flyout-wrap">
             <button id="dynamicsMenuBtn" class="menu-item menu-item-flyout" type="button" aria-haspopup="true" aria-expanded="false">
-              <span>Dynamics</span>
+              <span>Bindings</span>
               <span class="menu-item-caret" aria-hidden="true">›</span>
             </button>
-            <div id="dynamicsMenuFlyout" class="menu-flyout is-hidden" role="menu" aria-label="Dynamics menu">
-              <div class="menu-group-label">Automations</div>
+            <div id="dynamicsMenuFlyout" class="menu-flyout is-hidden" role="menu" aria-label="Bindings menu">
+              <div class="menu-group-label">Bindings</div>
               <button id="dynamicsAddVisibilityMenuBtn" class="menu-item" type="button">Visibility</button>
               <button id="dynamicsAddColorMenuBtn" class="menu-item" type="button">Color</button>
               <button id="dynamicsAddStatesMenuBtn" class="menu-item" type="button">States</button>
@@ -168,13 +168,13 @@
       </button>
       <div class="left-tool-divider" aria-hidden="true"></div>
       <div id="toolbarDynamicsWrap" class="left-tool-flyout toolbar-dynamics-wrap">
-        <button id="toolbarDynamicsBtn" class="left-tool-btn" type="button" title="Add automation or effect" aria-label="Add automation or effect" aria-haspopup="true" aria-expanded="false">
+        <button id="toolbarDynamicsBtn" class="left-tool-btn" type="button" title="Add Binding" aria-label="Add Binding" aria-haspopup="true" aria-expanded="false">
           <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
             <path d="M13.2 2L5.5 13h5.2L9.8 22l8.7-12h-5.4L13.2 2z" fill="currentColor"/>
           </svg>
         </button>
-        <div id="toolbarDynamicsFlyout" class="left-flyout toolbar-dynamics-flyout is-hidden" role="menu" aria-label="Add automation or effect">
-          <div class="menu-group-label">Automations</div>
+        <div id="toolbarDynamicsFlyout" class="left-flyout toolbar-dynamics-flyout is-hidden" role="menu" aria-label="Add Binding">
+          <div class="menu-group-label">Bindings</div>
           <button class="left-flyout-item" type="button" data-add-dynamic="visibility">Visibility</button>
           <button class="left-flyout-item" type="button" data-add-dynamic="color">Color</button>
           <button class="left-flyout-item" type="button" data-add-dynamic="states">States</button>
@@ -1443,7 +1443,7 @@
                     <input id="rectColorFill" type="color" />
                     <input id="rectColorFillText" type="text" placeholder="#3a3f4b" />
                     <button id="rectColorFillSwatchBtn" class="swatch-btn" type="button" title="Open color picker" aria-label="Open color picker">🎨</button>
-                    <div id="rectColorFillSwatches" class="swatch-popover" aria-label="Dynamic fill swatches"></div>
+                    <div id="rectColorFillSwatches" class="swatch-popover" aria-label="Binding fill swatches"></div>
                   </div>
                 </div>
                 <div class="prop-row" id="rectColorStrokeRow">
@@ -1452,7 +1452,7 @@
                     <input id="rectColorStroke" type="color" />
                     <input id="rectColorStrokeText" type="text" placeholder="#ffffff" />
                     <button id="rectColorStrokeSwatchBtn" class="swatch-btn" type="button" title="Open color picker" aria-label="Open color picker">🎨</button>
-                    <div id="rectColorStrokeSwatches" class="swatch-popover" aria-label="Dynamic stroke swatches"></div>
+                    <div id="rectColorStrokeSwatches" class="swatch-popover" aria-label="Binding stroke swatches"></div>
                   </div>
                 </div>
               </div>
@@ -1749,7 +1749,7 @@
 		              <input id="polygonStrokeWidth" type="number" min="0" step="1" />
 		            </div>
 		            <div class="prop-group-header">
-		              <div class="prop-group-title">Fill Automation</div>
+		              <div class="prop-group-title">Fill Binding</div>
 		              <div class="prop-inline">
 		                <label class="inline-check">
 		                  <input id="polygonFillAutoEnabled" type="checkbox" />
@@ -1793,7 +1793,7 @@
 		                  <input id="polygonFillAutoOn" type="color" />
 		                  <input id="polygonFillAutoOnText" type="text" placeholder="#3a3f4b" />
 		                  <button id="polygonFillAutoOnSwatchBtn" class="swatch-btn" type="button" title="Open color picker" aria-label="Open color picker">🎨</button>
-		                  <div id="polygonFillAutoOnSwatches" class="swatch-popover" aria-label="Polygon fill automation on swatches"></div>
+		                  <div id="polygonFillAutoOnSwatches" class="swatch-popover" aria-label="Polygon fill binding on swatches"></div>
 		                </div>
 		              </div>
 		              <div class="prop-row">
@@ -1802,12 +1802,12 @@
 		                  <input id="polygonFillAutoOff" type="color" />
 		                  <input id="polygonFillAutoOffText" type="text" placeholder="#3a3f4b" />
 		                  <button id="polygonFillAutoOffSwatchBtn" class="swatch-btn" type="button" title="Open color picker" aria-label="Open color picker">🎨</button>
-		                  <div id="polygonFillAutoOffSwatches" class="swatch-popover" aria-label="Polygon fill automation off swatches"></div>
+		                  <div id="polygonFillAutoOffSwatches" class="swatch-popover" aria-label="Polygon fill binding off swatches"></div>
 		                </div>
 		              </div>
 		            </div>
 		            <div class="prop-group-header">
-		              <div class="prop-group-title">Border Color Automation</div>
+		              <div class="prop-group-title">Border Color Binding</div>
 		              <div class="prop-inline">
 		                <label class="inline-check">
 		                  <input id="polygonStrokeAutoEnabled" type="checkbox" />
@@ -1851,7 +1851,7 @@
 		                  <input id="polygonStrokeAutoOn" type="color" />
 		                  <input id="polygonStrokeAutoOnText" type="text" placeholder="#ffffff" />
 		                  <button id="polygonStrokeAutoOnSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
-		                  <div id="polygonStrokeAutoOnSwatches" class="swatch-popover" aria-label="Polygon border automation on swatches"></div>
+		                  <div id="polygonStrokeAutoOnSwatches" class="swatch-popover" aria-label="Polygon border binding on swatches"></div>
 		                </div>
 		              </div>
 		              <div class="prop-row">
@@ -1860,7 +1860,7 @@
 		                  <input id="polygonStrokeAutoOff" type="color" />
 		                  <input id="polygonStrokeAutoOffText" type="text" placeholder="#ffffff" />
 		                  <button id="polygonStrokeAutoOffSwatchBtn" class="swatch-btn" type="button" title="Pick a swatch" aria-label="Pick a swatch">🎨</button>
-		                  <div id="polygonStrokeAutoOffSwatches" class="swatch-popover" aria-label="Polygon border automation off swatches"></div>
+		                  <div id="polygonStrokeAutoOffSwatches" class="swatch-popover" aria-label="Polygon border binding off swatches"></div>
 		                </div>
 		              </div>
 		            </div>

@@ -2039,7 +2039,7 @@ const ensureAutomationNumericExpressionModal = () => {
   const title = document.createElement("div");
   title.id = "automationNumericExpressionTitle";
   title.className = "popup-title";
-  title.textContent = "Automation Expression";
+  title.textContent = "Binding Expression";
   const closeBtn = document.createElement("button");
   closeBtn.type = "button";
   closeBtn.className = "panel-btn";
@@ -2215,7 +2215,7 @@ const openAutomationNumericExpressionModal = ({ title, value, apply }) => {
     apply: (expression) => apply(normalizeAutomationExpressionConnectionReferences(expression))
   };
   const titleEl = document.getElementById("automationNumericExpressionTitle");
-  if (titleEl) titleEl.textContent = title || "Automation Expression";
+  if (titleEl) titleEl.textContent = title || "Binding Expression";
   if (automationNumericExpressionEditor) automationNumericExpressionEditor.value = formatAutomationExpressionForDisplay(value);
   syncAutomationNumericExpressionValidationUi();
   hideAutomationNumericExpressionInsertMenu();
@@ -7334,7 +7334,7 @@ const renderReferenceHealthBadge = () => {
   referenceHealthBadge.innerHTML = `<span aria-hidden="true">⚠</span> Issues: ${count}`;
   referenceHealthBadge.classList.toggle("is-active", count > 0);
   referenceHealthBadge.title = count > 0
-    ? `View ${count} unresolved reference${count === 1 ? "" : "s"} or unsupported automation${count === 1 ? "" : "s"}`
+    ? `View ${count} unresolved reference${count === 1 ? "" : "s"} or unsupported binding${count === 1 ? "" : "s"}`
     : "All current references are valid";
   referenceHealthBadge.setAttribute("aria-label", `Reference Health: ${count} issue${count === 1 ? "" : "s"}`);
 };
@@ -16896,7 +16896,7 @@ const renderMultiStateEditor = (obj) => {
   const deleteAutomationBtn = document.createElement("button");
   deleteAutomationBtn.type = "button";
   deleteAutomationBtn.className = "panel-btn danger";
-  deleteAutomationBtn.textContent = "Delete Automation";
+  deleteAutomationBtn.textContent = "Delete Binding";
   sourceActions.appendChild(deleteAutomationBtn);
   form.appendChild(makeRow("Actions", sourceActions));
 
@@ -17216,7 +17216,7 @@ const renderSelectedReferenceProperties = (obj) => {
   });
   const hint = document.createElement("p");
   hint.className = "reference-property-hint";
-  hint.textContent = "References remain highlighted until their current tag, expression, screen, or automation can be verified.";
+  hint.textContent = "References remain highlighted until their current tag, expression, screen, or binding can be verified.";
   selectedReferenceHealthProps.appendChild(hint);
 };
 
@@ -25218,8 +25218,8 @@ function initializeCompactTagBindingRows() {
 
 
   [
-    { id: "polygonFillAutomation", fields: polygonFillAutoFields, modeSelect: polygonFillAutoModeSelect, connectionInput: polygonFillAutoConnectionInput, tagSelect: polygonFillAutoTagSelect, key: "fillAutomation", title: "Polygon Fill Automation Tag" },
-    { id: "polygonStrokeAutomation", fields: polygonStrokeAutoFields, modeSelect: polygonStrokeAutoModeSelect, connectionInput: polygonStrokeAutoConnectionInput, tagSelect: polygonStrokeAutoTagSelect, key: "strokeAutomation", title: "Polygon Stroke Automation Tag" }
+    { id: "polygonFillAutomation", fields: polygonFillAutoFields, modeSelect: polygonFillAutoModeSelect, connectionInput: polygonFillAutoConnectionInput, tagSelect: polygonFillAutoTagSelect, key: "fillAutomation", title: "Polygon Fill Binding Tag" },
+    { id: "polygonStrokeAutomation", fields: polygonStrokeAutoFields, modeSelect: polygonStrokeAutoModeSelect, connectionInput: polygonStrokeAutoConnectionInput, tagSelect: polygonStrokeAutoTagSelect, key: "strokeAutomation", title: "Polygon Stroke Binding Tag" }
   ].forEach((entry) => {
     registerCompactTagBinding({
       id: entry.id,
@@ -25477,16 +25477,16 @@ const getRotationAutomationSummary = (automation) => {
 const initializeRotationControls = () => {
   if (rotationControlConfigs.length) return;
   const definitions = [
-    { id: "text", types: ["text"], form: textProps, rotationInput: textRotationInput, title: "Rotation Automation" },
-    { id: "button", types: ["button"], form: buttonProps, rotationInput: buttonRotationInput, title: "Rotation Automation" },
-    { id: "number-input", types: ["number-input"], form: numberInputProps, rotationInput: numberInputRotationInput, title: "Rotation Automation" },
-    { id: "indicator", types: ["indicator"], form: indicatorProps, rotationInput: indicatorRotationInput, title: "Rotation Automation" },
-    { id: "viewport", types: ["viewport"], form: viewportProps, rotationInput: viewportRotationInput, title: "Rotation Automation" },
-    { id: "rect", types: ["rect"], form: rectProps, rotationInput: rectRotationInput, title: "Rotation Automation" },
-    { id: "ellipse", types: ["ellipse"], form: ellipseProps, rotationInput: ellipseRotationInput, title: "Rotation Automation" },
-    { id: "line", types: ["line"], form: lineProps, anchorInput: lineY2Input, title: "Rotation Automation" },
-    { id: "bar", types: ["bar"], form: barProps, rotationInput: barRotationInput, title: "Rotation Automation" },
-    { id: "group", types: ["group"], form: groupProps, rotationInput: groupRotationInput, title: "Rotation Automation" }
+    { id: "text", types: ["text"], form: textProps, rotationInput: textRotationInput, title: "Rotation Binding" },
+    { id: "button", types: ["button"], form: buttonProps, rotationInput: buttonRotationInput, title: "Rotation Binding" },
+    { id: "number-input", types: ["number-input"], form: numberInputProps, rotationInput: numberInputRotationInput, title: "Rotation Binding" },
+    { id: "indicator", types: ["indicator"], form: indicatorProps, rotationInput: indicatorRotationInput, title: "Rotation Binding" },
+    { id: "viewport", types: ["viewport"], form: viewportProps, rotationInput: viewportRotationInput, title: "Rotation Binding" },
+    { id: "rect", types: ["rect"], form: rectProps, rotationInput: rectRotationInput, title: "Rotation Binding" },
+    { id: "ellipse", types: ["ellipse"], form: ellipseProps, rotationInput: ellipseRotationInput, title: "Rotation Binding" },
+    { id: "line", types: ["line"], form: lineProps, anchorInput: lineY2Input, title: "Rotation Binding" },
+    { id: "bar", types: ["bar"], form: barProps, rotationInput: barRotationInput, title: "Rotation Binding" },
+    { id: "group", types: ["group"], form: groupProps, rotationInput: groupRotationInput, title: "Rotation Binding" }
   ];
 
   definitions.forEach((definition) => {
@@ -26797,7 +26797,7 @@ const initializeLevelAutomationControl = () => {
   if (levelAutomationControl) return levelAutomationControl;
   const sectionEl = document.createElement("div");
   sectionEl.className = "properties-form";
-  const title = createAutomationSectionTitle("Level Automation");
+  const title = createAutomationSectionTitle("Level Binding");
   const makeInput = (type = "text") => { const input = document.createElement("input"); input.type = type; return input; };
   const makeRow = (labelText, input) => {
     const row = document.createElement("div"); row.className = "prop-row";
@@ -28105,7 +28105,7 @@ if (rectColorFillSwatchBtn && rectColorFillSwatches) {
   rectColorFillSwatchBtn.addEventListener("click", (event) => {
     event.stopPropagation();
     openPaintPicker({
-      title: "Automation Fill Color",
+      title: "Binding Fill Color",
       value: rectColorFillTextInput?.value || rectColorFillInput?.value || "#3a3f4b",
       fallback: "#3a3f4b",
       onApply: (color) => applyRectColorDraftColor(color, rectColorFillInput, rectColorFillTextInput, "fillColor", "fillEnabled")
@@ -28117,7 +28117,7 @@ if (rectColorStrokeSwatchBtn && rectColorStrokeSwatches) {
   rectColorStrokeSwatchBtn.addEventListener("click", (event) => {
     event.stopPropagation();
     openPaintPicker({
-      title: "Automation Border Color",
+      title: "Binding Border Color",
       value: rectColorStrokeTextInput?.value || rectColorStrokeInput?.value || "#ffffff",
       fallback: "#ffffff",
       onApply: (color) => applyRectColorDraftColor(color, rectColorStrokeInput, rectColorStrokeTextInput, "strokeColor", "strokeEnabled")
@@ -28306,7 +28306,7 @@ if (polygonFillAutoOnSwatchBtn && polygonFillAutoOnSwatches) {
   polygonFillAutoOnSwatchBtn.addEventListener("click", (event) => {
     event.stopPropagation();
     openPaintPicker({
-      title: "Fill Automation On Color",
+      title: "Fill Binding On Color",
       value: polygonFillAutoOnTextInput?.value || polygonFillAutoOnInput?.value || "#3a3f4b",
       fallback: "#3a3f4b",
       onApply: (color) => applyAutomationColor("fillAutomation", "onColor", color, polygonFillAutoOnInput, polygonFillAutoOnTextInput)
@@ -28318,7 +28318,7 @@ if (polygonFillAutoOffSwatchBtn && polygonFillAutoOffSwatches) {
   polygonFillAutoOffSwatchBtn.addEventListener("click", (event) => {
     event.stopPropagation();
     openPaintPicker({
-      title: "Fill Automation Off Color",
+      title: "Fill Binding Off Color",
       value: polygonFillAutoOffTextInput?.value || polygonFillAutoOffInput?.value || "#3a3f4b",
       fallback: "#3a3f4b",
       onApply: (color) => applyAutomationColor("fillAutomation", "offColor", color, polygonFillAutoOffInput, polygonFillAutoOffTextInput)
