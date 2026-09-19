@@ -1179,25 +1179,6 @@ const syncRectColorUiFromDraft = (obj, draft) => {
   const next = rules[normalizedDraft.selectedRuleIndex] || getDefaultColorRuleForObject(obj);
   const sourceType = next.sourceType === "expression" ? "expression" : "tag";
   const mode = next.mode === "equals" ? "equals" : "threshold";
-  if (rectColorRuleRow) {
-    rectColorRuleRow.classList.add("is-hidden");
-    rectColorRuleRow.hidden = true;
-  }
-  if (rectColorRuleSelect) {
-    const previous = String(rectColorRuleSelect.value || "");
-    rectColorRuleSelect.innerHTML = "";
-    rules.forEach((rule, index) => {
-      const option = document.createElement("option");
-      option.value = String(index);
-      option.textContent = buildColorRuleSummary(rule, index);
-      rectColorRuleSelect.appendChild(option);
-    });
-    setSelectValueSafe(rectColorRuleSelect, String(Math.max(0, Math.min(normalizedDraft.selectedRuleIndex, rules.length - 1))));
-    if (!rectColorRuleSelect.value && previous) setSelectValueSafe(rectColorRuleSelect, previous);
-  }
-  if (rectColorRuleDeleteBtn) rectColorRuleDeleteBtn.disabled = rules.length <= 1;
-  if (rectColorRuleUpBtn) rectColorRuleUpBtn.disabled = normalizedDraft.selectedRuleIndex <= 0;
-  if (rectColorRuleDownBtn) rectColorRuleDownBtn.disabled = normalizedDraft.selectedRuleIndex >= (rules.length - 1);
   if (rectColorEnabledInput) rectColorEnabledInput.checked = next.enabled !== false;
   if (rectColorInvertInput) rectColorInvertInput.checked = Boolean(next.invert);
   const flashEnabled = Boolean(next.flashEnabled);
@@ -2691,83 +2672,87 @@ const ensureDropShadowEffectForSelectedObject = () => {
   updatePropertiesPanel();
 };
 
-const syncObjectDynamicVisibilityTabs = (obj) => {
-  if (!objectDynamicTabs || !objectDynamicTabVisibilityBtn) return;
-  const normalized = obj && hasVisibilityDynamic(obj) ? normalizeVisibilityState(rectVisibilityDraftObject === obj && rectVisibilityDraft ? rectVisibilityDraft : obj.visibility) : null;
-  const count = Array.isArray(normalized?.rules) ? normalized.rules.length : (normalized ? 1 : 0);
-  [...objectDynamicTabs.querySelectorAll("[data-visibility-tab-index]")].forEach((button) => {
-    const index = Number(button.dataset.visibilityTabIndex || 0);
-    if (index > 0 && index >= count) button.remove();
-  });
-  if (count <= 0) {
-    objectDynamicTabVisibilityBtn.classList.add("is-hidden");
-    objectDynamicTabVisibilityBtn.hidden = true;
-    return;
-  }
-  objectDynamicTabVisibilityBtn.classList.remove("is-hidden");
-  objectDynamicTabVisibilityBtn.hidden = false;
-  objectDynamicTabVisibilityBtn.textContent = "Visibility";
-  objectDynamicTabVisibilityBtn.dataset.visibilityTabIndex = "0";
-  objectDynamicTabVisibilityBtn.dataset.objectDynamicTab = "visibility";
-  for (let index = 1; index < count; index += 1) {
-    let button = objectDynamicTabs.querySelector(`[data-visibility-tab-index="${index}"]`);
-    if (!button) {
-      button = objectDynamicTabVisibilityBtn.cloneNode(true);
-      button.id = "";
-      objectDynamicTabColorBtn?.before(button);
+const renderAutomationRuleList = (kind, obj, rules) => {
+  const host = document.getElementById(kind + "RuleList");
+  if (!host) return;
+  const index = kind === "color" ? getColorDynamicTabIndex() : getVisibilityDynamicTabIndex();
+  // Do not rebuild the list during ordinary field edits or reference checks.
+  const signature = JSON.stringify([obj?.id, rules.length, index, rules.map(rule => [rule.sourceType, rule.connection_id, rule.tag, rule.expression])]);
+  if (host._ruleOwner === obj && host.dataset.signature === signature) return;
+  host._ruleOwner = obj;
+  host.dataset.signature = signature;
+  host.replaceChildren();
+  const select = (i) => {
+    setObjectDynamicTab(kind === "color" ? getColorDynamicTabKey(i) : getVisibilityDynamicTabKey(i));
+    updatePropertiesPanel();
+  };
+  const move = (from, to) => {
+    if (to < 0 || to >= rules.length) return;
+    if (kind === "color") {
+      ensureRectColorDraft(obj);
+      const draft = normalizeRectColorDraft(obj, rectColorDraft);
+      [draft.rules[from], draft.rules[to]] = [draft.rules[to], draft.rules[from]];
+      draft.selectedRuleIndex = to;
+      rectColorDraft = draft;
+      currentObjectDynamicTab = getColorDynamicTabKey(to);
+      applyRectColorDraftToObject();
+    } else {
+      ensureRectVisibilityDraft(obj);
+      const draft = normalizeVisibilityState(rectVisibilityDraft);
+      if (!Array.isArray(draft.rules)) return;
+      [draft.rules[from], draft.rules[to]] = [draft.rules[to], draft.rules[from]];
+      draft.selectedRuleIndex = to;
+      rectVisibilityDraft = draft;
+      currentObjectDynamicTab = getVisibilityDynamicTabKey(to);
+      applyVisibilityDraftToObject();
     }
-    button.classList.remove("is-hidden");
-    button.hidden = false;
-    button.textContent = `Visibility ${index + 1}`;
-    button.dataset.visibilityTabIndex = String(index);
-    button.dataset.objectDynamicTab = getVisibilityDynamicTabKey(index);
-  }
-  [...objectDynamicTabs.querySelectorAll("[data-visibility-tab-index]")].forEach((button) => {
-    const tabKey = String(button.dataset.objectDynamicTab || "visibility");
-    button.classList.toggle("is-active", currentObjectDynamicTab === tabKey);
-    button.draggable = count > 1;
-    button.title = count > 1 ? "Drag to change automation priority" : "";
+    updatePropertiesPanel();
+  };
+  const button = (label, action, disabled = false) => {
+    const node = document.createElement("button");
+    node.type = "button"; node.className = "panel-btn"; node.textContent = label;
+    node.disabled = disabled; node.addEventListener("click", action); return node;
+  };
+  rules.forEach((rule, i) => {
+    const row = document.createElement("div"); row.className = "automation-rule-list-row";
+    const title = button(`${i + 1}. ${kind === "color" ? "Color" : "Visibility"}`, () => select(i));
+    title.setAttribute("aria-pressed", String(i === index));
+    title.classList.toggle("is-active", i === index);
+    title.title = kind === "color" ? buildColorRuleSummary(rule, i) : (rule.expression || rule.tag || "Unconfigured rule");
+    row.append(title, button("↑", () => move(i, i - 1), i === 0),
+      button("↓", () => move(i, i + 1), i === rules.length - 1),
+      button("Remove", () => {
+        select(i);
+        (kind === "color" ? colorDeleteBtn : visibilityDeleteBtn)?.click();
+      }));
+    host.append(row);
   });
+  host.append(button("Add Rule", () => {
+    if (kind === "color") ensureRectColorDynamic();
+    else ensureVisibilityDynamicForSelectedObject();
+  }));
+  const help = document.createElement("div"); help.className = "prop-help";
+  help.textContent = "Rules are evaluated in priority order, top to bottom.";
+  host.append(help);
+};
+
+const syncObjectDynamicVisibilityTabs = (obj) => {
+  if (!objectDynamicTabVisibilityBtn) return;
+  const state = obj && hasVisibilityDynamic(obj) ? normalizeVisibilityState(rectVisibilityDraftObject === obj && rectVisibilityDraft ? rectVisibilityDraft : obj.visibility) : null;
+  const rules = state ? (Array.isArray(state.rules) ? state.rules : [state]) : [];
+  objectDynamicTabVisibilityBtn.hidden = !rules.length;
+  objectDynamicTabVisibilityBtn.classList.toggle("is-hidden", !rules.length);
+  objectDynamicTabVisibilityBtn.classList.toggle("is-active", isVisibilityDynamicTab());
+  renderAutomationRuleList("visibility", obj, rules);
 };
 
 const syncObjectDynamicColorTabs = (obj) => {
-  if (!objectDynamicTabs || !objectDynamicTabColorBtn) return;
-  const count = hasEditableColorDynamic(obj) ? getCurrentColorRulesForObject(obj).length : 0;
-  const existing = [...objectDynamicTabs.querySelectorAll("[data-color-tab-index]")];
-  existing.forEach((button) => {
-    const index = Number(button.getAttribute("data-color-tab-index") || "0");
-    if (index <= 0 || index < count) return;
-    button.remove();
-  });
-  if (count <= 0) {
-    objectDynamicTabColorBtn.classList.add("is-hidden");
-    objectDynamicTabColorBtn.hidden = true;
-    return;
-  }
-  objectDynamicTabColorBtn.classList.remove("is-hidden");
-  objectDynamicTabColorBtn.hidden = false;
-  objectDynamicTabColorBtn.textContent = "Color";
-  objectDynamicTabColorBtn.dataset.colorTabIndex = "0";
-  objectDynamicTabColorBtn.dataset.objectDynamicTab = "color";
-  for (let index = 1; index < count; index += 1) {
-    let button = objectDynamicTabs.querySelector(`[data-color-tab-index="${index}"]`);
-    if (!button) {
-      button = objectDynamicTabColorBtn.cloneNode(true);
-      button.id = "";
-      (objectDynamicTabStatesBtn || objectDynamicTabRotationBtn)?.before(button);
-    }
-    button.classList.remove("is-hidden");
-    button.hidden = false;
-    button.textContent = `Color ${index + 1}`;
-    button.dataset.colorTabIndex = String(index);
-    button.dataset.objectDynamicTab = getColorDynamicTabKey(index);
-  }
-  [...objectDynamicTabs.querySelectorAll("[data-color-tab-index]")].forEach((button) => {
-    const tabKey = String(button.dataset.objectDynamicTab || "color");
-    button.classList.toggle("is-active", currentObjectDynamicTab === tabKey);
-    button.draggable = count > 1;
-    button.title = count > 1 ? "Drag to change automation priority" : "";
-  });
+  if (!objectDynamicTabColorBtn) return;
+  const rules = hasEditableColorDynamic(obj) ? getCurrentColorRulesForObject(obj) : [];
+  objectDynamicTabColorBtn.hidden = !rules.length;
+  objectDynamicTabColorBtn.classList.toggle("is-hidden", !rules.length);
+  objectDynamicTabColorBtn.classList.toggle("is-active", isColorDynamicTab());
+  renderAutomationRuleList("color", obj, rules);
 };
 
 const getPropertiesPaneTitle = (obj) => {
@@ -2813,7 +2798,7 @@ const ensureVisibilityDynamicForSelectedObject = () => {
   if (hadVisibility) {
     const rules = Array.isArray(draft.rules) ? draft.rules.slice() : [normalizeVisibilityRule(draft)];
     rules.push(normalizeVisibilityRule({ enabled: true }));
-    rectVisibilityDraft = { enabled: true, defaultVisible: false, rules, selectedRuleIndex: rules.length - 1 };
+    rectVisibilityDraft = { ...draft, enabled: true, rules, selectedRuleIndex: rules.length - 1 };
     applyVisibilityDraftToObject();
   }
   const selectedIndex = Array.isArray(rectVisibilityDraft?.rules) ? rectVisibilityDraft.rules.length - 1 : 0;
@@ -4266,12 +4251,6 @@ const rectColorEnabledInput = document.getElementById("rectColorEnabled");
 const rectColorInvertInput = document.getElementById("rectColorInvert");
 const rectColorFlashEnabledInput = document.getElementById("rectColorFlashEnabled");
 const rectColorFields = document.getElementById("rectColorFields");
-const rectColorRuleRow = document.getElementById("rectColorRuleRow");
-const rectColorRuleSelect = document.getElementById("rectColorRuleSelect");
-const rectColorRuleAddBtn = document.getElementById("rectColorRuleAddBtn");
-const rectColorRuleDeleteBtn = document.getElementById("rectColorRuleDeleteBtn");
-const rectColorRuleUpBtn = document.getElementById("rectColorRuleUpBtn");
-const rectColorRuleDownBtn = document.getElementById("rectColorRuleDownBtn");
 const rectColorSourceTypeSelect = document.getElementById("rectColorSourceType");
 const rectColorTargetsRow = document.getElementById("rectColorTargetsRow");
 const rectColorModeRow = document.getElementById("rectColorModeRow");
@@ -24611,78 +24590,6 @@ if (rectColorEnabledInput) {
   });
 }
 
-if (rectColorRuleSelect) {
-  rectColorRuleSelect.addEventListener("change", () => {
-    const obj = getSelectedColorDynamicObject();
-    if (!obj) return;
-    ensureRectColorDraft(obj);
-    const draft = normalizeRectColorDraft(obj, rectColorDraft);
-    draft.selectedRuleIndex = Math.max(0, Math.min(Number(rectColorRuleSelect.value || 0), draft.rules.length - 1));
-    rectColorDraft = draft;
-    syncRectColorUiFromDraft(obj, rectColorDraft);
-  });
-}
-
-if (rectColorRuleAddBtn) {
-  rectColorRuleAddBtn.addEventListener("click", () => {
-    const obj = getSelectedColorDynamicObject();
-    if (!obj) return;
-    ensureRectColorDraft(obj);
-    const draft = normalizeRectColorDraft(obj, rectColorDraft);
-    draft.rules.push({ ...getDefaultColorRuleForObject(obj) });
-    draft.selectedRuleIndex = draft.rules.length - 1;
-    rectColorDraft = draft;
-    syncRectColorUiFromDraft(obj, rectColorDraft);
-    applyRectColorDraftToObject();
-  });
-}
-
-if (rectColorRuleDeleteBtn) {
-  rectColorRuleDeleteBtn.addEventListener("click", () => {
-    const obj = getSelectedColorDynamicObject();
-    if (!obj) return;
-    ensureRectColorDraft(obj);
-    const draft = normalizeRectColorDraft(obj, rectColorDraft);
-    if (draft.rules.length <= 1) return;
-    draft.rules.splice(draft.selectedRuleIndex, 1);
-    draft.selectedRuleIndex = Math.max(0, Math.min(draft.selectedRuleIndex, draft.rules.length - 1));
-    rectColorDraft = draft;
-    syncRectColorUiFromDraft(obj, rectColorDraft);
-    applyRectColorDraftToObject();
-  });
-}
-
-if (rectColorRuleUpBtn) {
-  rectColorRuleUpBtn.addEventListener("click", () => {
-    const obj = getSelectedColorDynamicObject();
-    if (!obj) return;
-    ensureRectColorDraft(obj);
-    const draft = normalizeRectColorDraft(obj, rectColorDraft);
-    const index = draft.selectedRuleIndex;
-    if (index <= 0) return;
-    [draft.rules[index - 1], draft.rules[index]] = [draft.rules[index], draft.rules[index - 1]];
-    draft.selectedRuleIndex = index - 1;
-    rectColorDraft = draft;
-    syncRectColorUiFromDraft(obj, rectColorDraft);
-    applyRectColorDraftToObject();
-  });
-}
-
-if (rectColorRuleDownBtn) {
-  rectColorRuleDownBtn.addEventListener("click", () => {
-    const obj = getSelectedColorDynamicObject();
-    if (!obj) return;
-    ensureRectColorDraft(obj);
-    const draft = normalizeRectColorDraft(obj, rectColorDraft);
-    const index = draft.selectedRuleIndex;
-    if (index >= draft.rules.length - 1) return;
-    [draft.rules[index + 1], draft.rules[index]] = [draft.rules[index], draft.rules[index + 1]];
-    draft.selectedRuleIndex = index + 1;
-    rectColorDraft = draft;
-    syncRectColorUiFromDraft(obj, rectColorDraft);
-    applyRectColorDraftToObject();
-  });
-}
 
 if (rectColorSourceTypeSelect) {
   rectColorSourceTypeSelect.addEventListener("change", () => {
@@ -32699,81 +32606,6 @@ if (objectDynamicTabStatesBtn) {
   });
 }
 
-if (objectDynamicTabs) {
-  let draggedColorRuleIndex = null;
-  let draggedVisibilityRuleIndex = null;
-  objectDynamicTabs.addEventListener("click", (event) => {
-    const button = event.target instanceof Element ? event.target.closest("[data-object-dynamic-tab]") : null;
-    if (!(button instanceof HTMLButtonElement)) return;
-    const tab = String(button.dataset.objectDynamicTab || "");
-    if (!isColorDynamicTab(tab) && !isVisibilityDynamicTab(tab)) return;
-    setObjectDynamicTab(tab);
-    updatePropertiesPanel();
-  });
-  objectDynamicTabs.addEventListener("dragstart", (event) => {
-    const button = event.target instanceof Element ? event.target.closest("[data-color-tab-index], [data-visibility-tab-index]") : null;
-    if (!(button instanceof HTMLButtonElement)) return;
-    if (button.dataset.visibilityTabIndex !== undefined) draggedVisibilityRuleIndex = Number(button.dataset.visibilityTabIndex || 0);
-    else draggedColorRuleIndex = Number(button.dataset.colorTabIndex || 0);
-    event.dataTransfer?.setData("text/plain", String(draggedVisibilityRuleIndex ?? draggedColorRuleIndex));
-    if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
-  });
-  objectDynamicTabs.addEventListener("dragover", (event) => {
-    if (draggedColorRuleIndex === null && draggedVisibilityRuleIndex === null) return;
-    const selector = draggedVisibilityRuleIndex !== null ? "[data-visibility-tab-index]" : "[data-color-tab-index]";
-    const button = event.target instanceof Element ? event.target.closest(selector) : null;
-    if (!(button instanceof HTMLButtonElement)) return;
-    event.preventDefault();
-    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-  });
-  objectDynamicTabs.addEventListener("drop", (event) => {
-    if (draggedVisibilityRuleIndex !== null) {
-      const button = event.target instanceof Element ? event.target.closest("[data-visibility-tab-index]") : null;
-      if (!(button instanceof HTMLButtonElement)) return;
-      event.preventDefault();
-      const obj = getSelectedVisibilityDynamicObject();
-      if (!obj) return;
-      ensureRectVisibilityDraft(obj);
-      const draft = normalizeVisibilityState(rectVisibilityDraft);
-      if (!Array.isArray(draft.rules)) return;
-      const from = draggedVisibilityRuleIndex;
-      const to = Number(button.dataset.visibilityTabIndex || 0);
-      draggedVisibilityRuleIndex = null;
-      if (from === to || from < 0 || from >= draft.rules.length || to < 0 || to >= draft.rules.length) return;
-      const [rule] = draft.rules.splice(from, 1);
-      draft.rules.splice(to, 0, rule);
-      draft.selectedRuleIndex = to;
-      rectVisibilityDraft = draft;
-      currentObjectDynamicTab = getVisibilityDynamicTabKey(to);
-      syncVisibilityUiFromState(rectVisibilityDraft);
-      applyVisibilityDraftToObject();
-      updatePropertiesPanel();
-      return;
-    }
-    const button = event.target instanceof Element ? event.target.closest("[data-color-tab-index]") : null;
-    if (!(button instanceof HTMLButtonElement) || draggedColorRuleIndex === null) return;
-    event.preventDefault();
-    const obj = getSelectedColorDynamicObject();
-    if (!obj) return;
-    ensureRectColorDraft(obj);
-    const draft = normalizeRectColorDraft(obj, rectColorDraft);
-    const from = draggedColorRuleIndex;
-    const to = Number(button.dataset.colorTabIndex || 0);
-    draggedColorRuleIndex = null;
-    if (from === to || from < 0 || from >= draft.rules.length || to < 0 || to >= draft.rules.length) return;
-    const [rule] = draft.rules.splice(from, 1);
-    draft.rules.splice(to, 0, rule);
-    draft.selectedRuleIndex = to;
-    rectColorDraft = draft;
-    currentObjectDynamicTab = getColorDynamicTabKey(to);
-    syncRectColorUiFromDraft(obj, rectColorDraft);
-    applyRectColorDraftToObject();
-  });
-  objectDynamicTabs.addEventListener("dragend", () => {
-    draggedColorRuleIndex = null;
-    draggedVisibilityRuleIndex = null;
-  });
-}
 
 if (objectDynamicTabRotationBtn) {
   objectDynamicTabRotationBtn.addEventListener("click", () => {

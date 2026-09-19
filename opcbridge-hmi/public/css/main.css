@@ -4338,3 +4338,25 @@ body.runtime-mode #editor-pane {
   overflow-wrap: anywhere;
   pointer-events: none;
 }
+.automation-rule-list {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.automation-rule-list-row {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.automation-rule-list-row > button:first-child {
+  flex: 1;
+  text-align: left;
+  min-width: 100px;
+}
+
+.automation-rule-list-row > button[aria-pressed="true"] {
+  outline: 2px solid #4b9eff;
+  outline-offset: -2px;
+}

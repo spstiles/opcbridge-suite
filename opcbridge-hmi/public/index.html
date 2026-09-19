@@ -418,8 +418,8 @@
             <button id="objectDynamicTabShadowBtn" class="editor-tab is-hidden" type="button">Box Shadow</button>
             <button id="objectDynamicTabDropShadowBtn" class="editor-tab is-hidden" type="button">Drop Shadow</button>
           </div>
-          <div id="objectDynamicVisibilityHost" class="is-hidden"></div>
-          <div id="objectDynamicColorHost" class="is-hidden"></div>
+          <div id="objectDynamicVisibilityHost" class="is-hidden"><div id="visibilityRuleList" class="automation-rule-list"></div></div>
+          <div id="objectDynamicColorHost" class="is-hidden"><div id="colorRuleList" class="automation-rule-list"></div></div>
           <div id="objectDynamicLevelHost" class="is-hidden"></div>
           <div id="objectDynamicStatesHost" class="is-hidden"></div>
           <div id="objectDynamicRotationHost" class="is-hidden"></div>
@@ -1378,16 +1378,6 @@
                 </div>
               </div>
               <div id="rectColorFields" class="prop-subgroup is-hidden" hidden>
-                <div class="prop-row" id="rectColorRuleRow">
-                  <label for="rectColorRuleSelect">Rule</label>
-                  <div class="prop-inline">
-                    <select id="rectColorRuleSelect"></select>
-                    <button id="rectColorRuleAddBtn" class="panel-btn" type="button">Add</button>
-                    <button id="rectColorRuleDeleteBtn" class="panel-btn" type="button">Delete</button>
-                    <button id="rectColorRuleUpBtn" class="panel-btn" type="button">↑</button>
-                    <button id="rectColorRuleDownBtn" class="panel-btn" type="button">↓</button>
-                  </div>
-                </div>
                 <div class="prop-row">
                   <label for="rectColorSourceType">Source Type</label>
                   <select id="rectColorSourceType">
