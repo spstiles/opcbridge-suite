@@ -2820,8 +2820,15 @@ const ensureRectColorDynamic = () => {
   }
   const nextIndex = Math.max(0, draft.rules.length - 1);
   draft.selectedRuleIndex = nextIndex;
+  // An explicit Add is a screen edit, not just a transient property draft.
+  // Persist even an unbound rule so the stored-rule tab check can expose it.
+  recordHistory();
+  obj.colorAutomationRules = draft.rules.map(rule => ({ ...rule }));
   rectColorDraft = draft;
   currentObjectDynamicTab = getColorDynamicTabKey(nextIndex);
+  setDirty(true);
+  renderScreen();
+  syncEditorFromScreen();
   updatePropertiesPanel();
   return true;
 };
