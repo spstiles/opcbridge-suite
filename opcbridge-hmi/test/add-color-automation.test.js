@@ -7,6 +7,7 @@ const source = fs.readFileSync(path.join(__dirname, '../public/js/hmi.js'), 'utf
 
 test('Add Color stores a first rule before refreshing the properties pane', () => {
   for (const type of ['circle', 'rect', 'ellipse', 'button', 'pipe']) {
+    for (const preexistingDraft of [false, true]) {
     const obj = {type};
     let dirty = false;
     let history = 0;
@@ -31,6 +32,8 @@ test('Add Color stores a first rule before refreshing the properties pane', () =
     });
     const start = source.indexOf('const ensureRectColorDynamic =');
     vm.runInContext(source.slice(start,source.indexOf('\n};',start)+3),context);
+    // Opening properties can prepare a default draft without adding a rule.
+    if (preexistingDraft) context.ensureRectColorDraft();
     assert.equal(vm.runInContext('ensureRectColorDynamic()',context),true);
     assert.equal(obj.colorAutomationRules.length,1,type);
     assert.equal(dirty,true);
@@ -41,5 +44,6 @@ test('Add Color stores a first rule before refreshing the properties pane', () =
     assert.equal(obj.colorAutomationRules[0].tag,'PumpRunning');
     assert.equal(history,2);
     assert.equal(JSON.parse(JSON.stringify(obj)).colorAutomationRules.length,2);
+    }
   }
 });

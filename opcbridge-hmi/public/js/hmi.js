@@ -2811,11 +2811,10 @@ const ensureRectColorDynamic = () => {
   const activeObjects = getActiveObjects();
   const obj = getSelectedColorDynamicObject();
   if (!activeObjects || !obj || selectedIndices.length !== 1) return false;
-  const hadDraftForObject = rectColorDraftObject === obj && Boolean(rectColorDraft);
   ensureRectColorDraft(obj);
   const storedRuleCount = buildColorRulesFromObject(obj).length;
   const draft = normalizeRectColorDraft(obj, rectColorDraft);
-  if (storedRuleCount > 0 || hadDraftForObject) {
+  if (storedRuleCount > 0) {
     draft.rules.push({ ...getDefaultColorRuleForObject(obj) });
   }
   const nextIndex = Math.max(0, draft.rules.length - 1);
