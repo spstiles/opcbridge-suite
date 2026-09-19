@@ -237,3 +237,38 @@ Run with the same `olefile` Python dependency as the geometry probe:
 ```
 python3 tools/graphworx32-recovery/numeric_sources.py SOURCE.gdf geometry-candidates.json
 ```
+# Centered gradient recovery
+
+## Native arc update
+
+Verified quarter-turn OArc records now emit native `arc` objects instead of
+sampled splines. `x,y,w,h` describe the full ellipse; `startAngle,sweepAngle`
+are degrees, clockwise-positive in screen coordinates. Recovery negates the
+source angles (source uses upward-positive sine). Stroke colors, widths and
+group-relative placement are preserved. The 257 recovered records still pass
+the source visible-bounds verification. Existing screen files are not rewritten;
+the new native-arc preview requires the updated HMI JavaScript.
+
+The source screenshot of the two Influent Valve panels confirms a horizontal
+dark-edge/light-center gradient. Rectangle 776 at approximately (1450,1930)
+stores colors `#009f5f` and `#8dff8d`. The recovery tool now emits a smooth native
+`linear-gradient(90deg, #009f5f 0%, #8dff8d 50%, #009f5f 100%)`.
+Two rectangles in the wall screen match this verified serialized style.
+`gradients.py` deliberately accepts only that observed OGradientInfo layout and
+settings combination; other gradient styles remain undecoded. This is a
+provisional schema mapping, not an object-ID-specific replacement. Screenshot
+banding is not reproduced. Existing edited screens are not modified.
+
+The Heat Exchanger screenshot (`CY5VTVpbk9.jpg`) additionally verifies rectangle
+15547 at (1986,525): dark red `#800000` at the top to light red `#ff5555` at the
+bottom, with a separate inset border. The observed settings pair `00 01`
+maps to a native 180-degree, two-stop linear gradient; the green centered
+variant has `01 01`. Both mappings retain the other observed field constraints
+and apply by serialized style rather than object ID or color. The updated wall
+preview recovers ten gradient rectangles. Other settings remain undecoded.
+
+The subsequent basin screenshot (`xq5NF3pYuX.png`) verifies the `00 00` / 100
+settings combination as another top-to-bottom two-color fill. Rectangle 8223
+near (4285,3088) transitions from tan `#ddcfb2` to yellow `#e2e200`;
+neighboring panels use dark olive `#717100` to the same yellow. Recovery uses
+each record's colors, without coordinate or color-specific substitutions.

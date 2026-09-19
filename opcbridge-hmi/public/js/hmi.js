@@ -40,6 +40,7 @@ const leftCircleFlyout = document.getElementById("leftCircleFlyout");
 const leftCircleDiameterBtn = document.getElementById("leftCircleDiameterBtn");
 const leftCircleCenterBtn = document.getElementById("leftCircleCenterBtn");
 const leftEllipseToolBtn = document.getElementById("leftEllipseToolBtn");
+const leftArcToolBtn = document.getElementById("leftArcToolBtn");
 const leftTextToolBtn = document.getElementById("leftTextToolBtn");
 const leftButtonToolBtn = document.getElementById("leftButtonToolBtn");
 const leftAlarmsPanelToolBtn = document.getElementById("leftAlarmsPanelToolBtn");
@@ -2766,6 +2767,7 @@ const getPropertiesPaneTitle = (obj) => {
     case "rect": return "Rectangle Properties";
     case "alarms-panel": return obj.panelMode === "data-entry" ? "Data Entry Form Properties" : (obj.panelMode === "report" ? "Report Table Properties" : "Alarm Panel Properties");
     case "ellipse": return "Ellipse Properties";
+    case "arc": return "Arc Properties";
     case "circle": return "Circle Properties";
     case "line": return "Line Properties";
     case "curve": return "Curve Properties";
@@ -4285,6 +4287,10 @@ const rectColorStrokeTextInput = document.getElementById("rectColorStrokeText");
 const rectColorStrokeSwatches = document.getElementById("rectColorStrokeSwatches");
 const rectColorStrokeSwatchBtn = document.getElementById("rectColorStrokeSwatchBtn");
 const ellipseProps = document.getElementById("ellipseProps");
+const arcSettings = document.getElementById("arcSettings");
+const arcStartAngleInput = document.getElementById("arcStartAngle");
+const arcSweepAngleInput = document.getElementById("arcSweepAngle");
+const arcLineCapInput = document.getElementById("arcLineCap");
 const ellipseXInput = document.getElementById("ellipseX");
 const ellipseYInput = document.getElementById("ellipseY");
 const ellipseWInput = document.getElementById("ellipseW");
@@ -6188,6 +6194,7 @@ let circleCenterDraftStart = null;
 let isDrawingEllipse = false;
 let ellipseDraft = null;
 let ellipseDraftStart = null;
+let arcEndpointDrag = null;
 let isDrawingLine = false;
 let lineDraft = null;
 let lineDraftStart = null;
@@ -8571,9 +8578,13 @@ const exitAllGroupEdit = () => {
 
 const updateToolHint = () => {
   if (!toolHint) return;
-  const show = isEditMode && currentTool === "curve";
+  const show = isEditMode && (currentTool === "curve" || currentTool === "arc");
   toolHint.classList.toggle("is-hidden", !show);
   if (!show) return;
+  if (currentTool === "arc") {
+    toolHint.textContent = "Arc: drag from start to end in any diagonal direction; Shift for a circular bend.";
+    return;
+  }
   if (!isDrawingCurve || curveDraftStage === 0) {
     toolHint.textContent = "Curve tool: pick first end point";
     return;
@@ -8720,6 +8731,11 @@ const syncSelectedPolygonVertex = () => {
 };
 
 const isEditingGestureActive = () => (
+  arcEndpointDrag ||
+  isDrawingEllipse ||
+  isDrawingSpline ||
+  isDragPending ||
+  isRotating ||
   isDrawingViewport ||
   isDrawingButton ||
   isDrawingRect ||
@@ -8737,7 +8753,27 @@ const isEditingGestureActive = () => (
   isSelecting
 );
 
+const syncEditorPaneCanvasGesture = () => {
+  editorPane?.classList.toggle("canvas-gesture-active", Boolean(isEditMode && isEditingGestureActive()));
+};
+
+// Read state after canvas/tool handlers, even when they stop propagation.
+// Multi-point tools remain active between clicks; choosing a tool alone
+// does not disable the panel. No polling or panel reconstruction.
+for (const eventName of ["mousedown", "mousemove", "mouseup", "mouseleave", "click", "dblclick", "contextmenu", "keydown", "pointercancel"]) {
+  window.addEventListener(eventName, () => queueMicrotask(syncEditorPaneCanvasGesture), true);
+}
+
 const cancelEditingGesture = () => {
+  arcEndpointDrag = null;
+  if (isDrawingEllipse) {
+    finishEllipseDraft();
+    isDrawingEllipse = false;
+  }
+  if (isDrawingSpline) {
+    finishSplineDraft();
+    isDrawingSpline = false;
+  }
   if (isDrawingViewport) {
     finishViewportDraft();
     isDrawingViewport = false;
@@ -8843,6 +8879,7 @@ const cancelEditingGesture = () => {
     if (selectionBox) selectionBox.style.display = "none";
   }
   if (hmiSvg) hmiSvg.style.cursor = "default";
+  syncEditorPaneCanvasGesture();
 };
 
 const recordHistory = () => {
@@ -10106,8 +10143,8 @@ const normalizeTextAutomationCollection = (value) => {
   };
 };
 
-const ROTATION_PIVOT_TYPES = new Set(["text", "button", "viewport", "rect", "ellipse", "alarms-panel", "bar", "number-input", "indicator", "image", "group", "line"]);
-const MOTION_POSE_TYPES = new Set(["text", "button", "viewport", "rect", "ellipse", "alarms-panel", "bar", "number-input", "indicator", "image", "group", "line", "circle"]);
+const ROTATION_PIVOT_TYPES = new Set(["text", "button", "viewport", "rect", "ellipse", "arc", "alarms-panel", "bar", "number-input", "indicator", "image", "group", "line"]);
+const MOTION_POSE_TYPES = new Set(["text", "button", "viewport", "rect", "ellipse", "arc", "alarms-panel", "bar", "number-input", "indicator", "image", "group", "line", "circle"]);
 
 const getObjectRotationFrame = (obj, boundsOverride = null) => {
   if (!obj) return null;
@@ -10431,7 +10468,7 @@ const getObjectBounds = (obj) => {
     const bottom = Math.max(base.y + base.height, contentBox.y + contentBox.height);
     return { x: left, y: top, width: right - left, height: bottom - top };
   }
-  if (obj.type === "rect" || obj.type === "ellipse" || obj.type === "alarms-panel" || obj.type === "button" || obj.type === "viewport" || obj.type === "bar" || obj.type === "number-input" || obj.type === "indicator" || obj.type === "image") {
+  if (obj.type === "rect" || obj.type === "ellipse" || obj.type === "arc" || obj.type === "alarms-panel" || obj.type === "button" || obj.type === "viewport" || obj.type === "bar" || obj.type === "number-input" || obj.type === "indicator" || obj.type === "image") {
     return {
       x: Number(obj.x ?? 0),
       y: Number(obj.y ?? 0),
@@ -10634,7 +10671,7 @@ const translateObject = (obj, dx, dy) => {
 
 const canSizeMatchObject = (obj) => {
   if (!obj) return false;
-  if (obj.type === "button" || obj.type === "viewport" || obj.type === "rect" || obj.type === "ellipse" || obj.type === "alarms-panel" || obj.type === "bar" || obj.type === "text" || obj.type === "number-input" || obj.type === "indicator" || obj.type === "image") return true;
+  if (obj.type === "button" || obj.type === "viewport" || obj.type === "rect" || obj.type === "ellipse" || obj.type === "arc" || obj.type === "alarms-panel" || obj.type === "bar" || obj.type === "text" || obj.type === "number-input" || obj.type === "indicator" || obj.type === "image") return true;
   if (obj.type === "circle") return true;
   return false;
 };
@@ -10654,7 +10691,7 @@ const applySizeToObject = (obj, refSize, mode) => {
     if (mode === "height" || mode === "size") obj.h = height;
     return;
   }
-  if (obj.type === "button" || obj.type === "viewport" || obj.type === "rect" || obj.type === "ellipse" || obj.type === "alarms-panel" || obj.type === "bar" || obj.type === "number-input" || obj.type === "indicator" || obj.type === "image") {
+  if (obj.type === "button" || obj.type === "viewport" || obj.type === "rect" || obj.type === "ellipse" || obj.type === "arc" || obj.type === "alarms-panel" || obj.type === "bar" || obj.type === "number-input" || obj.type === "indicator" || obj.type === "image") {
     if (mode === "width" || mode === "size") obj.w = Math.max(MIN_RESIZE_SIZE, width);
     if (mode === "height" || mode === "size") obj.h = Math.max(MIN_RESIZE_SIZE, height);
   }
@@ -14128,6 +14165,18 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
     return;
   }
 
+  if (obj.type === "arc") {
+    const arc = document.createElementNS(ns, "path");
+    arc.setAttribute("d", HmiArcGeometry.path(obj));
+    arc.setAttribute("fill", "none");
+    arc.setAttribute("stroke", getAutomationColor(obj.strokeAutomation, obj.stroke || "#ffffff"));
+    arc.setAttribute("stroke-width", obj.strokeWidth ?? 1);
+    arc.setAttribute("stroke-linecap", ["butt", "round", "square"].includes(obj.lineCap) ? obj.lineCap : "butt");
+    if (hasRotation) applyRotationTransform(arc, obj);
+    parent.appendChild(arc);
+    return;
+  }
+
   if (obj.type === "ellipse") {
     const x = Number(obj.x ?? 0);
     const y = Number(obj.y ?? 0);
@@ -14797,6 +14846,7 @@ const renderObjectIntoWithOffset = (parent, obj, offsetX, offsetY, inheritedGrou
 };
 
 const SHARED_TOP_LEVEL_RENDER_TYPES = new Set([
+  "arc",
   "group",
   "image",
   "indicator",
@@ -15298,6 +15348,7 @@ const openPopup = (screenId, requestedOptions = null) => {
 };
 
 const renderScreen = ({ refreshReferenceHealth = true } = {}) => {
+  syncEditorPaneCanvasGesture();
   if (!hmiSvg || !currentScreenObj) return;
   if (refreshReferenceHealth) renderReferenceHealthBadge();
   hmiSvg.querySelectorAll?.(".hmi-alarms-panel-list[data-alarms-panel-key]").forEach((list) => {
@@ -16358,7 +16409,15 @@ const syncPropertiesFromSelection = () => {
       syncRectColorUiFromDraft(obj, rectColorDraft);
     }
   }
-  if (obj.type === "ellipse") {
+  if (obj.type === "ellipse" || obj.type === "arc") {
+    const isArc = obj.type === "arc";
+    arcSettings?.classList.toggle("is-hidden", !isArc);
+    const title = ellipseProps?.querySelector(".prop-group-title");
+    if (title) title.textContent = isArc ? "Arc" : "Ellipse";
+    ellipseFillInput?.closest(".prop-row")?.classList.toggle("is-hidden", isArc);
+    if (arcStartAngleInput) arcStartAngleInput.value = Number(obj.startAngle ?? 0);
+    if (arcSweepAngleInput) arcSweepAngleInput.value = Number(obj.sweepAngle ?? 90);
+    if (arcLineCapInput) arcLineCapInput.value = obj.lineCap || "butt";
     if (ellipseXInput) ellipseXInput.value = Number(obj.x) || 0;
     if (ellipseYInput) ellipseYInput.value = Number(obj.y) || 0;
     if (ellipseWInput) ellipseWInput.value = Number(obj.w) || 120;
@@ -17189,7 +17248,7 @@ const updatePropertiesPanel = () => {
   const showDynamicGroup = Boolean(obj && obj.type === "group");
   const showDynamicCircle = Boolean(obj && obj.type === "circle");
   const showDynamicPolygon = Boolean(obj && obj.type === "polygon");
-  const showEllipse = Boolean(obj && obj.type === "ellipse");
+  const showEllipse = Boolean(obj && (obj.type === "ellipse" || obj.type === "arc"));
   const showCircle = Boolean(obj && obj.type === "circle");
   const showLine = Boolean(obj && obj.type === "line");
   const showCurve = Boolean(obj && obj.type === "curve");
@@ -17495,7 +17554,7 @@ const updateEllipseProperty = (patch) => {
   if (selectedIndices.length !== 1) return;
   const index = selectedIndices[0];
   const obj = activeObjects[index];
-  if (!obj || obj.type !== "ellipse") return;
+  if (!obj || (obj.type !== "ellipse" && obj.type !== "arc")) return;
   recordHistory();
   Object.assign(obj, patch);
   renderScreen();
@@ -22806,6 +22865,18 @@ if (ellipseHInput) {
 }
 
 bindRotationInput(ellipseRotationInput, updateEllipseProperty);
+
+for (const [input, key] of [[arcStartAngleInput, "startAngle"], [arcSweepAngleInput, "sweepAngle"]]) {
+  input?.addEventListener("change", () => {
+    const value = Number(input.value);
+    if (!Number.isFinite(value) || (key === "sweepAngle" && (!value || Math.abs(value) > 360))) {
+      syncPropertiesFromSelection();
+      return;
+    }
+    updateEllipseProperty({ [key]: value });
+  });
+}
+arcLineCapInput?.addEventListener("change", () => updateEllipseProperty({ lineCap: arcLineCapInput.value }));
 
 if (ellipseFillInput) {
   ellipseFillInput.addEventListener("input", () => {
@@ -28669,7 +28740,7 @@ function updateSelectionOverlays() {
         width: Number(obj.w ?? 120),
         height: Number(obj.h ?? 120)
       };
-    } else if (!bbox && obj && item.type === "rect") {
+    } else if (!bbox && obj && (item.type === "rect" || item.type === "arc")) {
       bbox = {
         x: Number(obj.x ?? 0),
         y: Number(obj.y ?? 0),
@@ -28711,7 +28782,7 @@ function updateSelectionOverlays() {
 	      selectedIndices.length === 1 &&
 	      rotation &&
 	      obj &&
-	      ["button", "viewport", "rect", "ellipse", "alarms-panel", "bar", "number-input", "indicator", "image", "text", "group"].includes(obj.type);
+	      ["button", "viewport", "rect", "ellipse", "arc", "alarms-panel", "bar", "number-input", "indicator", "image", "text", "group"].includes(obj.type);
     if (canRotateSelection) {
       const b = obj.type === "group"
         ? { x: Number(obj.x ?? 0), y: Number(obj.y ?? 0), width: Number(obj.w ?? 0), height: Number(obj.h ?? 0) }
@@ -28747,6 +28818,26 @@ function updateSelectionOverlays() {
       rectEl.setAttribute("vector-effect", "non-scaling-stroke");
       rectEl.setAttribute("stroke-dasharray", "4 3");
       selectionLayer.appendChild(rectEl);
+    }
+    if (selectedIndices.length === 1 && obj?.type === "arc") {
+      const ns = "http://www.w3.org/2000/svg";
+      const offset = getActiveOffset();
+      const outer = document.createElementNS(ns, "g");
+      outer.setAttribute("transform", `translate(${offset.x} ${offset.y})`);
+      const guide = document.createElementNS(ns, "g");
+      applyRotationTransform(guide, obj);
+      outer.appendChild(guide);
+      const ellipse = document.createElementNS(ns, "ellipse");
+      for (const [key, value] of Object.entries({ cx: obj.x + obj.w / 2, cy: obj.y + obj.h / 2, rx: obj.w / 2, ry: obj.h / 2, fill: "none", stroke: "#8ca0b8", "stroke-dasharray": "4 4", "stroke-opacity": 0.6, "pointer-events": "none", "vector-effect": "non-scaling-stroke" })) ellipse.setAttribute(key, value);
+      guide.appendChild(ellipse);
+      for (const [end, angle] of [["start", Number(obj.startAngle ?? 0)], ["end", Number(obj.startAngle ?? 0) + Number(obj.sweepAngle ?? 90)]]) {
+        const p = HmiArcGeometry.point(obj, angle);
+        const handle = document.createElementNS(ns, "circle");
+        for (const [key, value] of Object.entries({ cx: p.x, cy: p.y, r: 5, fill: end === "start" ? "#4aa3ff" : "#ffd54a", stroke: "#111827", "data-arc-endpoint": end, "data-arc-index": item.index })) handle.setAttribute(key, value);
+        handle.style.cursor = "crosshair";
+        guide.appendChild(handle);
+      }
+      resizeLayer.appendChild(outer);
     }
     if (selectedIndices.length === 1 && obj && ROTATION_PIVOT_TYPES.has(String(obj.type || ""))) {
       const pivotBounds = obj.type === "group"
@@ -28789,7 +28880,7 @@ function updateSelectionOverlays() {
 
     if (!isEditMode || selectedIndices.length !== 1) return;
     if (poseEditSession && baseObj === poseEditSession.object && obj.type !== "line") return;
-    if (!obj || !["button", "viewport", "rect", "ellipse", "alarms-panel", "bar", "circle", "line", "polyline", "pipe", "spline", "polygon", "number-input", "indicator", "image", "group"].includes(obj.type)) return;
+    if (!obj || !["button", "viewport", "rect", "ellipse", "arc", "alarms-panel", "bar", "circle", "line", "polyline", "pipe", "spline", "polygon", "number-input", "indicator", "image", "group"].includes(obj.type)) return;
     if (!resizeLayer) return;
 		    if (obj.type === "polyline" || obj.type === "pipe" || obj.type === "polygon" || obj.type === "spline") {
 		      const points = Array.isArray(obj.points) ? obj.points : [];
@@ -28918,7 +29009,7 @@ function updateSelectionOverlays() {
 	    const rotationValue = Number(obj.rotation ?? 0);
 		    const canRotateHandles =
 		      rotationValue &&
-		      ["button", "viewport", "rect", "ellipse", "alarms-panel", "bar", "number-input", "indicator", "image", "group"].includes(obj.type);
+		      ["button", "viewport", "rect", "ellipse", "arc", "alarms-panel", "bar", "number-input", "indicator", "image", "group"].includes(obj.type);
 		    if (canRotateHandles) {
 		      const offset = getActiveOffset();
           const bounds = obj.type === "indicator"
@@ -29056,7 +29147,7 @@ function updateSelectionOverlays() {
             return 0;
           }
           if (selectedIndices.length < 2) return 0;
-          const rotatable = new Set(["button", "viewport", "rect", "ellipse", "alarms-panel", "bar", "number-input", "indicator", "image", "group"]);
+          const rotatable = new Set(["button", "viewport", "rect", "ellipse", "arc", "alarms-panel", "bar", "number-input", "indicator", "image", "group"]);
           const first = activeObjectsForOverlay[selectedIndices[0]];
           const r0 = Number(first?.rotation ?? 0);
           if (!r0 || !Number.isFinite(r0)) return 0;
@@ -29139,7 +29230,7 @@ function updateSelectionOverlays() {
 	        selectedIndices.length === 1 &&
 	        singleRotation &&
 	        singleObj &&
-	        ["button", "viewport", "rect", "ellipse", "bar", "number-input", "indicator", "image", "group"].includes(singleObj.type);
+	        ["button", "viewport", "rect", "ellipse", "arc", "bar", "number-input", "indicator", "image", "group"].includes(singleObj.type);
 
 	      if (canRotateHandleTrack) {
 	        const b = getObjectBounds(singleObj);
@@ -29635,7 +29726,7 @@ const applyRotationToObject = (obj, startObj, deltaRad, center, deltaDeg) => {
   const h = Number(startObj.h ?? (startObj.type === "indicator" ? 64 : 0));
   if (obj.x != null) obj.x = Math.round(rotatedCenter.x - w / 2);
   if (obj.y != null) obj.y = Math.round(rotatedCenter.y - h / 2);
-  if (startObj.type === "button" || startObj.type === "viewport" || startObj.type === "rect" || startObj.type === "ellipse" || startObj.type === "bar" || startObj.type === "number-input" || startObj.type === "indicator" || startObj.type === "image") {
+  if (startObj.type === "button" || startObj.type === "viewport" || startObj.type === "rect" || startObj.type === "ellipse" || startObj.type === "arc" || startObj.type === "bar" || startObj.type === "number-input" || startObj.type === "indicator" || startObj.type === "image") {
     obj.rotation = normalizeDegrees(Number(startObj.rotation ?? 0) + deltaDeg);
   }
   if (startObj.type === "group") {
@@ -29918,7 +30009,7 @@ const getMetaAtPoint = (point) => {
     const canRotateHit =
       rotation &&
       obj &&
-      ["button", "viewport", "rect", "ellipse", "alarms-panel", "bar", "number-input", "indicator", "image", "group", "text"].includes(obj.type);
+      ["button", "viewport", "rect", "ellipse", "arc", "alarms-panel", "bar", "number-input", "indicator", "image", "group", "text"].includes(obj.type);
     const isGroupEdit = groupEditStack.length > 0;
     const hitBox = (canRotateHit && obj?.type === "group")
       ? {
@@ -30379,8 +30470,8 @@ const startEllipseDraft = (point) => {
   const ns = "http://www.w3.org/2000/svg";
   ellipseDraftStart = point;
   if (!ellipseDraft) {
-    ellipseDraft = document.createElementNS(ns, "ellipse");
-    ellipseDraft.setAttribute("fill", "rgba(255, 213, 74, 0.15)");
+    ellipseDraft = document.createElementNS(ns, currentTool === "arc" ? "path" : "ellipse");
+    ellipseDraft.setAttribute("fill", currentTool === "arc" ? "none" : "rgba(255, 213, 74, 0.15)");
     ellipseDraft.setAttribute("stroke", "#ffd54a");
     ellipseDraft.setAttribute("stroke-dasharray", "4 3");
     ellipseDraft.setAttribute("vector-effect", "non-scaling-stroke");
@@ -30394,8 +30485,19 @@ const startEllipseDraft = (point) => {
   ellipseDraft.setAttribute("ry", 0);
 };
 
-const updateEllipseDraft = (point) => {
+const arcGeometryFromDrag = (start, end, circle) => {
+  const snapPoint = p => ({ x: snapValue(Math.round(p.x)), y: snapValue(Math.round(p.y)) });
+  return HmiArcGeometry.fromEndpoints(snapPoint(start), snapPoint(end), circle);
+};
+
+const updateEllipseDraft = (point, circle = false) => {
   if (!ellipseDraftStart || !ellipseDraft) return;
+  if (currentTool === "arc") {
+    const geometry = arcGeometryFromDrag(toActivePoint(ellipseDraftStart), toActivePoint(point), circle);
+    const offset = getActiveOffset();
+    ellipseDraft.setAttribute("d", geometry ? HmiArcGeometry.path({ ...geometry, x: geometry.x + offset.x, y: geometry.y + offset.y }) : "");
+    return;
+  }
   const cx = (ellipseDraftStart.x + point.x) / 2;
   const cy = (ellipseDraftStart.y + point.y) / 2;
   const rx = Math.max(0, Math.abs(point.x - ellipseDraftStart.x) / 2);
@@ -30782,11 +30884,12 @@ const setTool = (nextTool) => {
     finishRectDraft();
     isDrawingAlarmsPanel = false;
   }
-  if (currentTool === "ellipse" && nextTool !== "ellipse" && isDrawingEllipse) {
+  if (["ellipse", "arc"].includes(currentTool) && nextTool !== currentTool && isDrawingEllipse) {
     finishEllipseDraft();
     isDrawingEllipse = false;
   }
   currentTool = nextTool;
+  leftArcToolBtn?.classList.toggle("is-active", currentTool === "arc");
   if (textToolBtn) {
     textToolBtn.classList.toggle("is-active", currentTool === "text");
   }
@@ -30874,7 +30977,7 @@ const setTool = (nextTool) => {
     curveToolBtn.classList.toggle("is-active", currentTool === "curve");
   }
   if (hmiSvg) {
-    if (["text", "button", "viewport", "rect", "alarms-panel", "polyline", "spline", "polygon", "regular-polygon", "stretched-polygon", "bar", "circle", "ellipse", "line", "curve"].includes(currentTool)) {
+    if (["text", "button", "viewport", "rect", "alarms-panel", "polyline", "spline", "polygon", "regular-polygon", "stretched-polygon", "bar", "circle", "ellipse", "arc", "line", "curve"].includes(currentTool)) {
       hmiSvg.style.cursor = "crosshair";
     } else {
       hmiSvg.style.cursor = "default";
@@ -30892,6 +30995,17 @@ const setTool = (nextTool) => {
         blurActiveFormControl();
 		    const target = event.target;
 		    if (target instanceof Element) {
+          const arcHandle = target.closest("[data-arc-endpoint]");
+          if (arcHandle && !poseEditSession) {
+            const index = Number(arcHandle.dataset.arcIndex);
+            const obj = getActiveObjects()?.[index];
+            if (obj?.type === "arc") {
+              recordHistory();
+              arcEndpointDrag = { index, end: arcHandle.dataset.arcEndpoint };
+              event.preventDefault();
+              return;
+            }
+          }
 		      const rotateEl = target.closest("[data-rotate-handle]");
 		      if (rotateEl) {
 		        const point = getScreenPoint(event);
@@ -30937,7 +31051,7 @@ const setTool = (nextTool) => {
 			              return 0;
 			            }
 			            if (selectedIndices.length < 2) return 0;
-			            const rotatable = new Set(["button", "viewport", "rect", "ellipse", "alarms-panel", "bar", "number-input", "indicator", "image", "group"]);
+			            const rotatable = new Set(["button", "viewport", "rect", "ellipse", "arc", "alarms-panel", "bar", "number-input", "indicator", "image", "group"]);
 			            const first = activeObjects[selectedIndices[0]];
 			            const r0 = Number(first?.rotation ?? 0);
 			            if (!r0 || !Number.isFinite(r0)) return 0;
@@ -31021,7 +31135,7 @@ const setTool = (nextTool) => {
 	        } else if (handleType !== "vertex") {
 	          clearSelectedPolygonVertex();
 	        }
-	  if (obj && (obj.type === "button" || obj.type === "viewport" || obj.type === "rect" || obj.type === "ellipse" || obj.type === "alarms-panel" || obj.type === "bar" || obj.type === "circle" || obj.type === "line" || obj.type === "polyline" || obj.type === "pipe" || obj.type === "polygon" || obj.type === "spline" || obj.type === "number-input" || obj.type === "indicator" || obj.type === "image" || obj.type === "group")) {
+	  if (obj && (obj.type === "button" || obj.type === "viewport" || obj.type === "rect" || obj.type === "ellipse" || obj.type === "arc" || obj.type === "alarms-panel" || obj.type === "bar" || obj.type === "circle" || obj.type === "line" || obj.type === "polyline" || obj.type === "pipe" || obj.type === "polygon" || obj.type === "spline" || obj.type === "number-input" || obj.type === "indicator" || obj.type === "image" || obj.type === "group")) {
 	          const point = getScreenPoint(event);
 	          if (!point) return;
 	          recordHistory();
@@ -31112,7 +31226,7 @@ const setTool = (nextTool) => {
       startCircleDraft(point);
       return;
     }
-    if (currentTool === "ellipse") {
+    if (currentTool === "ellipse" || currentTool === "arc") {
       isDrawingEllipse = true;
       startEllipseDraft(point);
       return;
@@ -31326,6 +31440,28 @@ const setTool = (nextTool) => {
   });
 
   hmiSvg.addEventListener("mousemove", (event) => {
+    if (isEditMode && arcEndpointDrag) {
+      const obj = getActiveObjects()?.[arcEndpointDrag.index];
+      const screenPoint = getScreenPoint(event);
+      if (!obj || !screenPoint) return;
+      let p = toActivePoint(screenPoint);
+      const pivot = getObjectRotationPivotPoint(obj, getObjectBounds(obj));
+      const rotation = -getObjectRotationDegrees(obj) * Math.PI / 180;
+      const dx = p.x - pivot.x, dy = p.y - pivot.y;
+      p = { x: pivot.x + dx * Math.cos(rotation) - dy * Math.sin(rotation), y: pivot.y + dx * Math.sin(rotation) + dy * Math.cos(rotation) };
+      let angle = HmiArcGeometry.angle(obj, p);
+      if (event.shiftKey) angle = Math.round(angle / 15) * 15;
+      const start = Number(obj.startAngle ?? 0), sweep = Number(obj.sweepAngle ?? 90);
+      const positive = sweep >= 0;
+      const delta = arcEndpointDrag.end === "end" ? angle - start : start + sweep - angle;
+      const span = ((positive ? delta : -delta) % 360 + 360) % 360;
+      if (arcEndpointDrag.end === "start") obj.startAngle = angle;
+      obj.sweepAngle = (positive ? 1 : -1) * Math.max(0.1, span);
+      renderScreen();
+      syncEditorFromScreen();
+      setDirty(true);
+      return;
+    }
     if (isEditMode) {
       const trackedPoint = getScreenPoint(event);
       if (trackedPoint) lastMouseScreenPoint = trackedPoint;
@@ -31375,7 +31511,7 @@ const setTool = (nextTool) => {
     if (isDrawingEllipse && ellipseDraftStart) {
       const point = getScreenPoint(event);
       if (!point) return;
-      updateEllipseDraft(point);
+      updateEllipseDraft(point, event.shiftKey);
       return;
     }
     if (isDrawingCircleCenter && circleCenterDraftStart) {
@@ -31677,7 +31813,7 @@ const setTool = (nextTool) => {
 	        const rotation = Number(resizeStartBounds.rotation ?? 0);
 		        const canRotateResize =
 		          rotation &&
-		          ["button", "viewport", "rect", "ellipse", "alarms-panel", "bar", "number-input", "indicator", "image", "group"].includes(resizeStartBounds.type) &&
+		          ["button", "viewport", "rect", "ellipse", "arc", "alarms-panel", "bar", "number-input", "indicator", "image", "group"].includes(resizeStartBounds.type) &&
 		          ["nw", "n", "ne", "e", "se", "s", "sw", "w"].includes(handle);
 	        let x;
 	        let y;
@@ -31832,6 +31968,11 @@ const setTool = (nextTool) => {
   });
 
   const finishSelection = (event) => {
+    if (arcEndpointDrag) {
+      arcEndpointDrag = null;
+      syncEditorPaneCanvasGesture();
+      return;
+    }
     if (isDrawingViewport && viewportDraftStart) {
       const point = getScreenPoint(event);
       if (!point) return;
@@ -32136,7 +32277,7 @@ const setTool = (nextTool) => {
       const activeObjects = ensureActiveObjects();
       if (!activeObjects) return;
       const nextEllipse = {
-        type: "ellipse",
+        type: currentTool === "arc" ? "arc" : "ellipse",
         x: snapValue(Math.round(x)),
         y: snapValue(Math.round(y)),
         w: snapValue(Math.round(w)),
@@ -32145,6 +32286,11 @@ const setTool = (nextTool) => {
         stroke: "#ffffff",
         strokeWidth: 1
       };
+      if (currentTool === "arc") {
+        const geometry = arcGeometryFromDrag(localStart, localPoint, event.shiftKey);
+        if (!geometry) return;
+        Object.assign(nextEllipse, geometry, { lineCap: "butt", fill: "none" });
+      }
       recordHistory();
       activeObjects.push(nextEllipse);
       selectedIndices = [activeObjects.length - 1];
@@ -32865,6 +33011,7 @@ if (leftCircleCenterBtn) {
   });
 }
 
+leftArcToolBtn?.addEventListener("click", () => setTool(currentTool === "arc" ? "select" : "arc"));
 if (leftEllipseToolBtn) {
   leftEllipseToolBtn.addEventListener("click", () => {
     setTool(currentTool === "ellipse" ? "select" : "ellipse");

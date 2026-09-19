@@ -9,6 +9,7 @@ from pathlib import Path
 from xml.sax.saxutils import escape
 import olefile
 from embedded_png import extract_png
+from gradients import recover_gradient
 
 src, dest = map(Path, sys.argv[1:3])
 with olefile.OleFileIO(src) as f:
@@ -55,6 +56,10 @@ for i, rec in enumerate(records):
     tail = chunk.find(b'\xff\xfe\xff\x00\xff\xfe\xff\x00\xff\xfe\xff\x00\x02\x00\x00\x00')
     if tail >= 0 and tail+21 <= len(chunk):
         rec['parent_candidate'] = struct.unpack_from('<I', chunk, tail+16)[0]
+        if rec['type_code'] == 0x800b:
+            gradient = recover_gradient(chunk, tail)
+            if gradient:
+                rec['gradient_fill_candidate'] = gradient
         if rec['type_code'] == 0x8014 and chunk[tail+20] == 0 and tail+23 <= len(chunk):
             n = struct.unpack_from('<H', chunk, tail+21)[0]
             if 2 <= n <= 10000 and tail+23+n*8 <= len(chunk):
@@ -75,6 +80,9 @@ for i, rec in enumerate(records):
                                  max(p[0] for p in points), max(p[1] for p in points)]
                     if max(abs(a-b) for a,b in zip(recovered,rec['bounds'])) < .001:
                         rec['arc_points_candidate'] = points
+                        rec['arc_geometry_candidate'] = dict(
+                            x=cx-radius, y=cy-radius*ratio, w=radius*2, h=radius*ratio*2,
+                            startAngle=-math.degrees(start), sweepAngle=-math.degrees(sweep))
         if rec['type_code'] == 0x800e and chunk[tail+20] == 0 and tail+23 <= len(chunk):
             n = struct.unpack_from('<H', chunk, tail+21)[0]
             if n < 2000 and tail+23+4*n <= len(chunk):

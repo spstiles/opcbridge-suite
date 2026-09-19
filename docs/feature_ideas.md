@@ -2,6 +2,19 @@
 
 ## Native HMI Arc Objects
 
+Initial open-arc implementation added: drag start/end points in any quadrant for a 90° bend,
+Shift-constrained circles, start/sweep properties, endpoint handles, stroke and
+caps, and native recovery of verified GraphWorX32 elbows. Interactive acceptance
+testing is still needed. Arc-specific automation integration and closed
+chord/sector variants remain future work.
+
+### Arc Between…
+
+Select two lines or pipe segments and preview a tangent connecting arc. Allow
+radius adjustment and visual selection when multiple solutions exist. Leave
+the originals unchanged by default; offer explicit **Trim/extend to arc**.
+This is a separate future editing tool, not part of the initial arc tool.
+
 Add native, editable circular and elliptical arcs to the HMI rather than representing them as sampled splines.
 
 - Support center/radii, start and end angles, direction, stroke color, and line width.
@@ -9,7 +22,7 @@ Add native, editable circular and elliptical arcs to the HMI rather than represe
 - Import source arcs as native arcs when their geometry can be recovered.
 - Discuss open arcs versus closed chord/sector variants when designing the tool.
 
-Motivation: the GraphWorX32 wall-screen recovery converted 257 quarter-turn elbows into editable spline approximations. The result is useful, but native arcs would preserve the underlying geometry and make future editing more natural. This is a future feature, not a requirement to finish the one-time recovery.
+Motivation: the GraphWorX32 wall-screen recovery originally converted 257 quarter-turn elbows into editable spline approximations. Native arcs now preserve their source geometry in newly generated previews; existing edited screens are not automatically rewritten.
 
 ## HMI Frame Animation
 

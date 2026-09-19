@@ -273,6 +273,9 @@
           </button>
         </div>
       </div>
+      <button id="leftArcToolBtn" class="left-tool-btn" type="button" title="Arc — drag from start to end; Shift for a circular bend" aria-label="Arc tool">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M 4 20 A 16 16 0 0 1 20 4" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+      </button>
       <button id="leftEllipseToolBtn" class="left-tool-btn" type="button" title="Ellipse" aria-label="Ellipse tool">
         <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
           <ellipse cx="12" cy="12" rx="7.5" ry="5.5" fill="none" stroke="currentColor" stroke-width="2"/>
@@ -1464,6 +1467,12 @@
 
           <div id="ellipseProps" class="properties-form is-hidden">
             <div class="prop-group-title">Ellipse</div>
+            <div id="arcSettings" class="is-hidden">
+              <div class="prop-row"><label for="arcStartAngle">Start angle</label><input id="arcStartAngle" type="number" step="1" /></div>
+              <div class="prop-row"><label for="arcSweepAngle">Sweep angle</label><input id="arcSweepAngle" type="number" min="-360" max="360" step="1" /></div>
+              <div class="prop-row"><label for="arcLineCap">Line caps</label><select id="arcLineCap"><option value="butt">Flat</option><option value="round">Round</option><option value="square">Square</option></select></div>
+              <p class="prop-help">Bounds describe the full ellipse. 0° is right; positive angles run clockwise. Drag the colored endpoint handles to adjust the arc.</p>
+            </div>
             <div class="prop-row">
               <label for="ellipseX">X</label>
               <input id="ellipseX" type="number" step="1" />
@@ -3128,6 +3137,7 @@
 	      </div>
 	    </div>
 	  </div>
+      <script src="/js/arc-geometry.js"></script>
       <script src="/js/click-actions.js"></script>
 	  <script src="/js/hmi.js?v=20260910-working-overlay-v1"></script>
 	</body>

@@ -3548,6 +3548,15 @@ body.runtime-mode #editor-pane {
 }
 
 /* Docking modes: always float over canvas, but snap to an edge. */
+.editor-pane[data-dock="float"].canvas-gesture-active {
+  opacity: 0.2;
+}
+
+.editor-pane[data-dock="float"].canvas-gesture-active,
+.editor-pane[data-dock="float"].canvas-gesture-active * {
+  pointer-events: none !important;
+}
+
 .editor-pane[data-dock="right"] { right: 10px; }
 .editor-pane[data-dock="left"]  { left: calc(var(--left-toolbar-width) + 10px); }
 

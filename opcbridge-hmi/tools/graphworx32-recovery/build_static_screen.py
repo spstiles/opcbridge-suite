@@ -47,12 +47,14 @@ def convert(rec, origin=(0,0)):
                    stroke=rec['provisional_color_a'] if rec['pen_style_candidate'] != 5 else 'none',
                    strokeWidth=max(1, rec['line_width_candidate']))
         obj['source']['conversionNote'] = 'Recovered line/path points; source bounds verified.'
-    elif code == 0x801c and 'arc_points_candidate' in rec and not rec.get('fill_enabled_candidate'):
-        obj.update(type='spline', closed=False, fill='transparent',
-                   points=[dict(x=px-origin[0], y=py-origin[1]) for px,py in rec['arc_points_candidate']],
+    elif code == 0x801c and 'arc_geometry_candidate' in rec and not rec.get('fill_enabled_candidate'):
+        obj.update(rec['arc_geometry_candidate'])
+        obj['x'] -= origin[0]
+        obj['y'] -= origin[1]
+        obj.update(type='arc', fill='none', lineCap='butt',
                    stroke=rec['provisional_color_a'] if rec['pen_style_candidate'] != 5 else 'none',
                    strokeWidth=max(1, rec['line_width_candidate']))
-        obj['source']['conversionNote'] = 'Quarter ellipse approximated by editable spline; bounds verified.'
+        obj['source']['conversionNote'] = 'Native elliptical arc; source center, radii and angles recovered and visible bounds verified.'
     elif code == 0x801e and 'text' in rec:
         obj.update(type='text',text=rec['text'].replace('\r',''),fontSize=rec['font_size_candidate'],
                    fill=rec['provisional_color_a'],background='transparent',borderEnabled=False,
@@ -110,6 +112,9 @@ def convert(rec, origin=(0,0)):
             else:
                 obj['stroke'] = rec['provisional_color_a']
                 obj['strokeWidth'] = max(1, rec.get('line_width_candidate', 0))
+    if rec.get('fill_enabled_candidate') and rec.get('gradient_fill_candidate'):
+        obj['fill'] = rec['gradient_fill_candidate']
+        obj['source']['gradientProvisional'] = True
     counts[obj['type']] = counts.get(obj['type'],0)+1
     return obj
 
@@ -127,7 +132,7 @@ screen=dict(width=7680,height=3600,background='#ffffff',objects=objects,
         staticOnly=True,zOrderPreserved=False,
         limitations=['No tag bindings, live data, controls or dynamic automations.',
         'Recovered grouping and layer visibility are provisional.',
-        'Quarter-ellipse arcs are spline approximations; unmatched paths and unrecognized objects remain bounding-box placeholders.',
+        'Verified quarter-ellipse arcs are native arcs; unmatched paths and unrecognized objects remain bounding-box placeholders.',
         'Fonts, transparency, fills, borders and gradients are not fully decoded.']))
 target.write_text(json.dumps(screen,ensure_ascii=False,indent=2))
 print(json.dumps({'output':str(target),'objects_by_type':counts,'bytes':target.stat().st_size}))
