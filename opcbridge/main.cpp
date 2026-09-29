@@ -42,6 +42,7 @@
 #include <regex>
 #include <array>
 #include <functional>
+#include "modbus_read_recovery.h"
 
 // Version info (wired in via build.sh)
 #ifndef OPCBRIDGE_VERSION
@@ -28272,6 +28273,7 @@ window.addEventListener("load", startAutoRefresh);
 	            bool poller_owns_handle = false;
 	            size_t sweep_index = 0;
 	            bool handle_pending_observed = false;
+                ModbusReadRecovery modbus_recovery;
 	            std::chrono::steady_clock::time_point next_poll;
 	            std::chrono::steady_clock::time_point handle_pending_since{};
 
@@ -28862,6 +28864,8 @@ window.addEventListener("load", startAutoRefresh);
 		                                            record_connection_sweep_progress(spec.metrics, t.sweep_index, spec.total_tag_count);
 		                                        }
 		                                    } else {
+                                            const bool modbusRecovery = is_modbus_connection(spec.conn);
+                                            if (modbusRecovery && !t.modbus_recovery.ready(nowSteady)) continue;
 		                                    if (t.handle < 0 && t.handle_deferred) {
 		                                        std::string tagStr;
 		                                        try {
@@ -28915,11 +28919,26 @@ window.addEventListener("load", startAutoRefresh);
 		                                    if (t.handle < 0) {
 		                                        status = PLCTAG_ERR_NOT_FOUND;
 		                                    } else {
-			                                const int32_t handleStatus = plc_tag_status(t.handle);
+                                                int32_t handleStatus = plc_tag_status(t.handle);
 			                                if (handleStatus == PLCTAG_STATUS_PENDING) {
 			                                    if (!t.handle_pending_observed) {
 			                                        t.handle_pending_observed = true;
 			                                        t.handle_pending_since = nowSteady;
+                                                    } else if (modbusRecovery) {
+                                                        const int64_t pendingResetMs = std::max<int64_t>(5000, static_cast<int64_t>(spec.conn.default_read_ms) * 4);
+                                                        if (std::chrono::duration_cast<std::chrono::milliseconds>(nowSteady - t.handle_pending_since).count() >= pendingResetMs) {
+                                                            // Writes also hold driverMutex. Do not abort an in-flight
+                                                            // write or destroy a handle shared with the runtime.
+                                                            std::lock_guard<std::mutex> lock(driverMutex);
+                                                            if (spec.stop_requested->load(std::memory_order_relaxed) ||
+                                                                g_configGeneration.load(std::memory_order_relaxed) != spec.gen) continue;
+                                                            if (plc_tag_status(t.handle) == PLCTAG_STATUS_PENDING) {
+                                                                plc_tag_abort(t.handle);
+                                                                std::cerr << "Modbus request stuck pending for [" << spec.conn.id
+                                                                          << "]." << t.cfg.logical_name << "; aborting and retrying." << std::endl;
+                                                            }
+                                                            handleStatus = PLCTAG_ERR_TIMEOUT;
+                                                        }
 			                                    } else if (t.handle_deferred && t.poller_owns_handle) {
 			                                        const int pendingResetMs = std::max(5000, spec.conn.default_read_ms * 4);
 			                                        if (std::chrono::duration_cast<std::chrono::milliseconds>(nowSteady - t.handle_pending_since).count() >= pendingResetMs) {
@@ -28933,16 +28952,20 @@ window.addEventListener("load", startAutoRefresh);
 			                                            t.handle_pending_observed = false;
 			                                        }
 			                                    }
-			                                    continue;
+                                                    if (handleStatus == PLCTAG_STATUS_PENDING) continue;
 			                                }
 		                                t.handle_pending_observed = false;
-		                                if (handleStatus != PLCTAG_STATUS_OK) {
+                                                if (!modbusRecovery && handleStatus != PLCTAG_STATUS_OK) {
 		                                    status = handleStatus;
 		                                } else {
 			                                publishReadyDeferredHandle(t);
 		                                auto t0 = std::chrono::steady_clock::now();
 		                                status = plc_tag_read(t.handle, spec.conn.default_read_ms);
 		                                auto t1 = std::chrono::steady_clock::now();
+                                                if (modbusRecovery) {
+                                                    t.modbus_recovery.completed(status == PLCTAG_STATUS_OK, t1);
+                                                    if (status == PLCTAG_STATUS_OK) publishReadyDeferredHandle(t);
+                                                }
 
 		                                if (spec.metrics) {
 	                                    uint64_t us = static_cast<uint64_t>(
@@ -28999,6 +29022,9 @@ window.addEventListener("load", startAutoRefresh);
 		                                }
 		                            }
 
+                                    if (is_modbus_connection(spec.conn) && status != PLCTAG_STATUS_OK) {
+                                        t.modbus_recovery.completed(false, std::chrono::steady_clock::now());
+                                    }
 		                            if (!metricsRecorded && status != PLCTAG_STATUS_OK && spec.metrics) {
 		                                const int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
 		                                    std::chrono::system_clock::now().time_since_epoch()
