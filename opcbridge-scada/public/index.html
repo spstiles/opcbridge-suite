@@ -614,9 +614,23 @@
           <div class="row-actions" style="margin-bottom: 10px;">
             <button class="btn" id="opcuaTrustRefreshBtn" type="button">Refresh</button>
             <button class="btn" id="opcuaIdentityDownloadBtn" type="button">Download This Server Certificate</button>
+            <button class="btn" id="opcuaIdentityRegenerateBtn" type="button">Regenerate Certificate…</button>
             <span class="hint" id="opcuaTrustStatus">Loading…</span>
           </div>
           <div class="hint" id="opcuaServerIdentity"></div>
+          <dialog id="opcuaCertificateDialog" class="certificate-dialog">
+            <h3>Regenerate OPC UA Certificate</h3>
+            <p id="opcuaCertificateHost"></p>
+            <label for="opcuaCertificateNames">Hostnames and IP addresses (one per line)</label>
+            <textarea id="opcuaCertificateNames" rows="8" spellcheck="false"></textarea>
+            <p class="hint">Detected hostname, existing certificate names, and local IP addresses are prefilled. Remove unwanted addresses or add DNS aliases/NAT addresses that clients use.</p>
+            <p>This briefly restarts OPCBridge, including PLC polling, and disconnects OPC UA connections. Clients and remote servers must trust the new certificate. Application identity, private key, and trust lists are preserved; the old certificate is backed up.</p>
+            <p id="opcuaCertificateStatus" role="status"></p>
+            <div class="row-actions">
+              <button class="btn" id="opcuaCertificateCancel" type="button">Cancel</button>
+              <button class="btn primary" id="opcuaCertificateApply" type="button">Regenerate and Restart</button>
+            </div>
+          </dialog>
           <div class="row-actions" style="margin-top: 12px; justify-content: flex-start;">
             <label style="display:flex; align-items:center; gap:6px;"><input id="svcOpcuaAllowUnsecured" type="checkbox" /> Allow unsecured OPC UA clients</label>
             <label style="display:flex; align-items:center; gap:6px;"><input id="svcOpcuaRequireLogin" type="checkbox" /> Require OPCBridge username/password</label>

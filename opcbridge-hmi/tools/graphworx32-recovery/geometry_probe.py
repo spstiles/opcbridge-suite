@@ -10,6 +10,7 @@ from xml.sax.saxutils import escape
 import olefile
 from embedded_png import extract_png
 from gradients import recover_gradient
+from text_fonts import font_candidates
 
 src, dest = map(Path, sys.argv[1:3])
 with olefile.OleFileIO(src) as f:
@@ -107,7 +108,7 @@ for i, rec in enumerate(records):
         except UnicodeDecodeError: continue
         if value: strings.append((m.start(), value))
     # Text records contain a LOGFONT face string followed by the display string.
-    faces = [(j, p, value) for j,(p,value) in enumerate(strings) if value in ('Arial','Arial Unicode MS','Tahoma','Times New Roman','MS Sans Serif','Verdana','Courier New')]
+    faces = font_candidates(chunk, strings)
     if len(faces) == 1:
         j,p,face = faces[0]
         if j+1 < len(strings):

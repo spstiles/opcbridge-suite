@@ -4016,9 +4016,6 @@ const buttonAuthFields = document.getElementById("buttonAuthFields");
 const buttonAuthLoggedOutTextInput = document.getElementById("buttonAuthLoggedOutText");
 const buttonAuthLoggedInTextInput = document.getElementById("buttonAuthLoggedInText");
 const buttonWriteFields = document.getElementById("buttonWriteFields");
-const buttonWriteConnectionInput = document.getElementById("buttonWriteConnection");
-const buttonWriteTagSelect = document.getElementById("buttonWriteTag");
-const buttonWriteTagPickBtn = document.getElementById("buttonWriteTagPickBtn");
 const buttonWriteOnRow = document.getElementById("buttonWriteOnRow");
 const buttonWriteOnValueInput = document.getElementById("buttonWriteOnValue");
 const buttonWriteOffValueInput = document.getElementById("buttonWriteOffValue");
@@ -8551,6 +8548,7 @@ const getTextBaselineStart = (blockTop, measured) => {
 const groupEditStack = [];
 let selectedPolygonVertex = null;
 let lastEditUiState = null;
+let modeTransitionRevision = 0;
 
 const updateGroupBreadcrumb = () => {
   if (!groupBreadcrumb) return;
@@ -9840,10 +9838,45 @@ const appendBarTicks = (parent, x, y, w, h, orientation, tickConfig, colorFallba
 
 const applyVisibilityFlash = (visibility, result, fallback) => {
   if (!visibility?.flashEnabled) return Boolean(result);
-  const blinkTag = visibility.flashRate === "fast" ? "System/Clock/FastBlink" : "System/Clock/SlowBlink";
-  const rawBlink = tagValueCache.get(normalizeTagCacheKey("_system", blinkTag));
-  if (rawBlink === undefined || rawBlink === null) return Boolean(result);
-  return coerceTagBoolean(rawBlink) ? Boolean(result) : Boolean(fallback);
+  const halfPeriod = visibility.flashRate === "fast" ? 500 : 1000;
+  const now = document.timeline?.currentTime ?? performance.now();
+  return Math.floor(now / halfPeriod) % 2 === 0 ? Boolean(result) : Boolean(fallback);
+};
+
+const getBrowserVisibilityFlash = (obj) => {
+  if (isEditMode || !obj?.visibility || obj.visibility.enabled === false) return null;
+  const vis = obj.visibility;
+  if (!Array.isArray(vis.rules)) {
+    if (!vis.flashEnabled) return null;
+    const result = evaluateVisibilityRule(vis);
+    if (result === null) return null;
+    return { rule: vis, on: Boolean(result), off: !result };
+  }
+  for (const rule of vis.rules) {
+    if (evaluateVisibilityRule(rule) !== true) continue;
+    if (!rule.flashEnabled) return null;
+    return { rule, on: rule.visible !== false, off: vis.defaultVisible === true };
+  }
+  return null;
+};
+
+const shouldPaintObject = (obj) => {
+  const flash = getBrowserVisibilityFlash(obj);
+  return flash ? flash.on || flash.off : shouldRenderObject(obj);
+};
+
+const animateVisibilityFlash = (element, flash, property = "visibility") => {
+  if (!flash || flash.on === flash.off) return;
+  const duration = flash.rule.flashRate === "fast" ? 1000 : 2000;
+  const paint = (visible) => property === "opacity" ? (visible ? 1 : 0) : (visible ? "visible" : "hidden");
+  const animation = element.animate([
+    { [property]: paint(flash.on), offset: 0, easing: "steps(1, end)" },
+    { [property]: paint(flash.off), offset: 0.5, easing: "steps(1, end)" },
+    { [property]: paint(flash.on), offset: 1 }
+  ], { duration, iterations: Infinity });
+  // Every object uses the same document timeline epoch, including replacements
+  // and newly opened popups; unrelated redraws cannot restart a blink cycle.
+  animation.startTime = 0;
 };
 
 const evaluateVisibilityRule = (vis) => {
@@ -9921,7 +9954,14 @@ const getAutomationState = (value, config) => {
     if (value === undefined || value === null) return null;
 
     const numericMatch = Number(matchRaw);
-    const numericValue = coerceTagNumber(value);
+    let numericValue = coerceTagNumber(value);
+    // Boolean snapshots can arrive as text. Numeric Boolean comparisons must
+    // agree with native true/false values without treating arbitrary text as 1.
+    if (numericValue === null && typeof value === "string" && (numericMatch === 0 || numericMatch === 1)) {
+      const booleanText = value.trim().toLowerCase();
+      if (["true", "on", "yes"].includes(booleanText)) numericValue = 1;
+      else if (["false", "off", "no"].includes(booleanText)) numericValue = 0;
+    }
     if (Number.isFinite(numericMatch) && numericValue !== null) {
       const isOn = numericValue === numericMatch;
       return config.invert ? !isOn : isOn;
@@ -9971,12 +10011,29 @@ const getColorRuleFlashTag = (rule) => (
 
 const isColorRuleFlashActive = (rule) => {
   if (!rule?.flashEnabled) return true;
+  if (browserColorFlashPhase && (rule.flashRate === "fast" ? "fast" : "slow") === browserColorFlashPhase.rate) {
+    return browserColorFlashPhase.on === (rule.flashWhen !== false);
+  }
   const key = normalizeTagCacheKey("_system", getColorRuleFlashTag(rule));
   const rawValue = tagValueCache.get(key);
   if (rawValue === undefined || rawValue === null) return false;
   const state = coerceTagBoolean(rawValue);
   const expected = rule.flashWhen === false ? false : true;
   return state === expected;
+};
+
+let browserColorFlashPhase = null;
+const getBrowserColorFlashRate = (obj) => {
+  if (!obj || !["rect", "ellipse", "circle", "text", "button", "arc", "line", "curve", "polyline", "spline", "polygon", "pipe"].includes(obj.type)) return null;
+  const rates = new Set();
+  for (const key of ["fillAutomation", "strokeAutomation", "backgroundAutomation", "borderColorAutomation", "textColorAutomation"]) {
+    for (const rule of getColorAutomationRules(obj[key])) {
+      if (rule?.enabled !== false && rule?.flashEnabled) rates.add(rule.flashRate === "fast" ? "fast" : "slow");
+    }
+  }
+  // Mixed-speed targets require separate paint animations; retain the existing
+  // clock dependency until that case has its own renderer.
+  return rates.size === 1 ? [...rates][0] : null;
 };
 
 const getAutomationColor = (config, baseColor) => {
@@ -11307,7 +11364,14 @@ const getStableAutomationNumber = (config, value, fallback = null, cacheKey = co
   return fallback;
 };
 
-const scheduleRuntimeRender = () => {
+let runtimeDirtyKeys = new Set();
+let runtimeFullRenderRequested = false;
+let runtimeRenderIndex = null;
+let runtimeObjectDefs = null;
+
+const scheduleRuntimeRender = (changedKeys = null) => {
+  if (changedKeys === null) runtimeFullRenderRequested = true;
+  else for (const key of changedKeys) runtimeDirtyKeys.add(key);
   if (wsRuntimeRenderRaf != null) return;
   wsRuntimeRenderRaf = window.requestAnimationFrame(() => {
     wsRuntimeRenderRaf = null;
@@ -11316,7 +11380,11 @@ const scheduleRuntimeRender = () => {
         scheduleDeferredRuntimeScreenRender();
         return;
       }
-      renderScreen({ refreshReferenceHealth: false });
+      const keys = runtimeDirtyKeys;
+      const full = runtimeFullRenderRequested;
+      runtimeDirtyKeys = new Set();
+      runtimeFullRenderRequested = false;
+      if (full || !updateRuntimeObjects(keys)) renderScreen({ refreshReferenceHealth: false });
       if (currentPopupScreenId) openPopup(currentPopupScreenId);
     }
   });
@@ -11329,12 +11397,12 @@ const normalizeWsTagKey = (connectionId, tagName) => {
   return `${conn}:${tag}`;
 };
 
-const collectTagKeysFromValue = (value, out, visited = new WeakSet()) => {
+const collectTagKeysFromValue = (value, out, visited = new WeakSet(), visibilityContext = false, browserColorContext = false) => {
   if (!value || typeof value !== "object") return;
   if (visited.has(value)) return;
   visited.add(value);
   if (Array.isArray(value)) {
-    value.forEach((item) => collectTagKeysFromValue(item, out, visited));
+    value.forEach((item) => collectTagKeysFromValue(item, out, visited, visibilityContext, browserColorContext));
     return;
   }
 
@@ -11347,13 +11415,16 @@ const collectTagKeysFromValue = (value, out, visited = new WeakSet()) => {
   if (value.sourceType === "expression" && typeof value.expression === "string") {
     extractAutomationExpressionTagKeys(value.expression, out);
   }
-  if (value.flashEnabled) {
+  if (value.flashEnabled && !visibilityContext && !browserColorContext) {
     const rate = value.flashRate === "fast" ? "FastBlink" : "SlowBlink";
     out.add(normalizeWsTagKey("_system", `System/Clock/${rate}`));
   }
 
-  Object.values(value).forEach((v) => {
-    if (v && (typeof v === "object")) collectTagKeysFromValue(v, out, visited);
+  const browserColor = Boolean(getBrowserColorFlashRate(value));
+  Object.entries(value).forEach(([property, v]) => {
+    const colorProperty = ["fillAutomation", "strokeAutomation", "backgroundAutomation", "borderColorAutomation", "textColorAutomation", "colorAutomationRules"].includes(property);
+    if (v && (typeof v === "object")) collectTagKeysFromValue(v, out, visited,
+      visibilityContext || property === "visibility", browserColorContext || (browserColor && colorProperty));
   });
 };
 
@@ -11578,7 +11649,7 @@ const connectWebSocket = () => {
           Object.prototype.hasOwnProperty.call(payload, "value"),
           Object.prototype.hasOwnProperty.call(payload, "quality")
         );
-        if (changed) scheduleRuntimeRender();
+        if (changed) scheduleRuntimeRender([normalizeWsTagKey(payload.connection_id, payload.name)]);
       }
     } catch {
       // ignore malformed payloads
@@ -13104,6 +13175,7 @@ let nextClipPathId = 1;
 let nextPaintGradientId = 1;
 let nextDropShadowId = 1;
 const getOrCreateDefs = (svgRoot) => {
+  if (runtimeObjectDefs) return runtimeObjectDefs;
   if (!svgRoot) return null;
   const existing = svgRoot.querySelector("defs");
   if (existing) return existing;
@@ -13614,12 +13686,38 @@ const automaticReportTableDateFormat = (obj, report) => {
 };
 
 const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
+  const rate = !isEditMode && !browserColorFlashPhase ? getBrowserColorFlashRate(obj) : null;
+  if (!rate) return renderObjectContentInto(parent, obj, inheritedGroupColorOverrides);
+  const previous = browserColorFlashPhase;
+  try {
+    for (const on of [true, false]) {
+      const phaseHost = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      parent.appendChild(phaseHost);
+      browserColorFlashPhase = { rate, on };
+      renderObjectContentInto(phaseHost, obj, inheritedGroupColorOverrides);
+      // Opacity composes with a nested visibility animation; a child's explicit
+      // visibility cannot accidentally reveal the inactive color layer.
+      animateVisibilityFlash(phaseHost, { rule: { flashRate: rate }, on, off: !on }, "opacity");
+    }
+  } finally {
+    browserColorFlashPhase = previous;
+  }
+};
+
+const renderObjectContentInto = (parent, obj, inheritedGroupColorOverrides = null) => {
   if (!parent || !obj) return;
   obj = getDisplayObject(obj);
   obj = applyGroupColorOverridesToObject(obj, inheritedGroupColorOverrides);
-  if (!shouldRenderObject(obj)) return;
+  if (!shouldPaintObject(obj)) return;
   const ns = "http://www.w3.org/2000/svg";
   const xhtml = "http://www.w3.org/1999/xhtml";
+  const browserFlash = getBrowserVisibilityFlash(obj);
+  if (browserFlash && browserFlash.on !== browserFlash.off) {
+    const flashHost = document.createElementNS(ns, "g");
+    parent.appendChild(flashHost);
+    animateVisibilityFlash(flashHost, browserFlash);
+    parent = flashHost;
+  }
   const isPopupContent = parent === popupSvg || Boolean(parent.closest?.("#popupSvg"));
   if (isPopupContent && obj.action?.type) {
     const actionHost = document.createElementNS(ns, "g");
@@ -14839,7 +14937,7 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
 
 const renderObjectIntoWithOffset = (parent, obj, offsetX, offsetY, inheritedGroupColorOverrides = null) => {
   if (!parent || !obj) return;
-  if (!shouldRenderObject(obj)) return;
+  if (!shouldPaintObject(obj)) return;
   const clone = JSON.parse(JSON.stringify(obj));
   translateObject(clone, offsetX, offsetY);
   renderObjectInto(parent, clone, inheritedGroupColorOverrides);
@@ -14879,6 +14977,52 @@ const renderSharedTopLevelObject = (parent, obj) => {
   if (wrapper.childNodes.length > 0) return wrapper;
   wrapper.remove();
   return null;
+};
+
+// Runtime dirty regions are stable top-level SVG hosts. A group is one region:
+// its transforms and inherited paints must be evaluated together.
+const isIncrementalRuntimeObject = (obj) => {
+  if (!obj || !SHARED_TOP_LEVEL_RENDER_TYPES.has(obj.type) || obj.type === "alarms-panel") return false;
+  return obj.type !== "group" || (obj.children || []).every(isIncrementalRuntimeObject);
+};
+
+const paintRuntimeRegion = (host, obj) => {
+  const previousDefs = runtimeObjectDefs;
+  const oldAnimations = host.getAnimations?.({ subtree: true }) || [];
+  const staging = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  // Attach while painting so ownerSVGElement and paint coordinates remain valid.
+  host.appendChild(staging);
+  const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+  staging.appendChild(defs);
+  runtimeObjectDefs = defs;
+  try {
+    renderObjectInto(staging, obj);
+    oldAnimations.forEach((animation) => animation.cancel());
+    host.replaceChildren(staging);
+  } catch (error) {
+    staging.getAnimations?.({ subtree: true }).forEach((animation) => animation.cancel());
+    staging.remove();
+    throw error;
+  } finally {
+    runtimeObjectDefs = previousDefs;
+  }
+};
+
+const updateRuntimeObjects = (keys) => {
+  const index = runtimeRenderIndex;
+  if (!index || !index.safe || index.screen !== currentScreenObj || isEditMode || currentPopupScreenId) return false;
+  const affected = new Set();
+  for (const key of keys) for (const region of index.byTag.get(key) || []) affected.add(region);
+  try {
+    for (const region of affected) {
+      if (!region.host.isConnected) return false;
+      paintRuntimeRegion(region.host, getDisplayObject(resolveAliasObject(region.source, currentScreenAliasContext)));
+    }
+    return true;
+  } catch (error) {
+    console.warn("[runtime] incremental render failed; rebuilding screen", error);
+    return false;
+  }
 };
 
 const pendingScreens = new Set();
@@ -15013,7 +15157,10 @@ const closePopup = () => {
     body.style.width = "";
     body.style.height = "";
   }
-  if (popupSvg) popupSvg.textContent = "";
+  if (popupSvg) {
+    popupSvg.getAnimations?.({ subtree: true }).forEach((animation) => animation.cancel());
+    popupSvg.textContent = "";
+  }
   currentPopupScreenId = null;
   currentPopupOptions = null;
   currentPopupAliasContext = {};
@@ -15300,6 +15447,7 @@ const openPopup = (screenId, requestedOptions = null) => {
     popupBody.style.height = `${viewportH}px`;
   }
 
+  popupSvg.getAnimations?.({ subtree: true }).forEach((animation) => animation.cancel());
   popupSvg.textContent = "";
   popupSvg.setAttribute("viewBox", `0 0 ${childW} ${childH}`);
   popupSvg.setAttribute("width", scaledW);
@@ -15348,6 +15496,7 @@ const openPopup = (screenId, requestedOptions = null) => {
 };
 
 const renderScreen = ({ refreshReferenceHealth = true } = {}) => {
+  runtimeRenderIndex = null;
   syncEditorPaneCanvasGesture();
   if (!hmiSvg || !currentScreenObj) return;
   if (refreshReferenceHealth) renderReferenceHealthBadge();
@@ -15373,6 +15522,7 @@ const renderScreen = ({ refreshReferenceHealth = true } = {}) => {
     : null;
   let numberInputRestore = null;
   const { width, height, background, border, objects = [] } = currentScreenObj;
+  const nextRuntimeIndex = { screen: currentScreenObj, safe: !isEditMode && objects.every(isIncrementalRuntimeObject), byTag: new Map() };
   const screenWidth = Number(width) || 1920;
   const screenHeight = Number(height) || 1080;
 
@@ -15399,6 +15549,7 @@ const renderScreen = ({ refreshReferenceHealth = true } = {}) => {
     hmiSvg.style.backgroundPosition = "";
   }
   document.documentElement.style.setProperty("--screen-bg", resolvedBg);
+  hmiSvg.getAnimations?.({ subtree: true }).forEach((animation) => animation.cancel());
   hmiSvg.textContent = "";
   didClear = true;
   nextPaintGradientId = 1;
@@ -15426,7 +15577,24 @@ const renderScreen = ({ refreshReferenceHealth = true } = {}) => {
   const screenAliasContext = isEditMode ? buildAliasPreviewContext(currentScreenObj) : currentScreenAliasContext;
   objects.forEach((sourceObj, index) => {
     const obj = getDisplayObject(resolveAliasObject(sourceObj, screenAliasContext));
-    if (!shouldRenderObject(obj)) return;
+    if (nextRuntimeIndex.safe) {
+      // Keep a host even for currently invisible objects so they can reappear
+      // at the same stacking position without rebuilding their neighbors.
+      const host = document.createElementNS(ns, "g");
+      hmiSvg.appendChild(host);
+      paintRuntimeRegion(host, obj);
+      renderedElements.push(host);
+      renderedElementMeta.push({ el: host, index, type: obj.type });
+      const keys = new Set();
+      collectTagKeysFromValue(resolveAliasObject(sourceObj, screenAliasContext), keys);
+      const region = { host, source: sourceObj };
+      for (const key of keys) {
+        if (!nextRuntimeIndex.byTag.has(key)) nextRuntimeIndex.byTag.set(key, new Set());
+        nextRuntimeIndex.byTag.get(key).add(region);
+      }
+      return;
+    }
+    if (!shouldPaintObject(obj)) return;
     if (obj?.type !== "number-input" && obj?.type !== "viewport") {
       const rendered = renderSharedTopLevelObject(hmiSvg, obj);
       if (rendered) {
@@ -15692,6 +15860,7 @@ const renderScreen = ({ refreshReferenceHealth = true } = {}) => {
   updateSelectionOverlays();
   updatePropertiesPanel();
   wireNumberInputs();
+  runtimeRenderIndex = nextRuntimeIndex;
   if (numberInputRestore?.input) {
     const { input, selectionStart, selectionEnd } = numberInputRestore;
     input.focus();
@@ -16128,11 +16297,6 @@ const syncPropertiesFromSelection = () => {
     if (buttonAlarmFilterClearInput) buttonAlarmFilterClearInput.checked = Boolean(alarmFilterAction.clear);
 
     const writeAction = (selectedAction?.type === "momentary-write" || selectedAction?.type === "toggle-write" || selectedAction?.type === "set-write" || selectedAction?.type === "prompt-write") ? selectedAction : null;
-    if (buttonWriteConnectionInput) setFriendlyConnectionInputValue(buttonWriteConnectionInput, writeAction?.connection_id || "");
-    if (buttonWriteTagSelect) {
-      const tagName = String(writeAction?.tag || "");
-      setInputValueSafe(buttonWriteTagSelect, tagName);
-    }
     if (buttonWriteOnValueInput) setInputValueSafe(buttonWriteOnValueInput, writeAction?.onValue ?? "1");
     if (buttonWriteOffValueInput) setInputValueSafe(buttonWriteOffValueInput, writeAction?.offValue ?? "0");
     if (buttonPromptDefaultInput) setInputValueSafe(buttonPromptDefaultInput, writeAction?.defaultValue ?? "");
@@ -19853,6 +20017,7 @@ function bindScreenManager() {
 }
 
 const setMode = (next) => {
+  const transitionRevision = ++modeTransitionRevision;
   if (isTouchRuntimeEndpoint) next = false;
   if (!next && poseEditSession) cancelPoseEdit({ keepTool: true });
   const wasEditMode = isEditMode;
@@ -19864,6 +20029,9 @@ const setMode = (next) => {
   }
   if (wasEditMode && !next) {
     lastEditUiState = {
+      screen: currentScreenObj,
+      scrollLeft: screenWrapper?.scrollLeft || 0,
+      scrollTop: screenWrapper?.scrollTop || 0,
       selectedIndices: Array.isArray(selectedIndices) ? [...selectedIndices] : [],
       groupEditStack: [...groupEditStack],
       selectedPolygonVertex: selectedPolygonVertex ? { ...selectedPolygonVertex } : null
@@ -19887,7 +20055,7 @@ const setMode = (next) => {
     selectedIndices = [];
     groupEditStack.length = 0;
     clearSelectedPolygonVertex();
-  } else if (!wasEditMode && lastEditUiState) {
+  } else if (!wasEditMode && lastEditUiState?.screen === currentScreenObj) {
     groupEditStack.length = 0;
     lastEditUiState.groupEditStack.forEach((groupObj) => {
       if (groupObj && Array.isArray(groupObj.children)) groupEditStack.push(groupObj);
@@ -19910,6 +20078,7 @@ const setMode = (next) => {
     // so collapsing the editor panels cannot restore the editing scroll offset.
     screenWrapper?.scrollTo?.({ left: 0, top: 0, behavior: "auto" });
     window.requestAnimationFrame(() => {
+      if (transitionRevision !== modeTransitionRevision || isEditMode) return;
       applyScale();
       screenWrapper?.scrollTo?.({ left: 0, top: 0, behavior: "auto" });
     });
@@ -19919,6 +20088,15 @@ const setMode = (next) => {
   updatePropertiesPanel();
   updateGroupBreadcrumb();
   ensureRuntimeHistoryForCurrentScreen();
+  if (!wasEditMode && isEditMode && lastEditUiState?.screen === currentScreenObj) {
+    const saved = lastEditUiState;
+    const restoreEditorScroll = () => {
+      if (transitionRevision !== modeTransitionRevision || !isEditMode || saved.screen !== currentScreenObj) return;
+      screenWrapper?.scrollTo?.({ left: saved.scrollLeft, top: saved.scrollTop, behavior: "auto" });
+    };
+    restoreEditorScroll();
+    window.requestAnimationFrame(restoreEditorScroll);
+  }
 };
 
 if (projectTitleEl) {
@@ -21882,9 +22060,6 @@ textBindingExpressionEditBtn?.addEventListener("click", () => {
   });
 });
 
-if (buttonWriteTagPickBtn) {
-  buttonWriteTagPickBtn.addEventListener("click", () => openCompactTagBindingModal("buttonWrite"));
-}
 
 if (textBindingSaveBtn) {
   textBindingSaveBtn.addEventListener("click", () => {
@@ -22201,30 +22376,30 @@ if (buttonActionSelect) {
 	        : actionType === "prompt-write"
 	          ? {
 	            type: "prompt-write",
-	            connection_id: buttonWriteConnectionInput?.value?.trim() || "",
-	            tag: buttonWriteTagSelect?.value?.trim() || "",
+	            connection_id: getEditedClickAction(getActiveObjects()?.[selectedIndices[0]])?.connection_id || "",
+	            tag: getEditedClickAction(getActiveObjects()?.[selectedIndices[0]])?.tag || "",
             ...promptDefaults
           }
         : actionType === "set-write"
           ? {
             type: "set-write",
-            connection_id: buttonWriteConnectionInput?.value?.trim() || "",
-            tag: buttonWriteTagSelect?.value?.trim() || "",
+            connection_id: getEditedClickAction(getActiveObjects()?.[selectedIndices[0]])?.connection_id || "",
+            tag: getEditedClickAction(getActiveObjects()?.[selectedIndices[0]])?.tag || "",
             onValue: buttonWriteOnValueInput?.value ?? "1"
           }
         : actionType === "toggle-write"
           ? {
             type: "toggle-write",
-            connection_id: buttonWriteConnectionInput?.value?.trim() || "",
-            tag: buttonWriteTagSelect?.value?.trim() || "",
+            connection_id: getEditedClickAction(getActiveObjects()?.[selectedIndices[0]])?.connection_id || "",
+            tag: getEditedClickAction(getActiveObjects()?.[selectedIndices[0]])?.tag || "",
             onValue: buttonWriteOnValueInput?.value ?? "1",
             offValue: buttonWriteOffValueInput?.value ?? "0"
           }
         : actionType === "momentary-write"
           ? {
             type: "momentary-write",
-            connection_id: buttonWriteConnectionInput?.value?.trim() || "",
-            tag: buttonWriteTagSelect?.value?.trim() || "",
+            connection_id: getEditedClickAction(getActiveObjects()?.[selectedIndices[0]])?.connection_id || "",
+            tag: getEditedClickAction(getActiveObjects()?.[selectedIndices[0]])?.tag || "",
             onValue: buttonWriteOnValueInput?.value ?? "1",
             offValue: buttonWriteOffValueInput?.value ?? "0"
           }
@@ -22414,78 +22589,6 @@ const updateButtonPopupSettings = () => {
   updateSelectedGroupAction(groupPopupSettingsFromInputs());
 }));
 
-if (buttonWriteConnectionInput) {
-  buttonWriteConnectionInput.addEventListener("change", () => {
-    const actionType = buttonActionSelect.value;
-    if (actionType !== "momentary-write" && actionType !== "toggle-write" && actionType !== "set-write" && actionType !== "prompt-write") return;
-    const base = {
-      type: actionType,
-      connection_id: connectionIdFromFriendlyInput(buttonWriteConnectionInput),
-      tag: buttonWriteTagSelect?.value?.trim() || ""
-    };
-    if (actionType === "prompt-write") {
-      updateButtonProperty({
-        action: {
-          ...base,
-          defaultValue: parseOptionalNumber(buttonPromptDefaultInput?.value),
-          min: parseOptionalNumber(buttonPromptMinInput?.value),
-          max: parseOptionalNumber(buttonPromptMaxInput?.value),
-          step: parseOptionalNumber(buttonPromptStepInput?.value)
-        }
-      });
-      return;
-    }
-    updateButtonProperty({
-      action: actionType === "set-write"
-        ? {
-          ...base,
-          onValue: buttonWriteOnValueInput?.value ?? "1"
-        }
-        : {
-        ...base,
-        onValue: buttonWriteOnValueInput?.value ?? "1",
-        offValue: buttonWriteOffValueInput?.value ?? "0"
-      }
-    });
-  });
-}
-
-if (buttonWriteTagSelect) {
-  buttonWriteTagSelect.addEventListener("change", () => {
-    const actionType = buttonActionSelect.value;
-    if (actionType !== "momentary-write" && actionType !== "toggle-write" && actionType !== "set-write" && actionType !== "prompt-write") return;
-    const base = {
-      type: actionType,
-      connection_id: buttonWriteConnectionInput?.value?.trim() || "",
-      tag: buttonWriteTagSelect.value.trim()
-    };
-    if (actionType === "prompt-write") {
-      updateButtonProperty({
-        action: {
-          ...base,
-          defaultValue: parseOptionalNumber(buttonPromptDefaultInput?.value),
-          min: parseOptionalNumber(buttonPromptMinInput?.value),
-          max: parseOptionalNumber(buttonPromptMaxInput?.value),
-          step: parseOptionalNumber(buttonPromptStepInput?.value)
-        }
-      });
-      return;
-    }
-    updateButtonProperty({
-      action: actionType === "set-write"
-        ? {
-          ...base,
-          onValue: buttonWriteOnValueInput?.value ?? "1"
-        }
-        : {
-        ...base,
-        onValue: buttonWriteOnValueInput?.value ?? "1",
-        offValue: buttonWriteOffValueInput?.value ?? "0"
-      }
-    });
-  });
-}
-
 if (buttonWriteOnValueInput) {
   buttonWriteOnValueInput.addEventListener("change", () => {
     if (buttonActionSelect?.value !== "momentary-write" && buttonActionSelect?.value !== "toggle-write" && buttonActionSelect?.value !== "set-write") return;
@@ -22494,14 +22597,14 @@ if (buttonWriteOnValueInput) {
       action: actionType === "set-write"
         ? {
           type: actionType,
-          connection_id: buttonWriteConnectionInput?.value?.trim() || "",
-          tag: buttonWriteTagSelect?.value?.trim() || "",
+          connection_id: getEditedClickAction(getActiveObjects()?.[selectedIndices[0]])?.connection_id || "",
+          tag: getEditedClickAction(getActiveObjects()?.[selectedIndices[0]])?.tag || "",
           onValue: buttonWriteOnValueInput.value
         }
         : {
         type: actionType,
-        connection_id: buttonWriteConnectionInput?.value?.trim() || "",
-        tag: buttonWriteTagSelect?.value?.trim() || "",
+        connection_id: getEditedClickAction(getActiveObjects()?.[selectedIndices[0]])?.connection_id || "",
+        tag: getEditedClickAction(getActiveObjects()?.[selectedIndices[0]])?.tag || "",
         onValue: buttonWriteOnValueInput.value,
         offValue: buttonWriteOffValueInput?.value ?? "0"
       }
@@ -22515,8 +22618,8 @@ if (buttonWriteOffValueInput) {
     updateButtonProperty({
       action: {
         type: buttonActionSelect.value,
-        connection_id: buttonWriteConnectionInput?.value?.trim() || "",
-        tag: buttonWriteTagSelect?.value?.trim() || "",
+        connection_id: getEditedClickAction(getActiveObjects()?.[selectedIndices[0]])?.connection_id || "",
+        tag: getEditedClickAction(getActiveObjects()?.[selectedIndices[0]])?.tag || "",
         onValue: buttonWriteOnValueInput?.value ?? "1",
         offValue: buttonWriteOffValueInput.value
       }
@@ -22529,8 +22632,8 @@ const updatePromptWriteActionFromInputs = () => {
   updateButtonProperty({
     action: {
       type: "prompt-write",
-      connection_id: buttonWriteConnectionInput?.value?.trim() || "",
-      tag: buttonWriteTagSelect?.value?.trim() || "",
+      connection_id: getEditedClickAction(getActiveObjects()?.[selectedIndices[0]])?.connection_id || "",
+      tag: getEditedClickAction(getActiveObjects()?.[selectedIndices[0]])?.tag || "",
       defaultValue: parseOptionalNumber(buttonPromptDefaultInput?.value),
       min: parseOptionalNumber(buttonPromptMinInput?.value),
       max: parseOptionalNumber(buttonPromptMaxInput?.value),
@@ -25239,13 +25342,13 @@ function initializeCompactTagBindingRows() {
 
   registerCompactTagBinding({
     id: "buttonWrite",
-    connectionInput: buttonWriteConnectionInput,
-    tagInput: buttonWriteTagSelect,
+    container: buttonWriteFields,
+    beforeEl: buttonWriteOnRow,
+    buttonLabel: "Tag",
     modalTitle: "Button Write Tag",
-    inlineOnly: true,
     read: () => ({
-      connection_id: String(buttonWriteConnectionInput?.value || "").trim(),
-      tag: String(buttonWriteTagSelect?.value || "").trim()
+      connection_id: getEditedClickAction(getActiveObjects()?.[selectedIndices[0]])?.connection_id || "",
+      tag: getEditedClickAction(getActiveObjects()?.[selectedIndices[0]])?.tag || ""
     }),
     apply: ({ connection_id, tag }) => updateButtonWriteBinding({ connection_id, tag })
   });
@@ -28543,6 +28646,64 @@ const getScreenPoint = (event) => {
   };
 };
 
+// Screen coordinates deliberately do not use the active group's local origin.
+const cursorPositionOverlay = document.getElementById("cursorPositionOverlay");
+const viewCursorPositionMenuBtn = document.getElementById("viewCursorPositionMenuBtn");
+const cursorPositionPreferenceKey = "hmi.cursorPosition.enabled";
+let cursorPositionEnabled = false;
+try { cursorPositionEnabled = localStorage.getItem(cursorPositionPreferenceKey) === "true"; } catch (_) {}
+let cursorPositionPointer = null;
+let cursorPositionFrame = null;
+const renderCursorPosition = () => {
+  cursorPositionFrame = null;
+  if (!cursorPositionOverlay || !screenWrapper) return;
+  cursorPositionOverlay.hidden = !cursorPositionEnabled || !isEditMode;
+  if (cursorPositionOverlay.hidden) return;
+  const bounds = screenWrapper.getBoundingClientRect();
+  // client dimensions exclude scrollbars, keeping the block inside the canvas.
+  cursorPositionOverlay.style.left = `${bounds.left + screenWrapper.clientLeft + screenWrapper.clientWidth - 8}px`;
+  cursorPositionOverlay.style.top = `${bounds.top + screenWrapper.clientTop + screenWrapper.clientHeight - 8}px`;
+  cursorPositionOverlay.style.transform = "translate(-100%, -100%)";
+  let point = null;
+  if (cursorPositionPointer) {
+    const { clientX, clientY } = cursorPositionPointer;
+    const target = document.elementFromPoint(clientX, clientY);
+    if (target && screen.contains(target) && clientX >= bounds.left && clientX < bounds.right
+        && clientY >= bounds.top && clientY < bounds.bottom) {
+      point = getScreenPoint(cursorPositionPointer);
+    }
+  }
+  cursorPositionOverlay.textContent = point && Number.isFinite(point.x) && Number.isFinite(point.y)
+    ? `X: ${Math.round(point.x)}  Y: ${Math.round(point.y)}` : "X: —  Y: —";
+};
+const scheduleCursorPosition = () => {
+  if (cursorPositionFrame === null) cursorPositionFrame = requestAnimationFrame(renderCursorPosition);
+};
+const syncCursorPositionMenu = () => {
+  viewCursorPositionMenuBtn?.setAttribute("aria-pressed", String(cursorPositionEnabled));
+  if (viewCursorPositionMenuBtn) viewCursorPositionMenuBtn.textContent = `${cursorPositionEnabled ? "✓ " : ""}Cursor Position`;
+  scheduleCursorPosition();
+};
+viewCursorPositionMenuBtn?.addEventListener("click", () => {
+  cursorPositionEnabled = !cursorPositionEnabled;
+  try { localStorage.setItem(cursorPositionPreferenceKey, String(cursorPositionEnabled)); } catch (_) {}
+  syncCursorPositionMenu();
+});
+document.addEventListener("pointermove", (event) => {
+  cursorPositionPointer = { clientX: event.clientX, clientY: event.clientY };
+  if (cursorPositionEnabled && isEditMode) scheduleCursorPosition();
+}, { passive: true, capture: true });
+const clearCursorPosition = () => { cursorPositionPointer = null; scheduleCursorPosition(); };
+document.documentElement.addEventListener("pointerleave", clearCursorPosition);
+window.addEventListener("blur", clearCursorPosition);
+document.addEventListener("scroll", () => {
+  if (cursorPositionEnabled && isEditMode) scheduleCursorPosition();
+}, { passive: true, capture: true });
+new ResizeObserver(scheduleCursorPosition).observe(screenWrapper);
+new ResizeObserver(scheduleCursorPosition).observe(screen);
+new MutationObserver(clearCursorPosition).observe(document.body, { attributes: true, attributeFilter: ["class"] });
+syncCursorPositionMenu();
+
 const createLibraryDropObject = (kind, x, y) => {
   const isImageDrop = typeof kind === "string" && kind.startsWith("image:");
   const imageName = isImageDrop ? kind.slice("image:".length).trim() : "";
@@ -29825,14 +29986,10 @@ const findHitInObjectList = (objects, point, pathPrefix = []) => {
     const obj = getDisplayObject(objects[i]);
     if (!obj || !shouldRenderObject(obj)) continue;
     if (obj.type === "group") {
-      const groupBox = {
-        x: Number(obj.x ?? 0),
-        y: Number(obj.y ?? 0),
-        width: Number(obj.w ?? 0),
-        height: Number(obj.h ?? 0)
-      };
+      const groupBox = getObjectBounds(obj);
+      if (!groupBox) continue;
       if (!pointInBox(point, groupBox)) continue;
-      const localPoint = { x: point.x - groupBox.x, y: point.y - groupBox.y };
+      const localPoint = { x: point.x - Number(obj.x ?? 0), y: point.y - Number(obj.y ?? 0) };
       const hitChild = findHitInObjectList(obj.children, localPoint, [...pathPrefix, i]);
       return hitChild || { path: [...pathPrefix, i] };
     }
@@ -29874,19 +30031,21 @@ const findRuntimeChildMetaInGroup = (groupObj, groupIndex, point, offsetX, offse
     const child = getDisplayObject(groupObj.children[i]);
     if (!child || !shouldRenderObject(child)) continue;
     if (child.type === "group") {
+      const childBounds = getObjectBounds(child);
+      if (!childBounds) continue;
       const childBox = {
-        x: offsetX + Number(child.x ?? 0),
-        y: offsetY + Number(child.y ?? 0),
-        width: Number(child.w ?? 0),
-        height: Number(child.h ?? 0)
+        x: offsetX + childBounds.x,
+        y: offsetY + childBounds.y,
+        width: childBounds.width,
+        height: childBounds.height
       };
       if (!pointInBox(point, childBox)) continue;
       const found = findRuntimeChildMetaInGroup(
         child,
         groupIndex,
         point,
-        childBox.x,
-        childBox.y,
+        offsetX + Number(child.x ?? 0),
+        offsetY + Number(child.y ?? 0),
         [...childPath, i]
       );
       return found || { index: groupIndex, type: "group", bounds: childBox, childPath: [...childPath, i] };
@@ -29926,6 +30085,7 @@ const getMetaAtPoint = (point) => {
   for (let i = renderedElementMeta.length - 1; i >= 0; i -= 1) {
     const item = renderedElementMeta[i];
     const obj = getDisplayObject(getActiveObjects()?.[item.index]);
+    if (!isEditMode && !shouldRenderObject(obj)) continue;
     if (obj?.type === "line" && pointHitsLine(point, obj)) {
       return item;
     }
@@ -30026,13 +30186,12 @@ const getMetaAtPoint = (point) => {
       : false;
     if (isHit) {
       if (!isEditMode && obj?.type === "group") {
-        const groupBox = bbox;
         const child = findRuntimeChildMetaInGroup(
           obj,
           item.index,
           point,
-          groupBox.x,
-          groupBox.y,
+          Number(obj.x ?? 0),
+          Number(obj.y ?? 0),
           []
         );
         if (child) return child;

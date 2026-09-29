@@ -49,6 +49,7 @@
             </button>
             <div id="viewMenuFlyout" class="menu-flyout is-hidden" role="menu" aria-label="View menu">
               <button id="viewTagsMenuBtn" class="menu-item" type="button">Tags</button>
+              <button id="viewCursorPositionMenuBtn" class="menu-item" type="button" aria-pressed="false">Cursor Position</button>
               <button id="viewDiagnosticsMenuBtn" class="menu-item" type="button" aria-pressed="false">Diagnostics Mode <span class="menu-shortcut">Ctrl+D</span></button>
             </div>
           </div>
@@ -327,6 +328,7 @@
         </div>
       </div>
       <div id="editor-resizer" class="editor-resizer" aria-hidden="true"></div>
+      <div id="cursorPositionOverlay" class="cursor-position-overlay" hidden>X: —  Y: —</div>
       <aside id="editor-pane" class="editor-pane is-hidden">
         <div id="editorPaneTitlebar" class="editor-pane-titlebar" aria-label="Editor panel window">
           <div id="editorPaneTitle" class="editor-pane-title" title="Drag to move (when floating)">Properties</div>
@@ -2134,17 +2136,6 @@
               <div class="prop-row"><label for="buttonPopupScaleMode">Content Scaling</label><select id="buttonPopupScaleMode"><option value="fit">Scale to Fit</option><option value="crop">Actual Size / Scroll</option></select></div>
             </div>
 	            <div class="prop-subgroup is-hidden" id="buttonWriteFields" hidden>
-	              <div class="prop-row">
-	                <label for="buttonWriteConnection">Connection</label>
-	                <input id="buttonWriteConnection" type="text" placeholder="Connection name" />
-	              </div>
-	              <div class="prop-row">
-	                <label for="buttonWriteTag">Tag</label>
-	                <div class="prop-inline automation-tag-inline">
-	                  <input id="buttonWriteTag" class="automation-tag-input" type="text" placeholder="tag" />
-	                  <button id="buttonWriteTagPickBtn" class="panel-btn" type="button">Pick…</button>
-	                </div>
-	              </div>
 	              <div class="prop-row" id="buttonWriteOnRow">
 	                <label id="buttonWriteOnLabel" for="buttonWriteOnValue">On Value</label>
 	                <input id="buttonWriteOnValue" type="text" placeholder="1" />

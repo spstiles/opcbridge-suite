@@ -20324,6 +20324,54 @@ async function addOpcuaServerProfile() {
   if (els.opcuaTrustStatus) els.opcuaTrustStatus.textContent = `Trusted server profile '${data.profile?.name || name}' added.`;
 }
 
+async function openOpcuaCertificateDialog() {
+  const dialog = document.getElementById('opcuaCertificateDialog');
+  const names = document.getElementById('opcuaCertificateNames');
+  const status = document.getElementById('opcuaCertificateStatus');
+  const apply = document.getElementById('opcuaCertificateApply');
+  const cancel = document.getElementById('opcuaCertificateCancel');
+  let working = false;
+  let fingerprint = '';
+  apply.disabled = true;
+  names.disabled = true;
+  names.value = '';
+  status.textContent = 'Detecting server hostname and addresses…';
+  dialog.showModal();
+  dialog.oncancel = event => { if (working) event.preventDefault(); };
+  cancel.onclick = () => { if (!working) dialog.close(); };
+  try {
+    const data = await apiGet('/api/opcbridge/opcua-certificate');
+    if (!dialog.open) return;
+    fingerprint = data.fingerprint;
+    document.getElementById('opcuaCertificateHost').textContent = 'Computer hostname: ' + data.hostname;
+    names.value = data.names.join('\n');
+    names.disabled = false;
+    apply.disabled = false;
+    status.textContent = '';
+  } catch (error) { status.textContent = error.message; return; }
+  apply.onclick = async () => {
+    if (working) return;
+    working = true;
+    apply.disabled = cancel.disabled = names.disabled = true;
+    status.textContent = 'Validating and replacing certificate, then restarting OPCBridge…';
+    try {
+      const response = await fetchWithTimeout('/api/opcbridge/opcua-certificate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: true, fingerprint, names: names.value.split(/[\n,]+/).map(value => value.trim()).filter(Boolean) })
+      }, 180000);
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error || 'Certificate regeneration failed.');
+      dialog.close();
+      await refreshOpcuaTrust('Certificate regenerated. Clients must trust it again. Backup: ' + data.backup);
+    } catch (error) {
+      status.textContent = error.message + ' If the request timed out, reopen this dialog to check the current certificate before retrying.';
+    } finally {
+      working = false;
+      apply.disabled = cancel.disabled = names.disabled = false;
+    }
+  };
+}
+
 async function changeOpcuaTrust(action, fingerprint) {
   const certificate = [...(state.opcuaTrust?.rejected || []), ...(state.opcuaTrust?.trusted || [])]
     .find((item) => item.fingerprint === fingerprint);
@@ -21024,6 +21072,7 @@ function wireNewDeviceFormUi() {
   els.newDevMqttTestBtn?.addEventListener('click', () => testMqttDeviceConnection('new'));
   els.opcuaTrustRefreshBtn?.addEventListener('click', () => refreshOpcuaTrust());
   els.opcuaIdentityDownloadBtn?.addEventListener('click', () => window.open('/api/opcbridge/opcua-trust?action=download-identity', '_blank', 'noopener,noreferrer'));
+  document.getElementById('opcuaIdentityRegenerateBtn')?.addEventListener('click', openOpcuaCertificateDialog);
   els.opcuaServerProfileAddBtn?.addEventListener('click', () => addOpcuaServerProfile().catch((err) => { if (els.opcuaTrustStatus) els.opcuaTrustStatus.textContent = err.message || err; }));
   els.opcuaServerProfilesTbody?.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-opcua-profile-delete]');

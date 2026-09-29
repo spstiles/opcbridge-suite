@@ -2040,6 +2040,18 @@ details.advanced summary {
 
 
 /* Modal */
+.certificate-dialog {
+  width: min(560px, 90vw);
+  max-height: 85vh;
+  overflow: auto;
+  background: #151d26;
+  color: #e6edf3;
+  border: 1px solid #41546b;
+  border-radius: 8px;
+  padding: 20px;
+}
+.certificate-dialog::backdrop { background: #0009; }
+.certificate-dialog textarea { display: block; width: 100%; box-sizing: border-box; margin-top: 8px; }
 .modal-overlay {
   position: fixed;
   inset: 0;

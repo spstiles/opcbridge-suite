@@ -6,6 +6,30 @@ const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '../public/js/hmi.js'), 'utf8');
 const html = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
 
+test('button write picker uses the shared compact row and reads the selected action', () => {
+  const registration = source.match(/registerCompactTagBinding\(\{\s*id: "buttonWrite",[\s\S]*?\n  \}\);/)[0];
+  assert.ok(registration.includes('container: buttonWriteFields'));
+  assert.ok(registration.includes('beforeEl: buttonWriteOnRow'));
+  assert.ok(!registration.includes('inlineOnly'));
+  const action = { connection_id: 'connection_a', tag: 'Pump1' };
+  let config;
+  vm.runInNewContext(registration, {
+    registerCompactTagBinding: value => { config = value; },
+    buttonWriteFields: {}, buttonWriteOnRow: {},
+    getActiveObjects: () => [{}], selectedIndices: [0],
+    getEditedClickAction: () => action,
+    updateButtonWriteBinding: patch => Object.assign(action, patch)
+  });
+  config.apply({ connection_id: 'connection_b', tag: 'Pump2' });
+  assert.equal(config.read().connection_id, 'connection_b');
+  config.apply({ connection_id: 'connection_c', tag: 'Pump2' });
+  assert.equal(config.read().connection_id, 'connection_c');
+  assert.equal(config.read().tag, 'Pump2');
+  for (const id of ['buttonWriteConnection', 'buttonWriteTag', 'buttonWriteTagPickBtn']) {
+    assert.ok(!html.includes('id="' + id + '"'));
+  }
+});
+
 test('buttons always have Click; other objects require an action or explicit addition', () => {
   const context = vm.createContext({});
   vm.runInContext(source.match(/^const hasClickTab = .*;$/m)[0], context);

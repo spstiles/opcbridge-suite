@@ -239,7 +239,109 @@ python3 tools/graphworx32-recovery/numeric_sources.py SOURCE.gdf geometry-candid
 ```
 # Centered gradient recovery
 
+## Color binding recovery (experimental preview)
+
+The wall archive contains 132 OColorDynInfo records associated with 116 distinct
+object/dynamic-ID pairs. Every pair was checked against the object's own dynamic
+reference list. Sixteen pairs contain two records; do not collapse these or
+assume a single Boolean on/off rule. Source links include direct run/fault tags
+and expressions. Screenshot `PqzIiQhoDb.png` verifies that the three color slots
+are fill, line, and shadow, with separate target enable flags and an on-true
+selection. They are not on/off/default colors.
+
+Useful reference objects for confirming that layout:
+
+- Object 7, “OpenCel Pulsing”, near (6791,1457), source
+  `<#PLANT_OPS#>\\PLC8.B180.OpenCel.Pulsing_Active`.
+- Object 8, “OpenCel Faulted”, near (6791,1515), source
+  `<#PLANT_OPS#>\\PLC8.B180.OpenCel.System_Fault_Active`.
+- Object 11, “TWAS Flow > 10 GPM”, near (6791,1321), an expression comparing
+  `TWAS_Flow_From_SCADA` to 10.
+
+`color_sources.py` accepts the observed record layout with explicit RGB colors
+(COLORREF high byte 0 or 2) and no shadow-color target. The first preview mapped
+100 source bindings to 447 native child objects. The multi-color preview also
+recovers the 16 Forward/Reverse mixer bindings, for 116 source bindings (132
+conditions) on 543 native child objects. Groups distribute rules
+to existing painted child targets rather than receiving a uniform group fill.
+Conflicting existing child rules are never overwritten. Text maps source Line
+to glyph color and source Fill to background; this target interpretation remains
+provisional pending runtime comparison. Base colors remain unchanged when the
+condition is false (or true for an inverted rule).
+
+`build_color_screen.py SOURCE.gdf GEOMETRY.json STATIC.screen OUTPUT.screen`
+creates a separate color/numeric preview and refuses to overwrite an output.
+It also recovers the 165 numeric bindings from the latest static geometry.
+Original references remain unresolved for manual remapping; expressions remain
+expressions. No write actions or VBA are executed or converted. Tests cover
+record truncation, conservative rejection, text targets, expression preservation,
+and atomic group conflict handling. No manually edited screens are changed.
+
+Multi-condition sources are joined by `(dynamicId, pointId)`, not the dynamic ID
+alone. The OPoint ID after the source CString must agree with its preceding
+collection key. Both mixer conditions otherwise share the same dynamic ID.
+Every observed pair stores green Forward followed by orange Reverse, with black
+line color and on-true flags. Native rule arrays preserve that serialization
+order, with first-match precedence. GraphWorX's simultaneous-true precedence
+has not been independently verified; test this before treating recovery as exact.
+Neither condition matching retains the object's base paint. A regression fixture
+deliberately reverses point collection order and source alphabetical order to
+ensure colors remain attached to the correct condition.
+
 ## Native arc update
+
+## Visibility recovery preview
+
+Screenshot `03E3W4obDG.png` confirms object 682 (OPEN near 1717,1494):
+Hide Object, Hide/Disable when False, source
+`<#PLANT_OPS#>\\Building_30.PLC.Gates.30_GT_11.Gate_30_GT_11_Full_Open`.
+The matching OHide layout maps to native visibility with Invert unchecked.
+Direct Boolean tag bindings explicitly store `mode: equals, match: "1"` so
+opening/remapping them does not fall back to Threshold in the properties pane.
+Expressions retain their own Boolean evaluation without a tag comparison mode.
+`visibility_sources.py` requires reciprocal object/dynamic links, an unambiguous
+source, and the complete verified base/settings byte layout. Other variants are
+flagged rather than assuming Hide/Disable or True/False semantics.
+
+`build_visibility_screen.py SOURCE.gdf GEOMETRY.json COLOR.screen OUTPUT.screen`
+preserves the numeric/color/text preview and refuses output replacement. The
+wall file has 469 linked records: 462 bindings applied, two records on object
+8195 retained as a review issue, and five absent objects/wrappers retained in
+the import audit. These absent records are 18788, 248, 18925, 18892, and 18786;
+this pass does not reconstruct removed wrappers or excluded source objects.
+Source expressions remain expressions, original references require remapping,
+and Flash/Disable variants are not converted. Tests cover truncation, unknown
+settings, group expressions, duplicate rules, and preservation of existing edits.
+
+## Native geometry and text notes
+
+Color Flash: `qMbbVcauso.png` verifies object 687, GATE 30-GT-12 near (1607,1458):
+Change Color, white Fill/black Line, Flash When True, original state when not
+flashing, 500ms. The observed `00 00 01` option combination now maps to native
+flashing Color bindings, with 500/1000ms mapped to fast/slow. Original static
+paints and separate visibility remain intact. Existing color rules are not
+overwritten: their precedence requires review. The new preview adds 53 source
+color-flash bindings to 121 objects; 75 Flash objects still require review,
+including conflicts and unverified variants. The 125 hide-flash bindings remain.
+
+Flash preview: `MDkQJqazI3.png` verifies object 864, vertical FAILED near
+(1201,2256): Hide Object, Flash When True, Show Alternate State When Not Flashing,
+1000ms. Only that complete flag combination is accepted by `flash_sources.py`.
+It emits a visibility rule collection with hidden fallback and SlowBlink; the
+object blinks when active and stays hidden when inactive. Exact timing still
+needs source comparison. Color slots are inactive for this hide-mode variant.
+`build_flash_screen.py SOURCE.gdf GEOMETRY.json VISIBILITY.screen OUTPUT.screen`
+preserves prior recovered bindings and refuses overwrite. Of 254 linked records,
+125 are mapped, 128 objects retain review issues (other options or overlapping
+visibility), and one absent object stays in the audit. No edited files are changed.
+
+Text recovery now identifies font faces from the serialized LOGFONT metrics and
+following layout/text CString positions, rather than a font-name whitelist.
+This recovers object 762, `HIGH INFLUENT\r\nFLOW` (Arial Black), previously emitted
+as a rectangle placeholder. A full-file comparison retains all previously decoded
+text and adds this label. Font availability/appearance still depends on the native
+HMI renderer; an unfamiliar font no longer discards the label itself. Tests cover
+arbitrary font names and rejection of invalid metrics/layout positions.
 
 Verified quarter-turn OArc records now emit native `arc` objects instead of
 sampled splines. `x,y,w,h` describe the full ellipse; `startAngle,sweepAngle`

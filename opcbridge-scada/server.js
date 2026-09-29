@@ -16,6 +16,7 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const child_process = require('child_process');
+const opcuaCertificate = require('./opcua-certificate');
 
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
@@ -4790,6 +4791,26 @@ const server = http.createServer(async (req, res) => {
       }
       sendJson(res, 405, { ok: false, error: 'Method not allowed' });
     } catch (err) { sendJson(res, 400, { ok: false, error: `OPC UA server profile operation failed: ${err.message || err}` }); }
+    return;
+  }
+
+  if (url.pathname === '/api/opcbridge/opcua-certificate') {
+    if (!await requireManageServerPerm()) return;
+    const root = path.join(DEFAULT_OPCBRIDGE_CONFIG_DIR, 'certs', 'opcua');
+    try {
+      if (req.method === 'GET') {
+        sendJson(res, 200, { ok: true, ...opcuaCertificate.defaults(root) });
+      } else if (req.method === 'POST') {
+        if (!SYSTEMD_ENABLED) throw new Error('Systemd management must be enabled to safely replace the certificate.');
+        const body = JSON.parse((await readBody(req, 16384)).toString('utf8'));
+        if (body.confirm !== true) throw new Error('Explicit confirmation is required.');
+        const result = await opcuaCertificate.regenerate(root, body, async (action) => {
+          const result = runSystemctl([action, SYSTEMD_UNIT]);
+          if (!result.ok) throw new Error(result.error || result.stderr || 'Could not ' + action + ' OPCBridge.');
+        });
+        sendJson(res, 200, { ok: true, ...result });
+      } else sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+    } catch (error) { sendJson(res, 400, { ok: false, error: error.message }); }
     return;
   }
 

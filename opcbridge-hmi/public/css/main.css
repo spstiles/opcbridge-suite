@@ -4369,3 +4369,21 @@ body.runtime-mode #editor-pane {
   outline: 2px solid #4b9eff;
   outline-offset: -2px;
 }
+/* Fixed to the visible canvas corner, outside its scrollable drawing surface. */
+.cursor-position-overlay {
+  position: fixed;
+  z-index: 30;
+  pointer-events: none;
+  user-select: none;
+  padding: 4px 8px;
+  border: 1px solid rgba(255, 255, 255, .2);
+  border-radius: 4px;
+  background: rgba(20, 25, 33, .82);
+  color: #eef2f7;
+  font: 12px/1.4 monospace;
+  font-variant-numeric: tabular-nums;
+  white-space: pre;
+}
+.cursor-position-overlay[hidden], body:not(.edit-mode) .cursor-position-overlay {
+  display: none;
+}

@@ -1204,6 +1204,8 @@ install_scada_systemd_sudoers() {
 
 ${SERVICE_USER} ALL=(root) NOPASSWD: /bin/systemctl daemon-reload
 ${SERVICE_USER} ALL=(root) NOPASSWD: /bin/systemctl restart opcbridge.service
+${SERVICE_USER} ALL=(root) NOPASSWD: /bin/systemctl stop opcbridge.service
+${SERVICE_USER} ALL=(root) NOPASSWD: /bin/systemctl start opcbridge.service
 ${SERVICE_USER} ALL=(root) NOPASSWD: /usr/bin/install -D -m 0644 /tmp/opcbridge-scada-dropin-*.conf /etc/systemd/system/opcbridge.service.d/20-opcbridge-scada.conf
 EOF
 
