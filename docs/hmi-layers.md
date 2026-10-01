@@ -57,6 +57,25 @@ alongside `zOrderPreserved: true`. The GraphWorX 64 importer sets
 `zOrderPreserved` for the `.gdfx` path and does not carry a verification flag,
 since that path reads the draw list directly.
 
+## GraphWorX 64 (`.gdfx`)
+
+GraphWorX 64 displays carry no layer markup. Stacking is source document order,
+and a nested `Canvas` element is a group, not a layer. The importer therefore
+emits one synthesized backmost `Default` layer and tags every top-level object
+with it, so the saved file states its layering explicitly instead of depending on
+the editor's single-layer fallback. `importInfo` reports `layersRecovered: 0` and
+`layersSynthesized: 1` so nothing implies layers were recovered from the source.
+`converterVersion` is 3.
+
+Only top-level objects get a `layerId`; a group and its children all belong to
+the group's layer. Verified across all 357 displays in the local GraphWorX 64
+sample collection (8,775 top-level objects): each produced exactly one layer,
+every top-level object tagged, no `layerId` inside any group, and paint order
+identical to document order.
+
+Attaching real layers to `.gdfx` needs a sample display that actually uses the
+feature. None was available.
+
 Not yet implemented: runtime layer visibility bindings driven by process values,
 nested layers, and layer-level runtime actions. Do not yet use editor Show as a
 runtime alarm-overlay control.

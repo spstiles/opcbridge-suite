@@ -538,6 +538,14 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
   const issues = [];
   const embeddedAssets = [];
   const viewportNames = new Map();
+  // GraphWorX64 displays carry no layer markup: stacking is document order, and
+  // nested Canvas elements are groups, not layers. Emit one explicit backmost
+  // layer so every imported object has a layerId in the saved file instead of
+  // relying on the editor's single-layer fallback, and so layers can be attached
+  // later without re-tagging. Only top-level objects are tagged; a group and its
+  // children all belong to the group's layer. See docs/hmi-layers.md.
+  const defaultLayer = { id: "gwx64_layer_default", name: "Default", editorVisible: true, locked: false };
+  const layers = [defaultLayer];
   const supportedContainers = new Set(["Canvas", "mwt:ClassicBorderDecorator", "MultipleTabItem"]);
   let objectTarget = objects;
   let objectSequence = 0;
@@ -930,11 +938,15 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
   };
 
   childEntries(root).forEach((entry) => walk(entry.name, entry.node));
+  // The walk appends to `objects` only for top-level objects; nested ones go
+  // into their parent's children array.
+  for (const obj of objects) obj.layerId = defaultLayer.id;
   const unresolved = issues.filter((issue) => issue.status === "unresolved").length;
   return {
     screen: {
       width: num(root.Width, 1920), height: num(root.Height, 1080), background: color(root.Background, "#000000"), objects,
-      importInfo: { format: "graphworx64", sourceFile: path.basename(filename), importedAt: new Date().toISOString(), converterVersion: 2, zOrderPreserved: true },
+      layers,
+      importInfo: { format: "graphworx64", sourceFile: path.basename(filename), importedAt: new Date().toISOString(), converterVersion: 3, zOrderPreserved: true, layersRecovered: 0, layersSynthesized: 1, limitations: ["GraphWorX64 displays store no layer markup, so all objects are placed on one synthesized backmost layer. Stacking is the source document order, which is preserved.", "Nested Canvas elements are groups, not layers. A group's children belong to the group's layer."] },
       referenceHealth: { issues }
     },
     summary: { imported: true, objects: objects.length, imagesExtracted: embeddedAssets.length, unresolved, notices: issues.length - unresolved, issues: issues.length },

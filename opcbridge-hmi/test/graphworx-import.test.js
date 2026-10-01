@@ -691,3 +691,49 @@ test("keeps non-level GraphWorX size dynamics marked unsupported", () => {
   assert.equal(ref.status, "unsupported");
   assert.ok(result.screen.referenceHealth.issues.some((issue) => issue.category === "unsupported-automation"));
 });
+
+test("puts every imported object on one synthesized default layer", () => {
+  const result = convertGraphWorx(fixture, { filename: "Layered.gdfx" });
+  assert.equal(result.screen.layers.length, 1);
+  const [layer] = result.screen.layers;
+  assert.equal(layer.name, "Default");
+  assert.equal(layer.editorVisible, true);
+  assert.equal(layer.locked, false);
+  assert.ok(result.screen.objects.length > 1);
+  for (const object of result.screen.objects) assert.equal(object.layerId, layer.id);
+});
+
+test("does not tag objects nested inside a group with a layerId", () => {
+  const result = convertGraphWorx(fixture, { filename: "Nested Layers.gdfx" });
+  const groups = flattenObjects(result.screen.objects).filter((object) => object.type === "group");
+  assert.ok(groups.length > 0);
+  for (const group of groups) {
+    assert.ok(group.layerId, "the group itself carries its layer");
+    for (const child of flattenObjects(group.children || [])) {
+      if (child !== group) assert.equal(child.layerId, undefined);
+    }
+  }
+});
+
+test("records that no GraphWorX64 layer markup was found rather than implying layers were recovered", () => {
+  const result = convertGraphWorx(fixture, { filename: "Layer Info.gdfx" });
+  const info = result.screen.importInfo;
+  assert.equal(info.format, "graphworx64");
+  assert.equal(info.layersRecovered, 0);
+  assert.equal(info.layersSynthesized, 1);
+  assert.equal(info.zOrderPreserved, true);
+  assert.ok(Array.isArray(info.limitations) && info.limitations.length >= 2);
+  assert.ok(info.limitations.some((item) => /no layer markup/.test(item)));
+});
+
+test("preserves source stacking order when every object shares one layer", () => {
+  const xml = `<Canvas Width="300" Height="200" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+    <Rectangle Width="10" Height="10" Canvas.Left="0" Canvas.Top="0" />
+    <Rectangle Width="20" Height="20" Canvas.Left="10" Canvas.Top="10" />
+    <Rectangle Width="30" Height="30" Canvas.Left="20" Canvas.Top="20" />
+  </Canvas>`;
+  const result = convertGraphWorx(xml, { filename: "Order.gdfx" });
+  assert.deepEqual(result.screen.objects.map((object) => [object.x, object.y]), [[0, 0], [10, 10], [20, 20]]);
+  const ids = new Set(result.screen.objects.map((object) => object.layerId));
+  assert.equal(ids.size, 1);
+});
