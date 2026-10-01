@@ -23,7 +23,8 @@ class FlashTests(unittest.TestCase):
     def test_verified_settings_only(self):
         record = bytes(16) + bytes.fromhex('e803000000fffeff0000fffffffffffffffffffeff00fffeff000200000000000000fffeff00000000ffe2b2020000000280808002010100010101')
         self.assertEqual(decode_flash(record, 0)['flashRate'], 'slow')
-        self.assertIsNone(decode_flash(record[:-1]+b'\x00', 0))
+        self.assertTrue(decode_flash(record[:-1]+b'\x00', 0)['invert'])
+        self.assertIsNone(decode_flash(record[:-1]+b'\x02', 0))
         for end in range(len(record)):
             self.assertIsNone(decode_flash(record[:end], 0))
 
@@ -37,3 +38,15 @@ class FlashTests(unittest.TestCase):
         saved = copy.deepcopy(obj['visibility'])
         self.assertEqual(bind_flash_displays(screen, [row])['reviewRequired'], 1)
         self.assertEqual(obj['visibility'], saved)
+
+    def test_flash_when_false_inverts_trigger_not_expression_or_phase(self):
+        expression = '(!{{Gate.Fail_Close}}) && (!{{Gate.Fail_Open}})'
+        obj = dict(type='text', source=dict(objectId=886))
+        row = dict(objectId=886, dynamicId=295, supported=True,
+                   sources=['x='+expression], flashRate='slow', sourceRateMs=1000, invert=True)
+        self.assertEqual(bind_flash_displays(dict(objects=[obj]), [row])['bindings'], 1)
+        rule = obj['visibility']['rules'][0]
+        self.assertEqual(rule['expression'], expression)
+        self.assertTrue(rule['invert'])
+        self.assertTrue(rule['flashWhen'])
+        self.assertFalse(obj['visibility']['defaultVisible'])

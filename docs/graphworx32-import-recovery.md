@@ -315,6 +315,15 @@ settings, group expressions, duplicate rules, and preservation of existing edits
 
 ## Native geometry and text notes
 
+False-trigger Flash: `SMDwlV9aPt.png` verifies object 886, vertical FAILED
+near (885,1803): Hide Object, Flash When False, Show Alternate State When
+Not Flashing, 1000ms. Serialized options `01 01 00` now map to an inverted
+visibility trigger with hidden fallback and slow flashing. The original
+expression is preserved; inversion applies to the condition, not blink phase.
+This recovers six additional FAILED labels (886,1120,1132,1138,1161,1167).
+The separate `FLASH WHEN FALSE PREVIEW.screen` in Downloads preserves the
+previous generated preview. Previously edited files are not rewritten.
+
 Color Flash: `qMbbVcauso.png` verifies object 687, GATE 30-GT-12 near (1607,1458):
 Change Color, white Fill/black Line, Flash When True, original state when not
 flashing, 500ms. The observed `00 00 01` option combination now maps to native

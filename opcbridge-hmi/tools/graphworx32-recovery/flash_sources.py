@@ -1,4 +1,4 @@
-"""Recover only the verified Hide/True/Alternate-when-idle flash combination."""
+"""Recover screenshot-verified Hide and Change Color flash combinations."""
 import re
 import struct
 from visibility_sources import audit_dynamic_sources
@@ -16,8 +16,10 @@ def decode_flash(data, pos):
     # controls which option in other combinations yet. Color slots are inactive.
     if len(settings) != 21 or settings[:3] != bytes(3):
         return None
-    if settings[18:] == b'\x01\x01\x01' and rate == 1000:
-        return dict(flashRate='slow', sourceRateMs=rate)
+    if settings[18:] in (b'\x01\x01\x01', b'\x01\x01\x00') and rate == 1000:
+        # SMDwlV9aPt.png confirms 01 01 00 is Hide / Alternate idle /
+        # Flash When False. Invert the trigger, not the flash phase.
+        return dict(flashRate='slow', sourceRateMs=rate, invert=settings[20] == 0)
     if (settings[18:] == b'\x00\x00\x01' and rate in (500, 1000)
             and all(settings[i] in (0, 2) for i in (6, 10, 14))
             and all(settings[i] in (0, 1) for i in (15, 16)) and settings[17] == 0):
@@ -64,7 +66,7 @@ def bind_flash_displays(screen, rows):
             continue
         row = variants[0]
         raw = row['sources'][0]
-        rule = dict(enabled=True, invert=False, status='unresolved', sourceReference=raw,
+        rule = dict(enabled=True, invert=row.get('invert', False), status='unresolved', sourceReference=raw,
                     flashEnabled=True, flashRate=row['flashRate'], flashWhen=True)
         if re.match(r'^\s*x\s*=', raw, re.I) or '{{' in raw:
             rule.update(sourceType='expression', expression=re.sub(r'^\s*x\s*=\s*', '', raw, flags=re.I))

@@ -19,7 +19,7 @@ with olefile.OleFileIO(source) as archive:
 rows = audit_flash_sources(data, json.loads(geometry.read_text()))
 stats = bind_flash_displays(screen, rows)
 info.update(flashBindingsRecovered=stats, flashRecoveryAudit=rows)
-info.setdefault('limitations', []).insert(0, 'Partial Flash recovery: Hide/True/Alternate-when-idle at 1000ms, plus Change Color/True/Original-when-idle at 500 or 1000ms. Other options and conflicting bindings need review. Remap sources; exact source timing still needs visual comparison.')
+info.setdefault('limitations', []).insert(0, 'Partial Flash recovery: Hide/True or False/Alternate-when-idle at 1000ms, plus Change Color/True/Original-when-idle at 500 or 1000ms. Other options and conflicting bindings need review. Remap sources; exact source timing still needs visual comparison.')
 for obj in screen['objects']:
     if obj.get('id') == 'static_preview_warning':
         obj['text'] = 'FLASH / VISIBILITY / COLOR / NUMERIC PREVIEW — REMAP SOURCES BEFORE USE — NO CONTROL ACTIONS'
