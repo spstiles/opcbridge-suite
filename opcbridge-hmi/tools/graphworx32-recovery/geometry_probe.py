@@ -16,7 +16,7 @@ src, dest = map(Path, sys.argv[1:3])
 with olefile.OleFileIO(src) as f:
     data = f.openstream('Contents').read()
 end = data.find(b'ODynamicManager')
-records = []
+candidates = []
 for match in re.finditer(b'\x08\x80', data[:end]):
     offset = match.start()
     count = struct.unpack_from('<H', data, offset + 2)[0]
@@ -26,8 +26,7 @@ for match in re.finditer(b'\x08\x80', data[:end]):
     if pos + 36 > end:
         continue
     bounds = struct.unpack_from('<4f', data, pos)
-    if data[pos:pos+16] != data[pos+16:pos+32]:
-        continue
+    quad_is_unrotated = data[pos:pos+16] == data[pos+16:pos+32]
     x, y, right, bottom = bounds
     if not all(math.isfinite(n) and -1000 <= n <= 20000 for n in bounds):
         continue
@@ -36,12 +35,29 @@ for match in re.finditer(b'\x08\x80', data[:end]):
     object_id = struct.unpack_from('<I', data, pos+32)[0]
     code = struct.unpack_from('<H', data, offset-2)[0]
     rgb = lambda start: '#' + data[start:start+3].hex()
-    records.append(dict(offset=offset, bounds=list(bounds), object_id=object_id, type_code=code,
-                        provisional_color_a=rgb(pos+37), provisional_color_b=rgb(pos+41),
-                        fill_enabled_candidate=bool(data[pos+45]),
-                        line_width_candidate=struct.unpack_from('<H', data, pos+46)[0],
-                        pen_style_candidate=struct.unpack_from('<I', data, pos+48)[0],
-                        edge_effect_candidate=struct.unpack_from('<I', data, pos+57)[0]))
+    candidates.append(dict(offset=offset, bounds=list(bounds), object_id=object_id, type_code=code,
+                           quad_is_unrotated=quad_is_unrotated,
+                           provisional_color_a=rgb(pos+37), provisional_color_b=rgb(pos+41),
+                           fill_enabled_candidate=bool(data[pos+45]),
+                           line_width_candidate=struct.unpack_from('<H', data, pos+46)[0],
+                           pen_style_candidate=struct.unpack_from('<I', data, pos+48)[0],
+                           edge_effect_candidate=struct.unpack_from('<I', data, pos+57)[0]))
+
+# An object can match the scan twice: once at its own record and once inside a
+# neighbouring record. The unrotated-quad match is the authoritative one, so
+# prefer it and only keep a rotated match when no unrotated match exists. This
+# admits rotated records (their two quads differ) without duplicating IDs.
+records_by_id = {}
+for rec in candidates:
+    previous = records_by_id.get(rec['object_id'])
+    if previous is None:
+        records_by_id[rec['object_id']] = rec
+    elif previous['quad_is_unrotated'] and not rec['quad_is_unrotated']:
+        continue
+    elif not previous['quad_is_unrotated'] and rec['quad_is_unrotated']:
+        records_by_id[rec['object_id']] = rec
+records = sorted(records_by_id.values(), key=lambda rec: rec['offset'])
+rotated_ids = sorted(rec['object_id'] for rec in records if not rec['quad_is_unrotated'])
 
 for i, rec in enumerate(records):
     limit = records[i+1]['offset'] if i+1 < len(records) else end

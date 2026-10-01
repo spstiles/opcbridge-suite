@@ -4370,20 +4370,37 @@ body.runtime-mode #editor-pane {
   outline-offset: -2px;
 }
 /* Fixed to the visible canvas corner, outside its scrollable drawing surface. */
-.cursor-position-overlay {
-  position: fixed;
-  z-index: 30;
-  pointer-events: none;
-  user-select: none;
-  padding: 4px 8px;
-  border: 1px solid rgba(255, 255, 255, .2);
-  border-radius: 4px;
-  background: rgba(20, 25, 33, .82);
-  color: #eef2f7;
-  font: 12px/1.4 monospace;
-  font-variant-numeric: tabular-nums;
-  white-space: pre;
-}
-.cursor-position-overlay[hidden], body:not(.edit-mode) .cursor-position-overlay {
+#editor-status-bar {
   display: none;
 }
+body.edit-mode:not(.status-bar-hidden) #editor-status-bar {
+  display: flex;
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 30px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  background: #19212c;
+  border-top: 1px solid #384454;
+  font-size: 12px;
+}
+body.edit-mode:not(.status-bar-hidden) #workspace { height: calc(100% - 31px); }
+#statusLayerButtons { display: flex; gap: 4px; overflow-x: auto; min-width: 0; }
+.status-layer-button { flex: 0 0 auto; font-size: 12px; min-width: 26px; border: 1px solid #536276; border-radius: 3px; background: #222d3a; color: #eef2f7; cursor: pointer; }
+.status-layer-button.layer-hidden { color: rgba(238,242,247,.4); }
+.status-layer-button[aria-pressed="true"] { border-color: #74baff; outline: 1px solid #74baff; }
+#activeLayerStatus { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+#statusCursorPosition { margin-left: auto; flex: 0 0 auto; font: 12px monospace; font-variant-numeric: tabular-nums; white-space: pre; }
+#activeLayerSelect { max-width: 280px; font-size: 12px; }
+.layers-dialog {
+  width: min(760px, 90vw); max-height: 80vh; overflow: auto;
+  background: #19212c; color: #eef2f7;
+  border: 1px solid #536276; border-radius: 6px;
+}
+.layers-dialog::backdrop { background: #0008; }
+.layer-row { display: flex; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid #384454; }
+.layer-row input[type="text"] { min-width: 60px; flex: 1; font-size: 13px; }
+.layer-row label { white-space: nowrap; font-size: 12px; }
+.layers-actions { display: flex; gap: 8px; margin-top: 12px; }
+#layerMessage { margin-top: 8px; }

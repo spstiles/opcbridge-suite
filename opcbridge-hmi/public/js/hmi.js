@@ -7554,6 +7554,15 @@ const selectReferenceIssueObject = (issue) => {
     match = { parents: [], index: issue.objectIndex, object: objects[issue.objectIndex] };
   }
   if (!match) return;
+  if (isEditMode) {
+    const layers = ensureScreenLayers();
+    const layer = layers.find(item => item.id === (match.parents[0] || match.object).layerId);
+    if (layer?.locked || layer?.editorVisible === false) {
+      showHmiToast("Show and unlock layer " + layer.name + " in Layers to edit this object.");
+      return;
+    }
+    if (layer) activeLayerId = layer.id;
+  }
   groupEditStack.length = 0;
   match.parents.forEach((group) => groupEditStack.push(group));
   selectedIndices = [match.index];
@@ -8896,6 +8905,156 @@ const recordHistory = () => {
 
 const getActiveGroup = () => (groupEditStack.length ? groupEditStack[groupEditStack.length - 1] : null);
 
+let layerScreen = null;
+let activeLayerId = null;
+let moveLayerSelection = [];
+const ensureScreenLayers = () => {
+  if (!currentScreenObj) return [];
+  if (layerScreen !== currentScreenObj) {
+    layerScreen = currentScreenObj;
+    activeLayerId = null;
+  }
+  const layers = HmiLayers.ensure(currentScreenObj, activeLayerId);
+  if (!layers.some(layer => layer.id === activeLayerId)) activeLayerId = layers[0].id;
+  return layers;
+};
+const activeLayerEditable = () => {
+  const layer = currentScreenObj?.layers?.find(item => item.id === activeLayerId);
+  return !!layer && layer.editorVisible !== false && !layer.locked;
+};
+const objectOnEditableLayer = (obj) => {
+  if (!isEditMode) return true;
+  if (!activeLayerEditable()) return false;
+  const root = groupEditStack[0] || obj;
+  return root?.layerId === activeLayerId;
+};
+const refreshLayerSelector = () => {
+  const select = document.getElementById("activeLayerSelect");
+  if (!select || !currentScreenObj) return;
+  const layers = ensureScreenLayers();
+  select.replaceChildren(...layers.map((layer, index) => {
+    const option = document.createElement("option");
+    option.value = layer.id;
+    option.textContent = index + " — " + layer.name;
+    return option;
+  }));
+  select.value = activeLayerId;
+  const buttons = document.getElementById("statusLayerButtons");
+  buttons.replaceChildren(...layers.map((layer, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "status-layer-button";
+    button.classList.toggle("layer-hidden", layer.editorVisible === false);
+    button.setAttribute("aria-pressed", String(layer.id === activeLayerId));
+    button.textContent = String(index);
+    button.title = index + " — " + layer.name + (layer.editorVisible === false ? " (hidden)" : "") + (layer.locked ? " (locked)" : "");
+    button.setAttribute("aria-label", button.title);
+    button.addEventListener("click", () => changeActiveLayer(layer.id));
+    return button;
+  }));
+  document.getElementById("activeLayerStatus").textContent = activeLayerEditable() ? "" : "Hidden or locked — editing disabled";
+};
+const finishLayerChange = () => {
+  cancelEditingGesture();
+  groupEditStack.length = 0;
+  selectedIndices = [];
+  selectionAnchorIndex = null;
+  renderScreen();
+  syncEditorFromScreen();
+  updateSelectionOverlays();
+  updatePropertiesPanel();
+};
+const changeActiveLayer = (id) => {
+  if (!ensureScreenLayers().some(layer => layer.id === id)) return;
+  activeLayerId = id;
+  finishLayerChange();
+};
+const editLayerModel = (change) => {
+  lastHistoryRecordedAt = 0;
+  recordHistory();
+  change();
+  finishLayerChange();
+  setDirty(true);
+};
+const renderLayerRows = () => {
+  const host = document.getElementById("layerRows");
+  host.replaceChildren();
+  const message = document.getElementById("layerMessage");
+  const act = (fn) => {
+    try { editLayerModel(fn); message.textContent = ""; renderLayerRows(); }
+    catch (error) { message.textContent = error.message; }
+  };
+  ensureScreenLayers().forEach((layer, index, layers) => {
+    const row = document.createElement("div");
+    row.className = "layer-row";
+    const select = document.createElement("input");
+    select.type = "radio"; select.name = "editing-layer"; select.checked = layer.id === activeLayerId;
+    select.setAttribute("aria-label", "Edit layer " + layer.name);
+    select.onchange = () => { changeActiveLayer(layer.id); renderLayerRows(); };
+    const number = document.createElement("span"); number.textContent = index + " —";
+    const name = document.createElement("input"); name.type = "text"; name.value = layer.name;
+    name.setAttribute("aria-label", "Layer name");
+    name.onchange = () => act(() => HmiLayers.rename(currentScreenObj, layer.id, name.value));
+    row.append(select, number, name);
+    for (const [key, label, checked] of [["editorVisible", "Show", layer.editorVisible !== false], ["locked", "Lock", !!layer.locked]]) {
+      const wrap = document.createElement("label"), input = document.createElement("input");
+      input.type = "checkbox"; input.checked = checked;
+      input.onchange = () => act(() => { layer[key] = input.checked; });
+      wrap.append(input, document.createTextNode(label)); row.append(wrap);
+    }
+    const button = (label, disabled, fn) => {
+      const el = document.createElement("button"); el.type = "button"; el.className = "panel-btn";
+      el.textContent = label; el.disabled = disabled; el.onclick = fn; row.append(el);
+    };
+    button("Back", index === 0, () => act(() => HmiLayers.reorder(currentScreenObj, layer.id, -1)));
+    button("Forward", index === layers.length - 1, () => act(() => HmiLayers.reorder(currentScreenObj, layer.id, 1)));
+    button("Delete", layers.length === 1, () => {
+      const alternatives = layers.filter(item => item.id !== layer.id);
+      const destination = window.prompt("Move objects to which layer? Enter its number, or DELETE to delete its objects too.\n" +
+        alternatives.map(item => layers.indexOf(item) + " — " + item.name).join("\n"));
+      if (destination === null) return;
+      const target = /^\d+$/.test(destination.trim()) ? layers[Number(destination)]?.id : null;
+      if (destination !== "DELETE" && (!target || target === layer.id)) { message.textContent = "Choose another layer number."; return; }
+      if (destination === "DELETE" && !window.confirm("Delete this layer and all its objects?")) return;
+      act(() => HmiLayers.remove(currentScreenObj, layer.id, target));
+    });
+    host.append(row);
+  });
+  document.getElementById("moveToLayerBtn").disabled = !moveLayerSelection.length || !activeLayerEditable();
+};
+const openLayersDialog = () => {
+  if (!isEditMode || !currentScreenObj) return;
+  ensureScreenLayers();
+  moveLayerSelection = getActiveGroup() ? [] : selectedIndices.map(index => currentScreenObj.objects[index]).filter(Boolean);
+  document.getElementById("layerMessage").textContent = getActiveGroup() ? "Exit group editing to move the whole group to another layer." : "";
+  renderLayerRows();
+  document.getElementById("layersDialog").showModal();
+};
+document.getElementById("activeLayerSelect")?.addEventListener("change", event => changeActiveLayer(event.target.value));
+document.getElementById("manageLayersBtn")?.addEventListener("click", openLayersDialog);
+document.getElementById("viewLayersMenuBtn")?.addEventListener("click", openLayersDialog);
+document.getElementById("closeLayersBtn")?.addEventListener("click", () => document.getElementById("layersDialog").close());
+document.getElementById("addLayerBtn")?.addEventListener("click", () => {
+  const layers = ensureScreenLayers();
+  let number = layers.length;
+  while (layers.some(layer => layer.name === "Layer " + number)) number++;
+  editLayerModel(() => {
+    const layer = { id: HmiLayers.createId(), name: "Layer " + number, editorVisible: true, locked: false };
+    currentScreenObj.layers.push(layer); activeLayerId = layer.id;
+  });
+  renderLayerRows();
+});
+document.getElementById("moveToLayerBtn")?.addEventListener("click", () => {
+  if (!activeLayerEditable()) return;
+  editLayerModel(() => {
+    for (const obj of moveLayerSelection) {
+      if (currentScreenObj.objects.includes(obj)) obj.layerId = activeLayerId;
+    }
+  });
+  moveLayerSelection = [];
+  renderLayerRows();
+});
+
 const getActiveObjects = () => {
   const activeGroup = getActiveGroup();
   if (activeGroup?.children) return activeGroup.children;
@@ -8932,6 +9091,7 @@ const toActivePoint = (point) => {
 
 const ensureActiveObjects = () => {
   if (!currentScreenObj) return null;
+  if (isEditMode && !activeLayerEditable()) return null;
   const activeObjects = getActiveObjects();
   if (!Array.isArray(activeObjects)) {
     setActiveObjects([]);
@@ -11075,6 +11235,7 @@ const ungroupSelected = () => {
     const children = Array.isArray(obj.children) ? obj.children : [];
     children.forEach((child) => {
       const clone = JSON.parse(JSON.stringify(child));
+      clone.layerId = obj.layerId;
       translateObject(clone, offsetX, offsetY);
       nextObjects.push(clone);
       nextSelected.push(nextObjects.length - 1);
@@ -15475,7 +15636,10 @@ const openPopup = (screenId, requestedOptions = null) => {
   }
   const popupAliasContext = buildAliasContext(child, currentPopupOptions.aliases, currentPopupOptions.parentAliasContext);
   currentPopupAliasContext = popupAliasContext;
-  child.objects?.forEach((childObj) => renderObjectInto(popupSvg, resolveAliasObject(childObj, popupAliasContext)));
+  HmiLayers.entries(child).forEach(({ object: childObj }) => {
+    if (!HmiLayers.shouldDraw(HmiLayers.layerOf(child, childObj), isEditMode)) return;
+    renderObjectInto(popupSvg, resolveAliasObject(childObj, popupAliasContext));
+  });
 
   if (popupTitle) popupTitle.textContent = String(popupAliasContext.ScreenTitle || screenId);
   const popupModal = popupOverlay.querySelector(".popup-modal");
@@ -15499,6 +15663,8 @@ const renderScreen = ({ refreshReferenceHealth = true } = {}) => {
   runtimeRenderIndex = null;
   syncEditorPaneCanvasGesture();
   if (!hmiSvg || !currentScreenObj) return;
+  ensureScreenLayers();
+  refreshLayerSelector();
   if (refreshReferenceHealth) renderReferenceHealthBadge();
   hmiSvg.querySelectorAll?.(".hmi-alarms-panel-list[data-alarms-panel-key]").forEach((list) => {
     const scrollKey = String(list.dataset?.alarmsPanelKey || "");
@@ -15575,7 +15741,9 @@ const renderScreen = ({ refreshReferenceHealth = true } = {}) => {
 
   // Alias discovery traverses the whole screen; share one context for this redraw.
   const screenAliasContext = isEditMode ? buildAliasPreviewContext(currentScreenObj) : currentScreenAliasContext;
-  objects.forEach((sourceObj, index) => {
+  HmiLayers.entries(currentScreenObj).forEach(({ object: sourceObj, index }) => {
+    const layer = currentScreenObj.layers.find(item => item.id === sourceObj.layerId);
+    if (!HmiLayers.shouldDraw(layer, isEditMode)) return;
     const obj = getDisplayObject(resolveAliasObject(sourceObj, screenAliasContext));
     if (nextRuntimeIndex.safe) {
       // Keep a host even for currently invisible objects so they can reappear
@@ -15800,7 +15968,8 @@ const renderScreen = ({ refreshReferenceHealth = true } = {}) => {
             setImageHref(bgImg, imgUrl(bgImage));
             scaledGroup.appendChild(bgImg);
           }
-          child.objects?.forEach((childObj) => {
+          HmiLayers.entries(child).forEach(({ object: childObj }) => {
+            if (!HmiLayers.shouldDraw(HmiLayers.layerOf(child, childObj), isEditMode)) return;
             const aliasSource = viewportAliasMappings.get(String(obj.id || "")) || { mappings: obj.aliases || {}, parentContext: currentScreenAliasContext };
             const aliasContext = buildAliasContext(child, aliasSource.mappings, aliasSource.parentContext);
             renderObjectInto(scaledGroup, resolveAliasObject(childObj, aliasContext));
@@ -15890,6 +16059,7 @@ const flushJsonEditorFromScreen = () => {
 };
 
 const syncEditorFromScreen = () => {
+  ensureScreenLayers();
   if (!jsoncEditor || !currentScreenObj) return;
   jsonEditorSyncPending = true;
   if (currentTab !== "jsonc") return;
@@ -17385,6 +17555,9 @@ const renderSelectedReferenceProperties = (obj) => {
 };
 
 const updatePropertiesPanel = () => {
+  if (isEditMode && currentScreenObj?.layers) {
+    selectedIndices = selectedIndices.filter(index => objectOnEditableLayer(getActiveObjects()?.[index]));
+  }
   const isSingle = selectedIndices.length === 1;
   const isMulti = selectedIndices.length > 1;
   const selectionSignature = `${groupEditStack.length}:${[...selectedIndices].sort((a, b) => a - b).join(",")}`;
@@ -20316,6 +20489,8 @@ window.addEventListener("keydown", (evt) => {
     y: snapValue(Math.round(rawAnchor.y))
   };
   const clones = clipboardObjects.map((obj) => JSON.parse(JSON.stringify(obj)));
+  if (!activeLayerEditable()) return;
+  clones.forEach(obj => { obj.layerId = activeLayerId; });
   regenerateClonedObjectIdentifiers(clones);
   clones.forEach((obj) => translateObject(obj, anchor.x, anchor.y));
   const startIndex = activeObjects.length;
@@ -28647,23 +28822,19 @@ const getScreenPoint = (event) => {
 };
 
 // Screen coordinates deliberately do not use the active group's local origin.
-const cursorPositionOverlay = document.getElementById("cursorPositionOverlay");
-const viewCursorPositionMenuBtn = document.getElementById("viewCursorPositionMenuBtn");
-const cursorPositionPreferenceKey = "hmi.cursorPosition.enabled";
-let cursorPositionEnabled = false;
-try { cursorPositionEnabled = localStorage.getItem(cursorPositionPreferenceKey) === "true"; } catch (_) {}
+const statusCursorPosition = document.getElementById("statusCursorPosition");
+const viewStatusBarMenuBtn = document.getElementById("viewStatusBarMenuBtn");
+const statusBarPreferenceKey = "hmi.statusBar.enabled";
+let statusBarEnabled = true;
+try { statusBarEnabled = localStorage.getItem(statusBarPreferenceKey) !== "false"; } catch (_) {}
 let cursorPositionPointer = null;
 let cursorPositionFrame = null;
 const renderCursorPosition = () => {
   cursorPositionFrame = null;
-  if (!cursorPositionOverlay || !screenWrapper) return;
-  cursorPositionOverlay.hidden = !cursorPositionEnabled || !isEditMode;
-  if (cursorPositionOverlay.hidden) return;
+  if (!statusCursorPosition || !screenWrapper) return;
+  statusCursorPosition.hidden = !statusBarEnabled || !isEditMode;
+  if (statusCursorPosition.hidden) return;
   const bounds = screenWrapper.getBoundingClientRect();
-  // client dimensions exclude scrollbars, keeping the block inside the canvas.
-  cursorPositionOverlay.style.left = `${bounds.left + screenWrapper.clientLeft + screenWrapper.clientWidth - 8}px`;
-  cursorPositionOverlay.style.top = `${bounds.top + screenWrapper.clientTop + screenWrapper.clientHeight - 8}px`;
-  cursorPositionOverlay.style.transform = "translate(-100%, -100%)";
   let point = null;
   if (cursorPositionPointer) {
     const { clientX, clientY } = cursorPositionPointer;
@@ -28673,36 +28844,37 @@ const renderCursorPosition = () => {
       point = getScreenPoint(cursorPositionPointer);
     }
   }
-  cursorPositionOverlay.textContent = point && Number.isFinite(point.x) && Number.isFinite(point.y)
+  statusCursorPosition.textContent = point && Number.isFinite(point.x) && Number.isFinite(point.y)
     ? `X: ${Math.round(point.x)}  Y: ${Math.round(point.y)}` : "X: —  Y: —";
 };
 const scheduleCursorPosition = () => {
   if (cursorPositionFrame === null) cursorPositionFrame = requestAnimationFrame(renderCursorPosition);
 };
-const syncCursorPositionMenu = () => {
-  viewCursorPositionMenuBtn?.setAttribute("aria-pressed", String(cursorPositionEnabled));
-  if (viewCursorPositionMenuBtn) viewCursorPositionMenuBtn.textContent = `${cursorPositionEnabled ? "✓ " : ""}Cursor Position`;
+const syncStatusBarMenu = () => {
+  document.body.classList.toggle("status-bar-hidden", !statusBarEnabled);
+  viewStatusBarMenuBtn?.setAttribute("aria-pressed", String(statusBarEnabled));
+  if (viewStatusBarMenuBtn) viewStatusBarMenuBtn.textContent = `${statusBarEnabled ? "✓ " : ""}Status Bar`;
   scheduleCursorPosition();
 };
-viewCursorPositionMenuBtn?.addEventListener("click", () => {
-  cursorPositionEnabled = !cursorPositionEnabled;
-  try { localStorage.setItem(cursorPositionPreferenceKey, String(cursorPositionEnabled)); } catch (_) {}
-  syncCursorPositionMenu();
+viewStatusBarMenuBtn?.addEventListener("click", () => {
+  statusBarEnabled = !statusBarEnabled;
+  try { localStorage.setItem(statusBarPreferenceKey, String(statusBarEnabled)); } catch (_) {}
+  syncStatusBarMenu();
 });
 document.addEventListener("pointermove", (event) => {
   cursorPositionPointer = { clientX: event.clientX, clientY: event.clientY };
-  if (cursorPositionEnabled && isEditMode) scheduleCursorPosition();
+  if (statusBarEnabled && isEditMode) scheduleCursorPosition();
 }, { passive: true, capture: true });
 const clearCursorPosition = () => { cursorPositionPointer = null; scheduleCursorPosition(); };
 document.documentElement.addEventListener("pointerleave", clearCursorPosition);
 window.addEventListener("blur", clearCursorPosition);
 document.addEventListener("scroll", () => {
-  if (cursorPositionEnabled && isEditMode) scheduleCursorPosition();
+  if (statusBarEnabled && isEditMode) scheduleCursorPosition();
 }, { passive: true, capture: true });
 new ResizeObserver(scheduleCursorPosition).observe(screenWrapper);
 new ResizeObserver(scheduleCursorPosition).observe(screen);
 new MutationObserver(clearCursorPosition).observe(document.body, { attributes: true, attributeFilter: ["class"] });
-syncCursorPositionMenu();
+syncStatusBarMenu();
 
 const createLibraryDropObject = (kind, x, y) => {
   const isImageDrop = typeof kind === "string" && kind.startsWith("image:");
@@ -29980,9 +30152,11 @@ const getObjectByScreenPath = (screenObj, screenPath) => {
   return current || null;
 };
 
-const findHitInObjectList = (objects, point, pathPrefix = []) => {
+const findHitInObjectList = (objects, point, pathPrefix = [], screen = null) => {
   if (!Array.isArray(objects)) return null;
-  for (let i = objects.length - 1; i >= 0; i -= 1) {
+  const indices = screen ? HmiLayers.entries(screen).map(entry => entry.index) : objects.map((_, index) => index);
+  for (const i of indices.reverse()) {
+    if (screen && !HmiLayers.shouldDraw(HmiLayers.layerOf(screen, objects[i]), isEditMode)) continue;
     const obj = getDisplayObject(objects[i]);
     if (!obj || !shouldRenderObject(obj)) continue;
     if (obj.type === "group") {
@@ -30014,7 +30188,7 @@ const findRuntimeChildMetaInViewport = (viewportObj, viewportIndex, point) => {
   if (!transform.scale) return null;
   const localX = (point.x - transform.x - transform.offsetX) / transform.scale;
   const localY = (point.y - transform.y - transform.offsetY) / transform.scale;
-  const hit = findHitInObjectList(child.objects, { x: localX, y: localY }, []);
+  const hit = findHitInObjectList(child.objects, { x: localX, y: localY }, [], child);
   if (!hit?.path) return null;
   return {
     index: viewportIndex,
@@ -30085,6 +30259,7 @@ const getMetaAtPoint = (point) => {
   for (let i = renderedElementMeta.length - 1; i >= 0; i -= 1) {
     const item = renderedElementMeta[i];
     const obj = getDisplayObject(getActiveObjects()?.[item.index]);
+    if (isEditMode && !objectOnEditableLayer(getActiveObjects()?.[item.index])) continue;
     if (!isEditMode && !shouldRenderObject(obj)) continue;
     if (obj?.type === "line" && pointHitsLine(point, obj)) {
       return item;
@@ -30338,11 +30513,13 @@ const findRuntimeGroupHotspot = (point) => {
     width: bounds.width * scale,
     height: bounds.height * scale
   });
-  const findInList = (objects, offsetX, offsetY, path, testPoint = point) => {
+  const findInList = (objects, offsetX, offsetY, path, testPoint = point, screen = null) => {
     if (!Array.isArray(objects)) return null;
-    for (let i = objects.length - 1; i >= 0; i -= 1) {
+    const indices = screen ? HmiLayers.entries(screen).map(entry => entry.index) : objects.map((_, index) => index);
+    for (const i of indices.reverse()) {
       const obj = objects[i];
       if (!obj) continue;
+      if (screen && !HmiLayers.shouldDraw(HmiLayers.layerOf(screen, obj), isEditMode)) continue;
       if (obj.type === "viewport") {
         const targetId = obj.target || obj.screenId || obj.targetScreen || obj.targetId;
         const child = targetId ? screenCache.get(targetId) : null;
@@ -30361,7 +30538,7 @@ const findRuntimeGroupHotspot = (point) => {
           x: (testPoint.x - childOriginX) / transform.scale,
           y: (testPoint.y - childOriginY) / transform.scale
         };
-        const nested = findInList(child.objects, 0, 0, [], childPoint);
+        const nested = findInList(child.objects, 0, 0, [], childPoint, child);
         if (nested) {
           return {
             ...nested,
@@ -30393,7 +30570,7 @@ const findRuntimeGroupHotspot = (point) => {
     }
     return null;
   };
-  return findInList(currentScreenObj.objects, 0, 0, []);
+  return findInList(currentScreenObj.objects, 0, 0, [], point, currentScreenObj);
 };
 
 const setGroupHotspotHover = (hit) => {
@@ -31148,6 +31325,7 @@ const setTool = (nextTool) => {
 		if (hmiSvg) {
 		  hmiSvg.addEventListener("mousedown", (event) => {
 		    if (!isEditMode) return;
+        if (!activeLayerEditable()) return;
 		    if (event.button === 2) return;
         // If the user clicked the canvas, we should treat it as a selection gesture and
         // allow the properties panel to refresh for whatever they click next.
@@ -32556,6 +32734,7 @@ const setTool = (nextTool) => {
       const leftToRight = point.x >= selectionStart.x;
 	      const matched = renderedElementMeta.reduce((acc, item) => {
         const obj = getActiveObjects()?.[item.index];
+        if (!objectOnEditableLayer(obj)) return acc;
         const baseBounds = item.bounds || getObjectBounds(obj);
         if (!baseBounds) return acc;
         const offset = item.bounds ? { x: 0, y: 0 } : getActiveOffset();

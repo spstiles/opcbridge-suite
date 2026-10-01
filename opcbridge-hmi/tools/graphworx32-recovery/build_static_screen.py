@@ -1,4 +1,10 @@
-"""Build a diagnostic static screen from the experimental geometry probe."""
+"""Build a diagnostic static screen from the experimental geometry probe.
+
+The GraphWorX layer stack is recovered structurally (see layer_decode.py) and
+emitted as native HMI layers. Objects on a layer hidden in the source are
+still emitted and are marked with that layer, so nothing is discarded and the
+recovered visibility survives a round trip through the editor.
+"""
 import json
 import runpy
 import sys
@@ -13,13 +19,39 @@ if probe_dir.exists():
 sys.argv = ['geometry_probe.py', sys.argv[1], str(probe_dir)]
 probe = runpy.run_path(str(Path(__file__).with_name('geometry_probe.py')))
 records, by_id = probe['records'], probe['by_id']
-visible = {r['object_id'] for r in probe['ordered']}
 seen = set()
 counts = {}
+unrecovered = []
+
+import layer_decode
+collection_id, layer_list = layer_decode.decode(probe['data'], probe['end'])
+background_ids = (layer_decode.sibling_collections(probe['data'], probe['end'], collection_id)
+                  if collection_id else [])
+
+# HMI layers are ordered back-to-front, and the layer collection's declared list
+# is used as-is in that direction. This is unconfirmed against the GraphWorX
+# editor, so importInfo records the caveat. The background collection is not a
+# GraphWorX layer, so it is emitted as a synthesized backmost layer and labelled
+# as such rather than given a recovered name.
+layers = []
+if background_ids:
+    layers.append(dict(id='gdf32_layer_background', name='Display Background',
+                       editorVisible=True, locked=False,
+                       source=dict(kind='synthesized',
+                                   objectIds=list(background_ids))))
+layer_by_object = {}
+for entry in layer_list:
+    layer = dict(id=f'gdf32_layer_{entry["object_id"]}', name=entry['name'],
+                 editorVisible=True, locked=False,
+                 hidden=not entry['visible'],
+                 source=dict(kind='recovered', objectId=entry['object_id'],
+                             visible=entry['visible']))
+    layer_by_object[entry['object_id']] = layer['id']
+    layers.append(layer)
 
 def convert(rec, origin=(0,0)):
     ident = rec['object_id']
-    if ident in seen or ident not in visible:
+    if ident in seen:
         return None
     seen.add(ident)
     x,y,right,bottom = rec['bounds']
@@ -119,19 +151,83 @@ def convert(rec, origin=(0,0)):
     return obj
 
 objects=[]
-for rec in probe['ordered']:
-    if rec['object_id'] not in seen:
-        result=convert(rec)
-        if result: objects.append(result)
+
+def convert_children(children, layer_id):
+    """Convert a child-ID list to objects positioned relative to ``layer_id``'s frame.
+
+    A group the geometry probe could not index is wrapped rather than inlined, so
+    the source's grouping survives. Its own bounds were never decoded, so the
+    wrapper is sized from the union of its children and the children are shifted
+    to be relative to it. Every leaf therefore keeps its original world position.
+    """
+    out = []
+    for ident in children:
+        rec = by_id.get(ident)
+        if rec is not None:
+            result = convert(rec, (0, 0))
+            if result is not None:
+                out.append(result)
+            continue
+        if ident in seen:
+            continue
+        nested = layer_decode.group_children(probe['data'], probe['end'], ident)
+        if not nested:
+            unrecovered.append(dict(objectId=ident, layerId=layer_id))
+            continue
+        seen.add(ident)
+        kids = convert_children(nested, layer_id)
+        if not kids:
+            continue
+        left = min(kid['x'] for kid in kids)
+        top = min(kid['y'] for kid in kids)
+        right = max(kid['x'] + kid['w'] for kid in kids)
+        bottom = max(kid['y'] + kid['h'] for kid in kids)
+        for kid in kids:
+            kid['x'] -= left
+            kid['y'] -= top
+        counts['group'] = counts.get('group', 0) + 1
+        out.append(dict(type='group', id=f'gdf32_{ident}', importId=f'gdf32_{ident}',
+                        x=left, y=top, w=right-left, h=bottom-top, children=kids,
+                        source={'format': 'graphworx32-experimental', 'objectId': ident,
+                                'conversionNote': 'Group recovered from the layer collection; '
+                                                  'bounds synthesized from its children, whose world '
+                                                  'positions are unchanged.'}))
+    return out
+
+def emit(children, layer_id):
+    """Convert a layer's children in declared order onto that layer."""
+    for result in convert_children(children, layer_id):
+        result['layerId'] = layer_id
+        objects.append(result)
+
+if background_ids:
+    for result in convert_children(background_ids, 'gdf32_layer_background'):
+        result['layerId'] = 'gdf32_layer_background'
+        objects.append(result)
+for entry in layer_list:
+    emit(entry['children'], layer_by_object[entry['object_id']])
 # Visible warning is intentional: this must not be mistaken for live plant data.
+# It goes on its own frontmost layer so it stays visible even when every
+# recovered layer is hidden, and so it is never mistaken for source content.
+warning_layer = dict(id='gdf32_layer_recovery_warning', name='Recovery Preview Notice',
+                     editorVisible=True, locked=False,
+                     source=dict(kind='builder'))
+layers.append(warning_layer)
 objects.append(dict(type='text',id='static_preview_warning',x=0,y=0,w=7680,h=32,
     text='STATIC RECOVERY PREVIEW — NO LIVE DATA OR CONTROL — dynamics, visibility and some shapes are not converted',
-    fontSize=24,fill='#ffffff',background='#8b0000',autoSize=False,positionMode='insertion-point',align='left',valign='top',padding=2))
+    fontSize=24,fill='#ffffff',background='#8b0000',autoSize=False,positionMode='insertion-point',align='left',valign='top',padding=2,
+    layerId=warning_layer['id']))
 screen=dict(width=7680,height=3600,background='#ffffff',objects=objects,
+    layers=layers,
     importInfo=dict(format='graphworx32-experimental',sourceFile=Path(sys.argv[1]).name,
-        staticOnly=True,zOrderPreserved=False,
+        staticOnly=True,zOrderPreserved=True,zOrderVerified=False,
+        layerCollectionObjectId=collection_id,
+        layersRecovered=len(layer_list),
+        layersSynthesized=len(background_ids),
+        unrecoveredLayerChildren=unrecovered,
         limitations=['No tag bindings, live data, controls or dynamic automations.',
-        'Recovered grouping and layer visibility are provisional.',
+        'Layer names, order and visibility are recovered from the layer collection; the Draw stack order is taken from that list and has not been confirmed against the GraphWorX editor.',
+        'The Display Background layer is synthesized from the background collection, which GraphWorX does not treat as a layer.',
         'Verified quarter-ellipse arcs are native arcs; unmatched paths and unrecognized objects remain bounding-box placeholders.',
         'Fonts, transparency, fills, borders and gradients are not fully decoded.']))
 target.write_text(json.dumps(screen,ensure_ascii=False,indent=2))

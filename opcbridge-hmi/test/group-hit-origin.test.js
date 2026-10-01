@@ -9,6 +9,7 @@ test('overflowing group children retain their drawn click positions and viewport
   const button = { type: 'button', x: -205, y: 103, w: 150, h: 78 };
   const group = { type: 'group', x: 1711, y: 1459, w: 102, h: 71, children: [button] };
   const ctx = vm.createContext({
+    HmiLayers: require('../public/js/layers'),
     group, isEditMode: false, groupEditStack: [],
     getDisplayObject: x => x, shouldRenderObject: x => !x.hidden,
     pointInBox: (p, b) => p.x >= b.x && p.x <= b.x+b.width && p.y >= b.y && p.y <= b.y+b.height,
@@ -37,4 +38,37 @@ test('overflowing group children retain their drawn click positions and viewport
   button.hidden = true;
   hit = vm.runInContext('getMetaAtPoint({x: 1550, y: 1580})', ctx);
   assert.notEqual(hit?.type, 'button');
+});
+
+test('viewport hit order follows layers while returning original object indices', () => {
+  const HmiLayers = require('../public/js/layers');
+  const screen = { layers: [{ id: 'back' }, { id: 'front' }], objects: [
+    { type: 'rect', layerId: 'front' }, { type: 'rect', layerId: 'back' }
+  ] };
+  const ctx = vm.createContext({
+    HmiLayers, screen, isEditMode: false, getDisplayObject: obj => obj, shouldRenderObject: () => true,
+    getObjectBounds: () => ({ x: 0, y: 0, width: 50, height: 50 }), pointInBox: () => true
+  });
+  const start = source.indexOf('const findHitInObjectList =');
+  vm.runInContext(source.slice(start, source.indexOf('\n};', start)+3), ctx);
+  assert.equal(vm.runInContext('findHitInObjectList(screen.objects, {x:1,y:1}, [], screen).path[0]', ctx), 0);
+  HmiLayers.reorder(screen, 'front', -1);
+  assert.equal(vm.runInContext('findHitInObjectList(screen.objects, {x:1,y:1}, [], screen).path[0]', ctx), 1);
+});
+
+test('runtime layer hidden suppresses hits; editor show keeps the layer editable', () => {
+  const HmiLayers = require('../public/js/layers');
+  const screen = { layers: [{ id: 'back' }, { id: 'front', hidden: true }], objects: [
+    { type: 'rect', layerId: 'back' }, { type: 'rect', layerId: 'front' }
+  ] };
+  const ctx = vm.createContext({
+    HmiLayers, screen, isEditMode: false, getDisplayObject: obj => obj, shouldRenderObject: () => true,
+    getObjectBounds: () => ({ x: 0, y: 0, width: 50, height: 50 }), pointInBox: () => true
+  });
+  const start = source.indexOf('const findHitInObjectList =');
+  vm.runInContext(source.slice(start, source.indexOf('\n};', start)+3), ctx);
+  // The hidden top layer must not swallow clicks meant for the visible one.
+  assert.equal(vm.runInContext('findHitInObjectList(screen.objects, {x:1,y:1}, [], screen).path[0]', ctx), 0);
+  ctx.isEditMode = true;
+  assert.equal(vm.runInContext('findHitInObjectList(screen.objects, {x:1,y:1}, [], screen).path[0]', ctx), 1);
 });

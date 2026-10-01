@@ -37,7 +37,13 @@ def unwrap(objects, dx=0, dy=0):
                 point['y'] += dy
         if obj['id'] in wrappers:
             assert obj['type'] == 'group'
-            result.extend(unwrap(obj['children'], obj['x'], obj['y']))
+            # A promoted child keeps the layer of the wrapper it came from, so
+            # unwrapping a layer or background collection cannot drop objects
+            # out of their layer and onto the default one.
+            for child in unwrap(obj['children'], obj['x'], obj['y']):
+                if not child.get('layerId'):
+                    child['layerId'] = obj.get('layerId')
+                result.append(child)
         else:
             result.append(obj)
     return result

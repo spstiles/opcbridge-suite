@@ -49,7 +49,8 @@
             </button>
             <div id="viewMenuFlyout" class="menu-flyout is-hidden" role="menu" aria-label="View menu">
               <button id="viewTagsMenuBtn" class="menu-item" type="button">Tags</button>
-              <button id="viewCursorPositionMenuBtn" class="menu-item" type="button" aria-pressed="false">Cursor Position</button>
+              <button id="viewStatusBarMenuBtn" class="menu-item" type="button" aria-pressed="true">Status Bar</button>
+              <button id="viewLayersMenuBtn" class="menu-item" type="button">Layers…</button>
               <button id="viewDiagnosticsMenuBtn" class="menu-item" type="button" aria-pressed="false">Diagnostics Mode <span class="menu-shortcut">Ctrl+D</span></button>
             </div>
           </div>
@@ -316,6 +317,25 @@
 		  <div id="wsBadge" class="ws-badge" aria-live="polite">ws://</div>
 
 	  <main id="app">
+        <div id="editor-status-bar" aria-label="Editor status bar">
+          <label for="activeLayerSelect">Layer:</label>
+          <select id="activeLayerSelect" aria-label="Active editing layer"></select>
+          <button id="manageLayersBtn" type="button" class="panel-btn">Layers…</button>
+          <div id="statusLayerButtons" aria-label="Select editing layer"></div>
+          <span id="activeLayerStatus"></span>
+          <span id="statusCursorPosition">X: —  Y: —</span>
+        </div>
+        <dialog id="layersDialog" class="layers-dialog">
+          <h3>Screen Layers</h3>
+          <p>0 is furthest back. Select a layer to edit; other visible layers remain protected. Eye and lock settings affect editing only.</p>
+          <div id="layerRows"></div>
+          <div class="layers-actions">
+            <button id="addLayerBtn" type="button" class="panel-btn">Add Layer</button>
+            <button id="moveToLayerBtn" type="button" class="panel-btn">Move selected objects here</button>
+            <button id="closeLayersBtn" type="button" class="panel-btn">Close</button>
+          </div>
+          <div id="layerMessage" role="status"></div>
+        </dialog>
 	    <div id="workspace">
 	      <div id="screen-wrapper">
 	        <div id="screen">
@@ -328,7 +348,6 @@
         </div>
       </div>
       <div id="editor-resizer" class="editor-resizer" aria-hidden="true"></div>
-      <div id="cursorPositionOverlay" class="cursor-position-overlay" hidden>X: —  Y: —</div>
       <aside id="editor-pane" class="editor-pane is-hidden">
         <div id="editorPaneTitlebar" class="editor-pane-titlebar" aria-label="Editor panel window">
           <div id="editorPaneTitle" class="editor-pane-title" title="Drag to move (when floating)">Properties</div>
@@ -3130,6 +3149,7 @@
 	  </div>
       <script src="/js/arc-geometry.js"></script>
       <script src="/js/click-actions.js"></script>
+      <script src="/js/layers.js"></script>
 	  <script src="/js/hmi.js?v=20260910-working-overlay-v1"></script>
 	</body>
 	</html>
