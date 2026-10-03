@@ -1,5 +1,7 @@
 # OPCBridge Suite
 
+[![Debian package downloads](https://img.shields.io/github/downloads/spstiles/opcbridge-suite/v0.5.35-deb1/opcbridge-suite_0.5.35-1_amd64.deb?label=.deb%20downloads&displayAssetName=false)](https://github.com/spstiles/opcbridge-suite/releases/tag/v0.5.35-deb1)
+
 OPCBridge Suite is a complete SCADA stack for industrial automation:
 
 - **OPCBridge**: communications core (PLC/RTU drivers, tags, REST, WebSockets, OPC UA)
