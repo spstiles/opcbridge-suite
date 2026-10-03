@@ -5,7 +5,9 @@ import struct
 def font_candidates(chunk, strings):
     candidates = []
     for j, (pos, face) in enumerate(strings[:-1]):
-        if pos < 28 or not 1 <= len(face) <= 32 or any(ord(c) < 32 for c in face):
+        # An empty face selects the default font; the surrounding LOGFONT and
+        # exact caption position still have to validate.
+        if pos < 28 or len(face) > 32 or any(ord(c) < 32 for c in face):
             continue
         height, width, escapement, orientation, weight = struct.unpack_from('<5i', chunk, pos-28)
         if not (1 <= abs(height) <= 2000 and abs(width) <= 2000

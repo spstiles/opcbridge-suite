@@ -11,6 +11,8 @@ def cstring(text):
 
 def record(object_id, name, parent, children, visible, discriminator=b'\x03\x91'):
     body = b'\x0e\x80\x0e\x80\x08\x80'
+    body += b'\0\0' + struct.pack('<4f', 0, 0, 100, 100) * 2
+    body += struct.pack('<I', object_id)
     if name is not None:
         body += cstring(name)
     body += b'\x00' * 7 + b'\xff\xff\x00\x00' + layer_decode.THREE_EMPTY
@@ -39,7 +41,8 @@ def rotated_record(object_id, name, parent, children, visible, radians=0.89):
 
 def display(children):
     """A layer collection plus one object per layer, in a bare stream."""
-    body = b''
+    body = b'\xff\xff\x05\x00\x08\x00OVisible'
+    body += b'\xff\xff\x04\x00\x07\x00OSymbol\x0e\x80\x08\x80\xff\xff'
     body += record(1, None, 0, [221], None)
     body += record(221, None, 1, [layer[0] for layer in children], None)
     for layer_id, name, kids, visible in children:
@@ -52,6 +55,17 @@ def decode_stream(body, end):
 
 
 class LayerDecodeTests(unittest.TestCase):
+    def test_recognizes_display_root_with_word_sentinel_in_dword_layout(self):
+        for sentinel in (0xffff, 0xffffffff):
+            with self.subTest(sentinel=sentinel):
+                body = b'\xff\xff\x05\x00\x08\x00OVisible'
+                body += b'\xff\xff\x04\x00\x07\x00OSymbol\x0e\x80\x08\x80\xff\xff'
+                body += record(1, None, sentinel, [21, 22], None)
+                collection, decoded = decode_stream(body, len(body))
+                self.assertIsNone(collection)
+                self.assertEqual(decoded, [dict(object_id=1, name='Default', visible=True,
+                                                children=[21, 22], synthesized=True)])
+
     def test_reads_names_visibility_and_declared_order(self):
         stream = [
             (223, 'Background', [11], False),
@@ -137,7 +151,8 @@ class LayerDecodeTests(unittest.TestCase):
     def test_sibling_collections_report_the_background_collection(self):
         body, end = display([(248, 'GRAPHICS', [21], True)])
         # A display that also owns a background collection beside its layers.
-        body = record(1, None, 0, [221, 18788], None) + body[12:]
+        body = body.replace(record(1, None, 0, [221], None),
+                            record(1, None, 0, [221, 18788], None), 1)
         collection, decoded = decode_stream(body, len(body))
         self.assertEqual(collection, 221)
         self.assertEqual(layer_decode.sibling_collections(body, len(body), collection), [18788])

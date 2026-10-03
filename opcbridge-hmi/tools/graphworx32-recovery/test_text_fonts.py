@@ -12,8 +12,15 @@ class FontTests(unittest.TestCase):
         return chunk, [(28, face), (text_pos, 'Text')]
 
     def test_unfamiliar_face_keeps_text(self):
-        for face in ('Arial', 'Arial Black', 'Uninstalled Custom Face'):
+        for face in ('', 'Arial', 'Arial Black', 'Uninstalled Custom Face'):
             self.assertEqual(font_candidates(*self.fixture(face)), [(0, 28, face)])
+
+    def test_empty_caption_is_a_valid_text_record(self):
+        chunk, strings = self.fixture('Arial')
+        pos = strings[-1][0]
+        chunk = chunk[:pos] + b'\xff\xfe\xff\0'
+        strings[-1] = (pos, '')
+        self.assertEqual(font_candidates(chunk, strings), [(0, 28, 'Arial')])
 
     def test_rejects_wrong_layout_and_font_metrics(self):
         chunk, strings = self.fixture('Arial Black')

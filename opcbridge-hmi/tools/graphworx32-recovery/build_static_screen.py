@@ -19,12 +19,19 @@ if probe_dir.exists():
 sys.argv = ['geometry_probe.py', sys.argv[1], str(probe_dir)]
 probe = runpy.run_path(str(Path(__file__).with_name('geometry_probe.py')))
 records, by_id = probe['records'], probe['by_id']
+width, height = probe['display_settings']['width'], probe['display_settings']['height']
+background = probe['display_settings']['background']
 seen = set()
 counts = {}
 unrecovered = []
+skipped = {}
+conversion_notices = []
 
 import layer_decode
 collection_id, layer_list = layer_decode.decode(probe['data'], probe['end'])
+if not layer_list:
+    raise SystemExit('Cannot recover the source layer structure. No screen was written; '
+                     'geometry diagnostics are available in ' + str(probe_dir))
 background_ids = (layer_decode.sibling_collections(probe['data'], probe['end'], collection_id)
                   if collection_id else [])
 
@@ -44,31 +51,48 @@ for entry in layer_list:
     layer = dict(id=f'gdf32_layer_{entry["object_id"]}', name=entry['name'],
                  editorVisible=True, locked=False,
                  hidden=not entry['visible'],
-                 source=dict(kind='recovered', objectId=entry['object_id'],
+                 source=dict(kind='synthesized' if entry.get('synthesized') else 'recovered', objectId=entry['object_id'],
                              visible=entry['visible']))
     layer_by_object[entry['object_id']] = layer['id']
     layers.append(layer)
 
-def convert(rec, origin=(0,0)):
+def convert(rec, origin=(0,0), layer_id=None):
     ident = rec['object_id']
     if ident in seen:
         return None
     seen.add(ident)
     x,y,right,bottom = rec['bounds']
     code = rec['type_code']
+    control = rec.get('embedded_control_candidate', {})
+    if code == 0xa68b and control.get('kind') not in ('alarm-control', 'screen-reference-control'):
+        kind = control.get('kind', 'unidentified-control')
+        skipped[kind] = skipped.get(kind, 0) + 1
+        return None
     obj = dict(id=f'gdf32_{ident}', importId=f'gdf32_{ident}', x=x-origin[0], y=y-origin[1],
                w=right-x, h=bottom-y,
                source={'format':'graphworx32-experimental','objectId':ident,'recordOffset':rec['offset']})
-    if code == 0x800e:
+    if code == 0xa68b and control.get('kind') == 'alarm-control':
+        obj.update(type='alarms-panel', panelMode='alarms')
+        conversion_notices.append('Alarm viewer converted to a native alarm panel; source filters and display settings were not imported.')
+    elif code == 0xa68b:
+        references = control.get('screenReferences', [])
+        if len(references) != 1:
+            skipped['unresolved-screen-control'] = skipped.get('unresolved-screen-control', 0) + 1
+            return None
+        # Keep the target in the editable native field. Reference health can
+        # validate it once the referenced screen is available in the HMI.
+        name = references[0].replace('\\', '/').rsplit('/', 1)[-1]
+        obj.update(type='viewport', target=name[:-4], scaleMode='contain',
+                   border=dict(enabled=False, color='#ffffff', width=1))
+    elif code == 0x800e:
         obj['type'] = 'group'
-        obj['children'] = [child for cid in rec.get('children_candidate',[]) if cid in by_id
-                           if (child := convert(by_id[cid],(x,y))) is not None]
-        if not obj['children']: return None
+        obj['children'] = convert_children(rec.get('children_candidate', []),
+                                           layer_id, (x, y))
     elif code == 0x8776 and 'embedded_png_base64' in rec:
         obj.update(type='image', src='data:image/png;base64,'+rec['embedded_png_base64'],
                    preserveAspectRatio='none')
         obj['source']['conversionNote'] = 'Embedded PNG recovered with chunk CRC validation.'
-    elif code == 0x8014 and 'line_points_candidate' in rec:
+    elif code in (0x8014, 0x800b) and 'line_points_candidate' in rec:
         points = [dict(x=px-origin[0], y=py-origin[1]) for px,py in rec['line_points_candidate']]
         repeated_endpoint = len(points) > 2 and points[0] == points[-1]
         closed = len(points) > 2 and (repeated_endpoint or rec['fill_enabled_candidate'])
@@ -79,7 +103,7 @@ def convert(rec, origin=(0,0)):
                    stroke=rec['provisional_color_a'] if rec['pen_style_candidate'] != 5 else 'none',
                    strokeWidth=max(1, rec['line_width_candidate']))
         obj['source']['conversionNote'] = 'Recovered line/path points; source bounds verified.'
-    elif code == 0x801c and 'arc_geometry_candidate' in rec and not rec.get('fill_enabled_candidate'):
+    elif code == 0x801c and 'arc_geometry_candidate' in rec and rec.get('arc_style_candidate') == 'arc':
         obj.update(rec['arc_geometry_candidate'])
         obj['x'] -= origin[0]
         obj['y'] -= origin[1]
@@ -152,7 +176,14 @@ def convert(rec, origin=(0,0)):
 
 objects=[]
 
-def convert_children(children, layer_id):
+def translate(obj, dx, dy):
+    obj['x'] += dx
+    obj['y'] += dy
+    for point in obj.get('points', []):
+        point['x'] += dx
+        point['y'] += dy
+
+def convert_children(children, layer_id, origin=(0, 0)):
     """Convert a child-ID list to objects positioned relative to ``layer_id``'s frame.
 
     A group the geometry probe could not index is wrapped rather than inlined, so
@@ -164,7 +195,7 @@ def convert_children(children, layer_id):
     for ident in children:
         rec = by_id.get(ident)
         if rec is not None:
-            result = convert(rec, (0, 0))
+            result = convert(rec, origin, layer_id)
             if result is not None:
                 out.append(result)
             continue
@@ -183,11 +214,10 @@ def convert_children(children, layer_id):
         right = max(kid['x'] + kid['w'] for kid in kids)
         bottom = max(kid['y'] + kid['h'] for kid in kids)
         for kid in kids:
-            kid['x'] -= left
-            kid['y'] -= top
+            translate(kid, -left, -top)
         counts['group'] = counts.get('group', 0) + 1
         out.append(dict(type='group', id=f'gdf32_{ident}', importId=f'gdf32_{ident}',
-                        x=left, y=top, w=right-left, h=bottom-top, children=kids,
+                        x=left-origin[0], y=top-origin[1], w=right-left, h=bottom-top, children=kids,
                         source={'format': 'graphworx32-experimental', 'objectId': ident,
                                 'conversionNote': 'Group recovered from the layer collection; '
                                                   'bounds synthesized from its children, whose world '
@@ -201,9 +231,7 @@ def emit(children, layer_id):
         objects.append(result)
 
 if background_ids:
-    for result in convert_children(background_ids, 'gdf32_layer_background'):
-        result['layerId'] = 'gdf32_layer_background'
-        objects.append(result)
+    emit(background_ids, 'gdf32_layer_background')
 for entry in layer_list:
     emit(entry['children'], layer_by_object[entry['object_id']])
 # Visible warning is intentional: this must not be mistaken for live plant data.
@@ -213,18 +241,20 @@ warning_layer = dict(id='gdf32_layer_recovery_warning', name='Recovery Preview N
                      editorVisible=True, locked=False,
                      source=dict(kind='builder'))
 layers.append(warning_layer)
-objects.append(dict(type='text',id='static_preview_warning',x=0,y=0,w=7680,h=32,
+objects.append(dict(type='text',id='static_preview_warning',x=0,y=0,w=width,h=32,
     text='STATIC RECOVERY PREVIEW — NO LIVE DATA OR CONTROL — dynamics, visibility and some shapes are not converted',
     fontSize=24,fill='#ffffff',background='#8b0000',autoSize=False,positionMode='insertion-point',align='left',valign='top',padding=2,
     layerId=warning_layer['id']))
-screen=dict(width=7680,height=3600,background='#ffffff',objects=objects,
+screen=dict(width=width,height=height,background=background,objects=objects,
     layers=layers,
     importInfo=dict(format='graphworx32-experimental',sourceFile=Path(sys.argv[1]).name,
         staticOnly=True,zOrderPreserved=True,zOrderVerified=False,
         layerCollectionObjectId=collection_id,
-        layersRecovered=len(layer_list),
-        layersSynthesized=len(background_ids),
+        layersRecovered=sum(not entry.get('synthesized', False) for entry in layer_list),
+        layersSynthesized=bool(background_ids) + sum(bool(entry.get('synthesized')) for entry in layer_list),
         unrecoveredLayerChildren=unrecovered,
+        skippedControls=skipped,
+        conversionNotices=list(dict.fromkeys(conversion_notices)),
         limitations=['No tag bindings, live data, controls or dynamic automations.',
         'Layer names, order and visibility are recovered from the layer collection; the Draw stack order is taken from that list and has not been confirmed against the GraphWorX editor.',
         'The Display Background layer is synthesized from the background collection, which GraphWorX does not treat as a layer.',

@@ -630,6 +630,10 @@ install_deps() {
   done
 
   # Data logger deps
+  if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'hmi'; then
+    pkgs+=(python3 python3-olefile)
+  fi
+
   if printf '%s\n' "${COMPONENTS[@]}" | grep -qx 'logger'; then
     pkgs+=(libcurl4-openssl-dev)
     if [[ "$WITH_ODBC" -eq 1 ]]; then

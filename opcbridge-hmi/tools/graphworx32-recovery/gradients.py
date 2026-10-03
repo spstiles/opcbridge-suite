@@ -6,13 +6,32 @@ styles remain undecoded rather than guessing their direction from their colors.
 import struct
 
 
-def recover_gradient(chunk, tail):
+def gradient_payload_start(chunk, tail):
+    """Find the settings after a cached or newly declared OGradientInfo."""
     start = tail + 21
-    if tail < 0 or len(chunk) < start + 21 or chunk[tail + 20] != 1:
+    if tail < 0 or tail+20 >= len(chunk) or chunk[tail+20] != 1:
         return None
-    if chunk[start:start + 2] != b'\x09\x80':
+    declaration = b'\xff\xff\x01\x00\x0d\x00OGradientInfo'
+    if chunk[start:start+len(declaration)] == declaration:
+        start += len(declaration)
+    elif start+2 <= len(chunk) and 0x8000 <= struct.unpack_from('<H', chunk, start)[0] < 0xffff:
+        start += 2
+    else:
         return None
-    payload = chunk[start + 2:start + 21]
+    # COLORREF uses 0 for direct RGB and 2 for the palette-relative form.
+    if start+17 > len(chunk) or chunk[start+3] not in (0, 2) or chunk[start+7] not in (0, 2):
+        return None
+    return start
+
+
+def recover_gradient(chunk, tail, schema=5):
+    start = gradient_payload_start(chunk, tail)
+    if start is None:
+        return None
+    size = 17 if schema == 3 else 19
+    if start+size > len(chunk):
+        return None
+    payload = chunk[start:start + size]
     # Two COLORREFs, then the observed settings. The remaining fields are
     # deliberately constrained: their general semantics are not decoded.
     if payload[3] != 2 or payload[7] != 2:
@@ -20,7 +39,7 @@ def recover_gradient(chunk, tail):
     style = payload[13:15]
     if payload[8] != 1:
         return None
-    setting = struct.unpack_from('<I', payload, 15)[0]
+    setting = struct.unpack_from('<H' if schema == 3 else '<I', payload, 15)[0]
     if (style, setting) not in ((b'\x01\x01', 25), (b'\x00\x01', 25), (b'\x00\x00', 100)):
         return None
     if abs(struct.unpack_from('<f', payload, 9)[0] - 0.2) > 0.00001:

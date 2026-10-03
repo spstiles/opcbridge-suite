@@ -15,6 +15,7 @@ recovery reader, not a general-purpose GraphWorX parser.
 """
 import re
 import struct
+from visible_records import archive_headers, normalized_chunk
 
 CSTRING_MARKER = b'\xff\xfe\xff'
 EMPTY_CSTRING = CSTRING_MARKER + b'\x00'
@@ -92,7 +93,7 @@ def _read_name_before(chunk, spacer_start):
     return None
 
 
-def read_group_tail(chunk):
+def read_group_tail(chunk, id_width=4):
     """Read a record's group tail.
 
     The tail is <optional name CString><spacer><3 empty CStrings><version 2>
@@ -123,13 +124,13 @@ def read_group_tail(chunk):
     # back to the unnamed group layout only if it does not parse.
     for spacer in spacers:
         for name in (_read_name_before(chunk, name_end - len(spacer)), ''):
-            tail = _read_tail_header(chunk, header, name)
+            tail = _read_tail_header(chunk, header, name, id_width)
             if tail is not None:
                 return tail
     return None
 
 
-def _read_tail_header(chunk, pos, name):
+def _read_tail_header(chunk, pos, name, id_width=4):
     if pos + 8 > len(chunk):
         return None
     version, parent = struct.unpack_from('<II', chunk, pos)
@@ -142,10 +143,10 @@ def _read_tail_header(chunk, pos, name):
     pos += 1
     count = struct.unpack_from('<H', chunk, pos)[0]
     pos += 2
-    if count > MAX_CHILDREN or pos + 4 * count > len(chunk):
+    if count > MAX_CHILDREN or pos + id_width * count > len(chunk):
         return None
-    children = list(struct.unpack_from('<' + 'I' * count, chunk, pos)) if count else []
-    pos += 4 * count
+    children = list(struct.unpack_from('<' + ('H' if id_width == 2 else 'I') * count, chunk, pos)) if count else []
+    pos += id_width * count
     return dict(name=name, parent=parent, flag=flag, children=children, end=pos)
 
 
@@ -173,22 +174,31 @@ def build_records(data, end):
     stream and length, because the builder calls this repeatedly for the same
     archive; the caller receives a fresh list and must not modify it.
     """
+    end = min(end, len(data))
     key = (id(data), end, len(data))
     cached = _RECORD_CACHE.get(key)
     if cached is not None and cached[0] is data:
         return list(cached[1])
 
     records = []
-    for match in re.finditer(re.escape(RECORD_PREFIX), data[:end]):
-        offset = match.start() + 4
-        if offset < 8:
-            continue
-        records.append(dict(offset=offset,
-                            object_id=struct.unpack_from('<I', data, offset - 8)[0]))
+    for offset, count_offset, code, schema in archive_headers(data, end):
+        if code != 0x800e: continue
+        width = 2 if schema == 3 else 4
+        count = struct.unpack_from('<H', data, count_offset)[0]
+        pos = count_offset + 2 + count * width
+        if count > 1000 or pos + 32 + width > end: continue
+        records.append(dict(offset=offset, schema=schema, bounds_offset=pos,
+                            object_id=struct.unpack_from('<H' if width == 2 else '<I', data, pos+32)[0]))
     records.sort(key=lambda rec: rec['offset'])
     _RECORD_CACHE.clear()
     _RECORD_CACHE[key] = (data, records)
     return list(records)
+
+
+def record_tail(data, rec, limit):
+    schema = rec.get('schema', 5)
+    chunk = normalized_chunk(data, rec['offset'], limit, schema, rec.get('bounds_offset', 0))
+    return chunk, read_group_tail(chunk, 2 if schema == 3 else 4)
 
 
 def decode(data, end):
@@ -207,13 +217,18 @@ def decode(data, end):
 
     children_by_record = {}
     layers_by_id = {}
+    display_roots = []
     for index, rec in enumerate(records):
         limit = records[index+1]['offset'] if index + 1 < len(records) else end
-        chunk = data[rec['offset']:limit]
-        tail = read_group_tail(chunk)
+        chunk, tail = record_tail(data, rec, limit)
         if tail is None:
             continue
         children_by_record[rec['object_id']] = tail['children']
+        # Converted older displays can retain the WORD sentinel in a DWORD
+        # field; newer displays also use the full DWORD sentinel.
+        if tail['parent'] in (0xffff, 0xffffffff):
+            display_roots.append(dict(object_id=rec['object_id'], name='Default',
+                                      visible=True, children=tail['children'], synthesized=True))
         # A layer is a named group followed by a visibility byte. Requiring the
         # discriminator keeps a plain named group out of the layer stack.
         if not tail['name']:
@@ -233,6 +248,8 @@ def decode(data, end):
             if child in layers_by_id:
                 owners.setdefault(object_id, []).append(child)
     if not owners:
+        if len(display_roots) == 1:
+            return None, display_roots
         return None, []
 
     collection = max(owners, key=lambda key: len(owners[key]))
@@ -250,7 +267,7 @@ def group_children(data, end, object_id):
         if rec['object_id'] != object_id:
             continue
         limit = records[index+1]['offset'] if index + 1 < len(records) else end
-        tail = read_group_tail(data[rec['offset']:limit])
+        _, tail = record_tail(data, rec, limit)
         return tail['children'] if tail is not None else None
     return None
 
@@ -266,7 +283,7 @@ def sibling_collections(data, end, collection_id):
     children_by_record = {}
     for index, rec in enumerate(records):
         limit = records[index+1]['offset'] if index + 1 < len(records) else end
-        tail = read_group_tail(data[rec['offset']:limit])
+        _, tail = record_tail(data, rec, limit)
         if tail is not None:
             children_by_record[rec['object_id']] = tail['children']
     owners = [oid for oid, kids in children_by_record.items() if collection_id in kids]

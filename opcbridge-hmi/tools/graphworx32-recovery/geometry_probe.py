@@ -11,37 +11,51 @@ import olefile
 from embedded_png import extract_png
 from gradients import recover_gradient
 from text_fonts import font_candidates
+from path_geometry import recover_points
+from visible_records import archive_headers, normalized_chunk
+from embedded_controls import inventory, associated_control
+from display_settings import dimensions
 
 src, dest = map(Path, sys.argv[1:3])
 with olefile.OleFileIO(src) as f:
     data = f.openstream('Contents').read()
+    embedded_controls = inventory(f)
+try:
+    display_settings = dimensions(data)
+except ValueError as error:
+    raise SystemExit(str(error))
 end = data.find(b'ODynamicManager')
+if end < 0:
+    raise SystemExit('Missing ODynamicManager section; unsupported archive layout.')
 candidates = []
-for match in re.finditer(b'\x08\x80', data[:end]):
-    offset = match.start()
-    count = struct.unpack_from('<H', data, offset + 2)[0]
+header_info = {}
+for offset, count_offset, code, schema in archive_headers(data, end):
+    count = struct.unpack_from('<H', data, count_offset)[0]
     if count > 1000:
         continue
-    pos = offset + 4 + count * 4
-    if pos + 36 > end:
+    id_width = 2 if schema == 3 else 4
+    pos = count_offset + 2 + count * id_width
+    if pos + 61 > end:
         continue
     bounds = struct.unpack_from('<4f', data, pos)
     quad_is_unrotated = data[pos:pos+16] == data[pos+16:pos+32]
     x, y, right, bottom = bounds
     if not all(math.isfinite(n) and -1000 <= n <= 20000 for n in bounds):
         continue
-    if right < x or bottom < y or right == x and bottom == y:
+    if right < x or bottom < y or (right == x and bottom == y and code != 0x800e):
         continue
-    object_id = struct.unpack_from('<I', data, pos+32)[0]
-    code = struct.unpack_from('<H', data, offset-2)[0]
+    object_id = struct.unpack_from('<H' if schema == 3 else '<I', data, pos+32)[0]
+    header_info[offset] = (schema, pos)
+    # Style layout is identical after accounting for the narrower object ID.
+    style_pos = pos - (2 if schema == 3 else 0)
     rgb = lambda start: '#' + data[start:start+3].hex()
     candidates.append(dict(offset=offset, bounds=list(bounds), object_id=object_id, type_code=code,
                            quad_is_unrotated=quad_is_unrotated,
-                           provisional_color_a=rgb(pos+37), provisional_color_b=rgb(pos+41),
-                           fill_enabled_candidate=bool(data[pos+45]),
-                           line_width_candidate=struct.unpack_from('<H', data, pos+46)[0],
-                           pen_style_candidate=struct.unpack_from('<I', data, pos+48)[0],
-                           edge_effect_candidate=struct.unpack_from('<I', data, pos+57)[0]))
+                           provisional_color_a=rgb(style_pos+37), provisional_color_b=rgb(style_pos+41),
+                           fill_enabled_candidate=bool(data[style_pos+45]),
+                           line_width_candidate=struct.unpack_from('<H', data, style_pos+46)[0],
+                           pen_style_candidate=struct.unpack_from('<I', data, style_pos+48)[0],
+                           edge_effect_candidate=struct.unpack_from('<I', data, style_pos+57)[0]))
 
 # An object can match the scan twice: once at its own record and once inside a
 # neighbouring record. The unrotated-quad match is the authoritative one, so
@@ -61,7 +75,12 @@ rotated_ids = sorted(rec['object_id'] for rec in records if not rec['quad_is_unr
 
 for i, rec in enumerate(records):
     limit = records[i+1]['offset'] if i+1 < len(records) else end
-    chunk = data[rec['offset']:limit]
+    schema, pos = header_info[rec['offset']]
+    chunk = normalized_chunk(data, rec['offset'], limit, schema, pos)
+    if rec['type_code'] == 0xa68b:
+        control = associated_control(chunk, embedded_controls)
+        if control:
+            rec['embedded_control_candidate'] = control
     if rec['type_code'] == 0x8776:
         png = extract_png(chunk)
         if png:
@@ -73,20 +92,18 @@ for i, rec in enumerate(records):
     tail = chunk.find(b'\xff\xfe\xff\x00\xff\xfe\xff\x00\xff\xfe\xff\x00\x02\x00\x00\x00')
     if tail >= 0 and tail+21 <= len(chunk):
         rec['parent_candidate'] = struct.unpack_from('<I', chunk, tail+16)[0]
-        if rec['type_code'] == 0x800b:
-            gradient = recover_gradient(chunk, tail)
+        if rec['type_code'] in (0x800b, 0x8014):
+            gradient = recover_gradient(chunk, tail, schema)
             if gradient:
                 rec['gradient_fill_candidate'] = gradient
-        if rec['type_code'] == 0x8014 and chunk[tail+20] == 0 and tail+23 <= len(chunk):
-            n = struct.unpack_from('<H', chunk, tail+21)[0]
-            if 2 <= n <= 10000 and tail+23+n*8 <= len(chunk):
-                points = list(struct.iter_unpack('<2f', chunk[tail+23:tail+23+n*8]))
-                if all(math.isfinite(v) for pt in points for v in pt):
-                    recovered = [min(p[0] for p in points), min(p[1] for p in points),
-                                 max(p[0] for p in points), max(p[1] for p in points)]
-                    if max(abs(a-b) for a,b in zip(recovered,rec['bounds'])) <= .05:
-                        rec['line_points_candidate'] = points
-        if rec['type_code'] == 0x801c and chunk[tail+20] == 0 and tail+45 <= len(chunk):
+        if rec['type_code'] == 0x8014 or (rec['type_code'] == 0x800b and not rec['quad_is_unrotated']):
+            points = recover_points(chunk, tail, rec['bounds'], require_closed=rec['type_code'] == 0x800b)
+            if points:
+                rec['line_points_candidate'] = points
+        if rec['type_code'] == 0x801c and chunk[tail+20] == 0 and tail+46 <= len(chunk):
+            arc_type = chunk[tail+45]
+            if arc_type in (0, 1, 2):
+                rec['arc_style_candidate'] = ('arc', 'pie', 'chord')[arc_type]
             cx, cy, radius, ratio, start, finish = struct.unpack_from('<6f', chunk, tail+21)
             if all(math.isfinite(v) for v in (cx, cy, radius, ratio, start, finish)) and radius > 0 and ratio > 0:
                 sweep = (finish-start+math.pi) % (2*math.pi)-math.pi
@@ -102,15 +119,16 @@ for i, rec in enumerate(records):
                             startAngle=-math.degrees(start), sweepAngle=-math.degrees(sweep))
         if rec['type_code'] == 0x800e and chunk[tail+20] == 0 and tail+23 <= len(chunk):
             n = struct.unpack_from('<H', chunk, tail+21)[0]
-            if n < 2000 and tail+23+4*n <= len(chunk):
-                rec['children_candidate'] = list(struct.unpack_from('<'+'I'*n,chunk,tail+23))
-                after = tail+23+4*n
+            width = 2 if schema == 3 else 4
+            if n < 2000 and tail+23+width*n <= len(chunk):
+                rec['children_candidate'] = list(struct.unpack_from('<'+('H' if width == 2 else 'I')*n,chunk,tail+23))
+                after = tail+23+width*n
                 if after+2 <= len(chunk) and chunk[after+1] == 3:
                     rec['layer_visible_candidate'] = bool(chunk[after])
     if rec['type_code'] != 0x801e:
         continue
     limit = records[i+1]['offset'] if i+1 < len(records) else end
-    chunk = data[rec['offset']:limit]
+    chunk = normalized_chunk(data, rec['offset'], limit, schema, pos)
     strings = []
     for m in re.finditer(b'\xff\xfe\xff', chunk):
         p = m.end()
@@ -122,7 +140,7 @@ for i, rec in enumerate(records):
         if length > 4096 or p+length*2 > len(chunk): continue
         try: value = chunk[p:p+length*2].decode('utf-16le')
         except UnicodeDecodeError: continue
-        if value: strings.append((m.start(), value))
+        strings.append((m.start(), value))
     # Text records contain a LOGFONT face string followed by the display string.
     faces = font_candidates(chunk, strings)
     if len(faces) == 1:
@@ -164,6 +182,8 @@ for i, rec in enumerate(records):
                     rec['horizontal_alignment_raw'] = justification
 
 dest.mkdir(parents=True, exist_ok=True)
+(dest/'embedded-controls.json').write_text(json.dumps(embedded_controls, indent=2))
+(dest/'display-settings.json').write_text(json.dumps(display_settings, indent=2))
 by_id = {r['object_id']:r for r in records}
 ordered, seen = [], set()
 def visit(rec, hidden=False):
@@ -176,7 +196,8 @@ def visit(rec, hidden=False):
 roots = [r for r in records if r.get('parent_candidate') not in by_id]
 for rec in sorted(roots, key=lambda r:r['object_id']): visit(rec)
 for rec in records: visit(rec)
-parts = ['<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="900" viewBox="0 0 7680 3600">', '<rect width="7680" height="3600" fill="white"/>']
+width, height = display_settings['width'], display_settings['height']
+parts = [f'<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="{1920 * height / width}" viewBox="0 0 {width} {height}">', f'<rect width="{width}" height="{height}" fill="{display_settings["background"]}"/>']
 for i, rec in enumerate(ordered):
     x,y,r,b = rec['bounds']
     code = rec['type_code']
@@ -202,4 +223,4 @@ parts.append('</svg>')
 (dest/'geometry-preview.svg').write_text('\n'.join(parts))
 (dest/'geometry-candidates.json').write_text(json.dumps(records, indent=2))
 from collections import Counter
-print(json.dumps({'candidate_count':len(records),'unique_ids':len(set(r['object_id'] for r in records)), 'classes':dict(Counter(hex(r['type_code']) for r in records)), 'extents':[min(r['bounds'][0] for r in records), min(r['bounds'][1] for r in records),max(r['bounds'][2] for r in records), max(r['bounds'][3] for r in records)]},indent=2))
+print(json.dumps({'candidate_count':len(records),'unique_ids':len(set(r['object_id'] for r in records)), 'classes':dict(Counter(hex(r['type_code']) for r in records)), 'extents':[min(r['bounds'][0] for r in records), min(r['bounds'][1] for r in records),max(r['bounds'][2] for r in records), max(r['bounds'][3] for r in records)] if records else None},indent=2))

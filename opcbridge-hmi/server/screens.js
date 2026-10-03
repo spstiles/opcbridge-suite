@@ -3,6 +3,7 @@ const path = require("path");
 const fs = require("fs");
 const stripJsonComments = require("strip-json-comments");
 const { convertGraphWorx } = require("./graphworx-import");
+const { convertGraphWorx32 } = require("./graphworx32-import");
 
 const SCREEN_EXTS = [".screen", ".jsonc"];
 
@@ -196,6 +197,11 @@ const createScreensRouter = ({ rootDir, legacyScreensDir, imagesDir, audit }) =>
     try {
       const raw = req.body?.raw;
       const filename = String(req.body?.filename || "Imported.gdfx");
+      if (req.body?.encoding === 'base64') {
+        const converted = await convertGraphWorx32(raw, { filename });
+        try { await audit?.(req, { event: 'screen.import.preview', filename, ...converted.summary }); } catch {}
+        return res.json(converted);
+      }
       if (typeof raw !== "string") return res.status(400).json({ error: "Body must include { raw: string }." });
       if (Buffer.byteLength(raw, "utf8") > 10 * 1024 * 1024) return res.status(413).json({ error: "GDFX file exceeds the 10 MB import limit." });
       const converted = convertGraphWorx(raw, { filename });

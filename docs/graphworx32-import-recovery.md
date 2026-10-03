@@ -2,6 +2,44 @@
 
 ## Scope and status
 
+### HMI import integration
+
+File → Import → GraphWorX32 / 64 Screen accepts binary `.gdf` and XML `.gdfx`.
+Binary uploads use the combined Python converter server-side, with a 10 MB
+source limit, a 60-second conversion timeout, one concurrent conversion, and
+temporary files removed on success or failure. No VBA or ActiveX is executed.
+The installer includes `python3` and `python3-olefile` for HMI when `--deps` is
+used. Existing installations without them receive an actionable import error.
+The imported screen remains an unsaved editor document until the user saves it.
+Developer preview banners/layers are removed. The import toast summarizes skipped
+controls/bindings and warns that recovery is partial/read-only and sources need
+remapping. This is not full GraphWorX32 behavior compatibility.
+
+### Arc-type recovery
+
+The byte following the six arc geometry floats distinguishes open arc (0),
+pie (1), and chord (2). The common fill flag is not an arc-closure indicator.
+Verified quarter-ellipse geometry with type 0 now becomes a native unfilled arc
+even when the common fill flag is enabled. This recovers all 40 arcs in
+`Remote Storage/Pipe Parts.gdf`, including its four previously boxed elbows.
+Pie/chord records are not silently substituted with open arcs. Their separate
+geometry/closure validation remains future work. All 74 recovery tests pass.
+ICONICS documents the separate Arc/Pie/Chord property in its arc preferences:
+https://docs.iconics.com/V10.97/GENESIS64/Help/Apps/GWX/GWX10001030_Preferences.htm
+
+### Combined recovery command
+
+`python3 opcbridge-hmi/tools/graphworx32-recovery/build_screen.py SOURCE.gdf OUTPUT.screen`
+now performs fresh static recovery followed by the existing numeric, color,
+visibility, and flash decoders in that order. It refuses existing output files.
+Developer geometry and binding audits are written separately under `/tmp`;
+raw audits and unsupported external-reference settings are not embedded in the
+screen. Unsupported bindings are counted in `importInfo.skippedBindings`.
+Supported unresolved sources remain in editable native binding fields.
+The output is still a partial read-only recovery preview, not a complete control
+import. Existing individual developer commands remain available for isolated
+decoder tests. All 72 recovery tests pass.
+
 The plan is to eventually add GraphWorX32 `.gdf` import to the project, as a
 reusable importer rather than a one-screen conversion. The current Python tools
 are the pre-integration stage: they are getting the decoding to work correctly
@@ -25,6 +63,84 @@ visual recovery before implementing automations. Images are the next discussion,
 not an already implemented capability.
 
 ## Test source and accepted baseline
+
+### October 1, 2026 corpus decoding pass
+
+The local `V9 Screens` collection contains 607 GDF files, representing 342
+distinct file hashes. The batch audit runs once per distinct file and records
+all duplicate paths. Source files and generated previews remain outside Git.
+All 342 distinct screens complete static conversion with zero unresolved child
+references. Bounding-box placeholders fell from 643 to 72: 65 OLE/ActiveX
+objects and seven filled arcs before the native-control conversion pass. All
+68 recovery unit tests now pass.
+
+The probe now also writes `embedded-controls.json`. It inventories OLE storage
+CLSID, serialized class names, and cautiously identifies trend, alarm, alarm
+report, and screen-reference controls from their persisted contents. Trend
+source references, alarm filter expressions, and embedded `.gdf` screen
+references are recovered without activating controls or executing VBA. Database
+connection strings and SQL are deliberately not exported. Extended-length MFC
+strings are not decoded yet. Storage-to-canvas object association remains
+decoded using the persisted container-item storage number, not storage order.
+Ambiguous or unmatched associations are rejected.
+
+The static builder now converts identified alarm viewers to native alarm panels
+using source position and size and native defaults. Original filters and display
+settings are discarded; an import-summary notice explains that difference.
+Embedded screen controls become native viewports with their target in the
+editable `target` field (source basename without `.gdf`). Unsupported trends,
+alarm reports, and unidentified controls are skipped entirely, with only counts
+in the import summary. Their persisted configuration is not copied into screen
+objects. Developer probe inventories remain separate diagnostic files.
+Across the 342 unique screens, this produces eight alarm panels and three
+viewports, skipping 54 unsupported controls on recovered layers. All screens
+still convert successfully. Rendered behavior still needs user verification.
+
+The reader now resolves per-file class references and supports OVisible schema
+3 (WORD IDs) and schema 5 (DWORD IDs). An outer object ID must match the ID in
+its visible body. Embedded class definitions are distinguished from registered
+display objects; missing class indices are recovered only when the complete
+ObjectManager count and the explicitly serialized class indices agree.
+
+Both `0xffff` and `0xffffffff` are valid display-root sentinels. Displays with
+one root and no explicit layer collection receive a synthesized Default layer.
+Empty groups with zero-size bounds are retained. Missing nested groups and
+unrecoverable children are checked throughout the hierarchy, and synthesized
+groups translate point arrays as well as X/Y.
+
+Additional visual decoding covers:
+
+- Horizontal/vertical paths whose stored bounds have a one-pixel extent on
+  the zero-span axis. Their actual points are preserved exactly.
+- Paths following gradient settings, including first class declarations,
+  cached references, WORD/DWORD settings, and optional direction vectors.
+  The decoded point array must agree with the stored bounds.
+- Rotated rectangles serialized with an embedded closed polyline. Their
+  recovered outline is used instead of an axis-aligned rectangle. All point
+  arrays from the previously accepted wall-display probe are preserved.
+- Valid empty text captions and empty font faces (default font), verified
+  against the surrounding LOGFONT fields and caption location.
+
+Conversion success is structural coverage, not proof of visual fidelity or
+binding recovery. The static builder now uses each display's own
+source canvas dimensions, recovered from the display-settings block rather than
+object bounds. The earlier hardcoded 7680×3600 canvas has been removed from both
+the screen builder and diagnostic SVG. Missing or ambiguous dimensions stop
+conversion; there is no guessed fallback. All 342 unique corpus screens recover
+their dimensions successfully, and the wall display retains 7680×3600. Verified
+source settings: Console Background 1600×1200, Collection Overview 1282×1024,
+Alarm Management 1280×1024. All 71 recovery tests pass.
+The display-settings reader also recovers the background COLORREF preceding
+the dimensions, accounting for the different style-tail widths in ODisplay
+schemas 18 and 26. Direct/palette RGB encodings are supported; other encodings
+stop conversion rather than silently selecting white. The generated screen and
+diagnostic SVG both use this color. Source candidates are pink `#ff8d8d` for
+Console Background and gray `#c0c0c0` for Collection Overview and the wall display.
+These colors need source-view confirmation; structural conversion succeeds for
+all 342 unique screens. Object fills and background-layer objects are unchanged.
+OLE/ActiveX widgets and filled-arc appearance remain unresolved. The native arc
+geometry is recovered for those arcs, but the builder deliberately reports their
+filled appearance rather than inventing a chord/sector interpretation.
 
 - Source: `SS Wall Graphic 7680x3600.gdf`, a GraphWorX32 wall display.
 - SHA-256: `16cae8b9263b1c58443dc233cd9fed5e4d7cca825e2a6645f73d8dc2dcc92ec4`.

@@ -36,7 +36,8 @@ const IMAGE_UPLOAD_LIMIT_MB = Math.max(1, Math.min(1024, Number(process.env.OPCB
 const IMAGE_UPLOAD_LIMIT_BYTES = IMAGE_UPLOAD_LIMIT_MB * 1024 * 1024;
 // GraphWorX imports allow a 10 MB source file. JSON encoding adds some
 // overhead, so the application parser must sit above that route-level limit.
-const JSON_BODY_LIMIT_MB = 12;
+// A 10 MB binary GDF expands to roughly 13.4 MB in the JSON/base64 envelope.
+const JSON_BODY_LIMIT_MB = 16;
 
 const readConfig = async () => {
   let raw = "";

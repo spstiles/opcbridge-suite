@@ -8255,12 +8255,19 @@ const importGraphWorxFile = async (file) => {
   const busyToken = showHmiBusy("Importing GraphWorX screen", `Reading ${file.name}…`);
   try {
     await waitForHmiBusyPaint();
-    const raw = await file.text();
+    const binaryGdf = /\.gdf$/i.test(file.name);
+    let raw;
+    if (binaryGdf) {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const chunks = [];
+      for (let i = 0; i < bytes.length; i += 32768) chunks.push(String.fromCharCode(...bytes.subarray(i, i + 32768)));
+      raw = btoa(chunks.join(''));
+    } else raw = await file.text();
     updateHmiBusy(busyToken, "Importing GraphWorX screen", `Uploading and converting ${file.name}…`);
     const response = await fetch("/api/screens/import/graphworx", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ filename: file.name, raw })
+      body: JSON.stringify({ filename: file.name, raw, ...(binaryGdf ? { encoding: 'base64' } : {}) })
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
@@ -8291,7 +8298,9 @@ const importGraphWorxFile = async (file) => {
       screenWrapper?.scrollTo?.({ left: 0, top: 0 });
     });
     setEditorStatusSafe(`Imported ${summary.objects || 0} objects; ${summary.issues || 0} reference items need review.`);
-    showHmiToast(`GraphWorX import succeeded. ${summary.unresolved || 0} unresolved references were preserved.`, 8000);
+    showHmiToast(summary.format === 'graphworx32'
+      ? `GraphWorX32 imported with partial read-only bindings. ${summary.skipped || 0} unsupported items skipped. Remap source tags before use. ${(summary.notices || []).join(' ')}`
+      : `GraphWorX import succeeded. ${summary.unresolved || 0} unresolved references were preserved.`, 12000);
     openReferenceHealth();
   } catch (error) {
     setEditorStatusSafe(`Import failed: ${error.message}`);
