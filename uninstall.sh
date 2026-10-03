@@ -48,6 +48,12 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ "$PREFIX" == /opt/opcbridge-suite ]] && command -v dpkg-query >/dev/null 2>&1 &&
+    [[ "$(dpkg-query -W -f='${Status}' opcbridge-suite 2>/dev/null || true)" == 'install ok installed' ]]; then
+  echo 'Use apt remove opcbridge-suite for this package-managed installation; user data is retained.' >&2
+  exit 1
+fi
+
 if [[ "${EUID}" -ne 0 && "$DRY_RUN" -ne 1 ]]; then
   echo "Run as root (sudo)." >&2
   exit 1

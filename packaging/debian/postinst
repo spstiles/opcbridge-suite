@@ -1,0 +1,14 @@
+#!/bin/sh
+set -e
+if [ "$1" = configure ]; then
+    /usr/lib/opcbridge-suite/configure
+    if [ -d /run/systemd/system ]; then
+        systemctl daemon-reload
+        # Respect existing service choices. Do not enable previously disabled services.
+        for unit in opcbridge opcbridge-alarms opcbridge-scada opcbridge-hmi opcbridge-logger opcbridge-flow opcbridge-historian; do
+            if systemctl is-active --quiet "$unit.service"; then
+                deb-systemd-invoke restart "$unit.service" || true
+            fi
+        done
+    fi
+fi

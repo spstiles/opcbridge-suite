@@ -1,0 +1,5 @@
+#!/bin/sh
+set -e
+if [ -d /run/systemd/system ]; then systemctl daemon-reload || true; fi
+# Even purge deliberately retains user configuration, databases, screens, uploads,
+# logs and service account. Data deletion must be a separate explicit action.

@@ -1,0 +1,53 @@
+#!/bin/bash
+# Idempotent initialization only. Never builds, downloads, or migrates databases.
+set -euo pipefail
+source /usr/lib/opcbridge-suite/installer-functions.sh
+ROOT_DIR=/usr/lib/opcbridge-suite
+ensure_user
+ensure_audio_group_access
+ensure_dialout_group_access
+ensure_logs_group_access
+ensure_dirs
+write_env_file
+python3 - <<'PY'
+import pathlib, shutil, json
+config=pathlib.Path('/etc/opcbridge')
+def seed(path, content):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists(): path.write_text(content)
+for src in pathlib.Path('/usr/share/opcbridge-suite/defaults').rglob('*'):
+    if src.is_file():
+        dest=config/src.relative_to('/usr/share/opcbridge-suite/defaults')
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if not dest.exists(): shutil.copyfile(src,dest)
+seed(config/'logger/config.json', '{"listen_host":"127.0.0.1","listen_port":8095,"opcbridge_base_url":"http://127.0.0.1:8080"}\n')
+for name, key in [('databases','databases'),('reports','reports'),('data_checks','data_checks'),('database_sync','sync_jobs')]:
+    seed(config/f'logger/{name}.json',json.dumps({key:[]})+'\n')
+seed(config/'data-entry/forms.json','{"targets":[],"forms":[]}\n')
+for module in ('flow','report','historian'):
+    for example in (config/module).glob('*.json.example'):
+        live=example.with_suffix('')
+        if not live.exists(): shutil.copyfile(example,live)
+# HMI mutable files are intentionally not members of the package archive.
+hmi=pathlib.Path('/opt/opcbridge-suite/hmi')
+for directory in ('screens','public/img'):
+    (hmi/directory).mkdir(parents=True,exist_ok=True)
+token=''
+for line in (config/'opcbridge.env').read_text().splitlines():
+    if line.startswith('OPCBRIDGE_WRITE_TOKEN='): token=line.split('=',1)[1]
+seed(hmi/'public/js/config.jsonc',json.dumps({'opcbridge':{'host':'127.0.0.1','httpPort':8080,'wsPort':8090,'writeToken':token},'alarms':{'host':'127.0.0.1','httpPort':8085,'wsPort':8086},'hmi':{'defaultScreen':'console_background','touchscreenMode':False,'viewOnlyMode':False}},indent=2)+'\n')
+PY
+mkdir -p "$CONFIG_ROOT/certs/mqtt" "$CONFIG_ROOT/scada" "$DATA_ROOT/flow" "$DATA_ROOT/logger" "$DATA_ROOT/historian"
+/opt/opcbridge-suite/bin/opcbridge-provision-opcua-identity "$CONFIG_ROOT" "$SERVICE_USER" "$SERVICE_GROUP"
+fix_config_permissions
+chown -R "$SERVICE_USER:$SERVICE_GROUP" "$DATA_ROOT" "$LOG_ROOT"
+# Only writable HMI state locations; shipped application files remain root-owned.
+chgrp "$SERVICE_GROUP" "$PREFIX/hmi" "$PREFIX/hmi/public/js"
+chmod 0770 "$PREFIX/hmi"
+chmod 0775 "$PREFIX/hmi/public/js"
+chown -R "$SERVICE_USER:$SERVICE_GROUP" "$PREFIX/hmi/screens" "$PREFIX/hmi/public/img"
+chown "$SERVICE_USER:$SERVICE_GROUP" "$PREFIX/hmi/public/js/config.jsonc"
+chmod 0660 "$PREFIX/hmi/public/js/config.jsonc"
+echo 'OPCBridge initialized. Services are not enabled automatically on first install.'
+echo 'Start desired components with: sudo systemctl enable --now opcbridge opcbridge-scada opcbridge-hmi'
+echo 'Historian requires separately configured PostgreSQL/TimescaleDB; no database was modified.'

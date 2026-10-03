@@ -2183,6 +2183,14 @@ main() {
     esac
   done
 
+  if [[ "$PREFIX" == /opt/opcbridge-suite ]] && command -v dpkg-query >/dev/null 2>&1 &&
+      [[ "$(dpkg-query -W -f='${Status}' opcbridge-suite 2>/dev/null || true)" == 'install ok installed' ]]; then
+    echo 'This prefix is managed by the opcbridge-suite Debian package.' >&2
+    echo 'Use apt to upgrade it, or apt remove opcbridge-suite before using this installer.' >&2
+    echo 'Configuration and data are retained. Component installs remain supported on script-managed systems.' >&2
+    exit 1
+  fi
+
   if [[ "${#COMPONENTS[@]}" -eq 0 ]]; then
     # Allow `--deps` to be used as a standalone "install dependencies" action without
     # forcing an interactive component selection prompt (useful for headless/server installs).
@@ -2477,4 +2485,6 @@ main() {
   fi
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

@@ -1,0 +1,26 @@
+name: Experimental Debian package
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  debian13-amd64:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build in Debian 13
+        run: |
+          mkdir -p "$RUNNER_TEMP/deb-output"
+          docker run --rm -v "$GITHUB_WORKSPACE:/src" -v "$RUNNER_TEMP/deb-output:/out" -w /src debian:trixie-slim bash packaging/debian/build-in-debian.sh /out
+      - name: Test fresh install and package lifecycle
+        run: |
+          docker run --rm -e OPCBRIDGE_DISPOSABLE_TEST=1 -v "$GITHUB_WORKSPACE/packaging:/packaging:ro" -v "$RUNNER_TEMP/deb-output:/out:ro" debian:trixie-slim bash -c 'apt-get update && bash /packaging/debian/test-package.sh /out/*.deb'
+      - name: Checksums
+        run: |
+          cp packaging/debian/README.md packaging/debian/VALIDATION.md "$RUNNER_TEMP/deb-output/"
+          cd "$RUNNER_TEMP/deb-output"
+          sha256sum *.deb *.tar.gz > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: opcbridge-suite-debian13-amd64
+          path: ${{ runner.temp }}/deb-output/

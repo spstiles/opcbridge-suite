@@ -181,3 +181,10 @@ Verify versions in **SCADA → Configure Server**.
 - Suite architecture: `docs/architecture.md`
 - System tags: `docs/system_tags.md`
 - SCADA developer notes: `opcbridge-scada/README.md`
+
+## Experimental Debian package
+
+Debian 13 amd64 users can also install a prebuilt full-suite `.deb`. See
+[package installation, ownership, and build instructions](packaging/debian/README.md).
+The existing `install.sh` remains supported for component-specific source installs
+and upgrades. Do not mix script and apt ownership at the same installation prefix.

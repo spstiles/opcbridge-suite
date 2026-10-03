@@ -1,0 +1,6 @@
+#!/bin/sh
+set -e
+if [ "$1" = remove ] && [ -d /run/systemd/system ]; then
+    deb-systemd-invoke stop opcbridge.service opcbridge-alarms.service opcbridge-scada.service opcbridge-hmi.service opcbridge-logger.service opcbridge-flow.service opcbridge-historian.service || true
+    systemctl disable opcbridge.service opcbridge-alarms.service opcbridge-scada.service opcbridge-hmi.service opcbridge-logger.service opcbridge-flow.service opcbridge-historian.service opcbridge-historian-migrate.service || true
+fi
