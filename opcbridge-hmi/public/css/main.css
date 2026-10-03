@@ -3998,6 +3998,27 @@ body.runtime-mode #editor-pane {
   gap: 6px;
 }
 
+.animator-frame-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.animator-frame-buttons .panel-btn {
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+  padding: 4px 7px;
+  overflow-wrap: anywhere;
+}
+
+.animator-frame-buttons .panel-btn.is-active {
+  background: var(--bg-elevated);
+  border-color: var(--border-focus);
+}
+
 .multi-state-actions .panel-btn {
   padding-left: 6px;
   padding-right: 6px;

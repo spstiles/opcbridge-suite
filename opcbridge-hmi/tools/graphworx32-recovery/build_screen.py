@@ -14,6 +14,7 @@ import olefile
 from numeric_sources import audit_numeric_sources, bind_numeric_displays
 from color_sources import audit_color_sources, bind_color_displays
 from visibility_sources import audit_visibility_sources, bind_visibility_displays
+from animator_sources import audit_animator_sources, bind_animator_displays
 from flash_sources import audit_flash_sources, bind_flash_displays
 
 
@@ -21,11 +22,13 @@ def recover_bindings(screen, data, records):
     audits = dict(numeric=audit_numeric_sources(data, records),
                   color=audit_color_sources(data, records),
                   visibility=audit_visibility_sources(data, records),
-                  flash=audit_flash_sources(data, records))
+                  flash=audit_flash_sources(data, records),
+                  animator=audit_animator_sources(data, records))
     stats = dict(numeric=bind_numeric_displays(screen, audits['numeric']),
                  color=bind_color_displays(screen, audits['color']),
                  visibility=bind_visibility_displays(screen, audits['visibility']),
-                 flash=bind_flash_displays(screen, audits['flash']))
+                 flash=bind_flash_displays(screen, audits['flash']),
+                 animator=bind_animator_displays(screen, audits['animator'], records))
     skipped = {}
 
     def clean(objects):
@@ -48,7 +51,7 @@ def recover_bindings(screen, data, records):
     info.update(staticOnly=False, bindingsRecovered=stats, skippedBindings=skipped)
     info['limitations'] = [line for line in info.get('limitations', [])
                            if line != 'No tag bindings, live data, controls or dynamic automations.']
-    info['limitations'].insert(0, 'Partial numeric, color, visibility and flash bindings; remap sources before use. Unverified settings and conflicting bindings are skipped. Control actions are not recovered.')
+    info['limitations'].insert(0, 'Partial numeric, color, visibility, flash and Animator bindings; remap sources before use. Unverified settings and conflicting bindings are skipped. Control actions are not recovered.')
     return audits
 
 

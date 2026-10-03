@@ -10,7 +10,7 @@ def audit_visibility_sources(data, records):
         lambda data, pos: {} if data[pos+16:pos+16+len(tail)] == tail else None)
 
 
-def audit_dynamic_sources(data, records, class_name, decode):
+def audit_dynamic_sources(data, records, class_name, decode, *, reference_signature=None, first_record_base=None):
     start = class_payload(data, class_name)
     end = class_payload(data, b'OPointManager')
     point = class_payload(data, b'OPoint')
@@ -34,11 +34,15 @@ def audit_dynamic_sources(data, records, class_name, decode):
     # Match the complete observed fixed base/settings layout, not merely
     # three zero bytes somewhere before the next record. Other variants need
     # a source example before deciding between Hide/Disable and True/False.
-    for match in re.finditer(re.escape(data[start:start+4]), data[start:end]):
-        pos = start + match.start()
-        if pos+16 > end:
+    signature = reference_signature or data[start:start+4]
+    positions = {start + match.start() for match in re.finditer(re.escape(signature), data[start:end])}
+    if first_record_base is not None:
+        positions.add(start)
+    for pos in sorted(positions):
+        base = first_record_base if pos == start and first_record_base is not None else pos + 4
+        if base+12 > end:
             continue
-        ident, point_id, object_id = struct.unpack_from('<III', data, pos+4)
+        ident, point_id, object_id = struct.unpack_from('<III', data, base)
         obj = objects.get(object_id)
         if not obj:
             continue

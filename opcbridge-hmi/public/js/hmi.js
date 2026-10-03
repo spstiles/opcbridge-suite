@@ -208,6 +208,9 @@ const dynamicsMenuFlyout = document.getElementById("dynamicsMenuFlyout");
 const dynamicsAddVisibilityMenuBtn = document.getElementById("dynamicsAddVisibilityMenuBtn");
 const dynamicsAddColorMenuBtn = document.getElementById("dynamicsAddColorMenuBtn");
 const dynamicsAddStatesMenuBtn = document.getElementById("dynamicsAddStatesMenuBtn");
+const dynamicsAddAnimatorMenuBtn = document.getElementById("dynamicsAddAnimatorMenuBtn");
+const objectDynamicTabAnimatorBtn = document.getElementById("objectDynamicTabAnimatorBtn");
+const objectDynamicAnimatorHost = document.getElementById("objectDynamicAnimatorHost");
 const dynamicsAddRotationMenuBtn = document.getElementById("dynamicsAddRotationMenuBtn");
 const dynamicsAddMotionMenuBtn = document.getElementById("dynamicsAddMotionMenuBtn");
 const dynamicsAddShadowMenuBtn = document.getElementById("dynamicsAddShadowMenuBtn");
@@ -2597,12 +2600,14 @@ const setObjectDynamicTab = (tab) => {
     normalized === "level" ? "level" :
     normalized === "click" ? "click" :
     normalized === "states" ? "states" :
+    normalized === "animator" ? "animator" :
     normalized === "rotation" ? "rotation" :
     normalized === "motion" ? "motion" :
     (normalized === "shadow" || normalized === "box-shadow") ? "box-shadow" :
     normalized === "drop-shadow" ? "drop-shadow" :
     "properties";
   currentObjectDynamicTab = next;
+  objectDynamicTabAnimatorBtn?.classList.toggle("is-active", next === "animator");
   objectDynamicTabClickBtn?.classList.toggle("is-active", next === "click");
   if (isVisibilityDynamicTab(next)) {
     const obj = getSelectedVisibilityDynamicObject();
@@ -7095,6 +7100,7 @@ const reconcileReferenceHealthMetadata = () => {
     const automation = String(issue?.automation || "");
     const objectOccurrences = byObject.get(objectId) || [];
     const owningObject = objectId ? findObjectByReferenceId(currentScreenObj.objects, objectId) : null;
+    if (issue?.category === "animator-import") return "notice";
     // Object-scoped issues are derived from the current object. Removing the
     // object or the reference removes its issue; changing the target evaluates
     // the new target without relying on the original import report.
@@ -7162,7 +7168,8 @@ const getReferenceHealthIssues = () => {
       if (status === "resolved") return false;
       // Current object bindings are validated below. Retain only conversion
       // limitations and screen-level asset notices from the import report.
-      return status === "unsupported"
+      return category === "animator-import"
+        || status === "unsupported"
         || category === "unsupported-automation"
         || (!issue?.objectImportId && ["image", "asset", "partial"].includes(category));
     })
@@ -7862,6 +7869,18 @@ const regenerateClonedObjectIdentifiers = (objects) => {
       if (obj.importId != null && String(obj.importId).trim()) {
         obj.importId = `copy_${token}_${sequence}`;
       }
+      if (obj.animator?.frames) {
+        const frameIds = new Map();
+        obj.animator.frames.forEach((frame, index) => {
+          const previous = frame.id;
+          frame.id = `frame_copy_${token}_${sequence}_${index}_${crypto.randomUUID()}`;
+          frameIds.set(previous, frame.id);
+        });
+        obj.animator.stoppedFrameId = frameIds.get(obj.animator.stoppedFrameId) || obj.animator.frames[0]?.id || null;
+        (obj.children || []).forEach(child => {
+          if (frameIds.has(child.animatorFrameId)) child.animatorFrameId = frameIds.get(child.animatorFrameId);
+        });
+      }
       assign(obj.children);
     });
   };
@@ -8299,8 +8318,8 @@ const importGraphWorxFile = async (file) => {
     });
     setEditorStatusSafe(`Imported ${summary.objects || 0} objects; ${summary.issues || 0} reference items need review.`);
     showHmiToast(summary.format === 'graphworx32'
-      ? `GraphWorX32 imported with partial read-only bindings. ${summary.skipped || 0} unsupported items skipped. Remap source tags before use. ${(summary.notices || []).join(' ')}`
-      : `GraphWorX import succeeded. ${summary.unresolved || 0} unresolved references were preserved.`, 12000);
+      ? `GraphWorX32 imported with ${summary.animators || 0} Animators and partial read-only bindings. ${summary.skipped || 0} unsupported items skipped. Remap source tags before use. ${(summary.notices || []).join(' ')}`
+      : `GraphWorX import succeeded. ${summary.unresolved || 0} unresolved references were preserved. ${(summary.conversionNotices || []).join(" ")}`, 12000);
     openReferenceHealth();
   } catch (error) {
     setEditorStatusSafe(`Import failed: ${error.message}`);
@@ -9101,6 +9120,11 @@ const toActivePoint = (point) => {
 const ensureActiveObjects = () => {
   if (!currentScreenObj) return null;
   if (isEditMode && !activeLayerEditable()) return null;
+  const owner = getActiveGroup();
+  if (isEditMode && owner?.animator) {
+    const selectedId = animatorEditorFrames.get(owner.animator.frames[0]?.id) || owner.animator.frames[0]?.id;
+    editAnimatorFrame(owner, selectedId);
+  }
   const activeObjects = getActiveObjects();
   if (!Array.isArray(activeObjects)) {
     setActiveObjects([]);
@@ -10657,7 +10681,25 @@ const getRenderedMotionObject = (sourceObj) => {
   return nextObj;
 };
 
-const getDisplayObject = (obj) => applyMultiStateVisualOverridesToObject(getRenderedMotionObject(obj));
+const getDisplayObject = (obj) => {
+  const display = applyMultiStateVisualOverridesToObject(getRenderedMotionObject(obj));
+  if (!display?.animator || display.type !== "group") return display;
+  // All drawings stay visible while editing inside the group. Outside it,
+  // selecting a frame in the Animator tab previews that drawing alone.
+  const animatorKey = display.animator.frames[0]?.id;
+  if (isEditMode && animatorShowAllFrames.has(animatorKey)) return display;
+  if (isEditMode && groupEditStack.some(group => group.animator?.frames[0]?.id === animatorKey)) {
+    const editingFrame = groupEditStack.find(group => group.animatorFrameId && display.animator.frames.some(frame => frame.id === group.animatorFrameId));
+    return editingFrame ? HmiAnimator.display(display, display.animator.frames.find(frame => frame.id === editingFrame.animatorFrameId)) : display;
+  }
+  const config = display.animator;
+  if (!isEditMode || animatorPreviews.has(config.frames[0]?.id)) return display;
+  const frame = isEditMode
+    ? config.frames.find(item => item.id === animatorEditorFrames.get(animatorKey)) || HmiAnimator.stopped(config)
+    : config.mode === "value" ? HmiAnimator.selectValue(config, getMultiStateSourceValue(config))
+      : HmiAnimator.stopped(config);
+  return HmiAnimator.display(display, frame);
+};
 
 const applyRotationTransform = (el, obj, boundsOverride = null, offset = { x: 0, y: 0 }, rotationOverride = null) => {
   if (!el || !obj) return false;
@@ -11183,7 +11225,7 @@ const flipSelected = (axis) => {
   setDirty(true);
 };
 
-const groupSelected = () => {
+const groupSelected = (asAnimator = false) => {
   const activeObjects = getActiveObjects();
   if (!activeObjects || !Array.isArray(activeObjects)) return;
   if (selectedIndices.length < 2) return;
@@ -11210,18 +11252,335 @@ const groupSelected = () => {
     })
   };
   recordHistory();
+  if (asAnimator === true) {
+    HmiAnimator.attach(groupObj);
+    HmiAnimator.prepareFrameGroups(groupObj);
+  }
   const deleteSet = new Set(indices);
   const nextObjects = activeObjects.filter((_, index) => !deleteSet.has(index));
   const insertIndex = indices[0];
   nextObjects.splice(insertIndex, 0, groupObj);
   setActiveObjects(nextObjects);
   selectedIndices = [insertIndex];
+  if (asAnimator === true) currentObjectDynamicTab = "animator";
   renderScreen();
   syncEditorFromScreen();
   updateSelectionOverlays();
   updatePropertiesPanel();
   setDirty(true);
 };
+
+const ensureAnimatorForSelectedObjects = () => {
+  if (!isEditMode || !activeLayerEditable()) return;
+  if (selectedIndices.length >= 2) return groupSelected(true);
+  const obj = getActiveObjects()?.[selectedIndices[0]];
+  if (obj?.type !== "group" || !obj.children?.length) return;
+  if (!obj.animator) {
+    recordHistory();
+    HmiAnimator.attach(obj);
+    HmiAnimator.prepareFrameGroups(obj);
+    setDirty(true);
+    syncEditorFromScreen();
+  }
+  currentObjectDynamicTab = "animator";
+  updatePropertiesPanel();
+};
+
+// Frame selection is editor state, not saved screen data.
+const animatorEditorFrames = new Map();
+const animatorShowAllFrames = new Set();
+
+function editAnimatorFrame(obj, id) {
+  animatorEditorFrames.set(obj.animator.frames[0]?.id, id);
+  const index = groupEditStack.indexOf(obj);
+  if (index >= 0) groupEditStack.splice(index);
+  if (obj.children.some(child => child.animatorFrameId && !child.animatorFrameContainer)) {
+    recordHistory(); HmiAnimator.prepareFrameGroups(obj); setDirty(true); syncEditorFromScreen();
+  }
+  if (obj.children.some(child => !child.animatorFrameId)) {
+    const frame = HmiAnimator.frameObject(obj, id);
+    if (frame && !Number(frame.rotation || 0)) {
+      recordHistory();
+      HmiAnimator.adoptUnassigned(obj, id).forEach(object => translateObject(object, -Number(frame.x || 0), -Number(frame.y || 0)));
+      setDirty(true); syncEditorFromScreen();
+    }
+  }
+  enterGroupEdit(obj);
+  const frame = HmiAnimator.frameObject(obj, id);
+  if (frame) enterGroupEdit(frame);
+  currentObjectDynamicTab = "animator";
+  updatePropertiesPanel();
+}
+
+function getAnimatorEditorOwner(obj) {
+  return obj?.animator ? obj : [...groupEditStack].reverse().find(group => group.animator) || null;
+}
+const animatorPreviews = new Map();
+const animatorMountedRegions = new Set();
+const animatorInstanceClocks = new WeakMap();
+let animatorAnimationRequest = null;
+
+function selectAnimatorMountedFrame(entry, now) {
+  const config = entry.source.animator;
+  const key = config.frames[0]?.id;
+  const preview = isEditMode && animatorPreviews.get(key);
+  if (isEditMode && !preview) return HmiAnimator.stopped(config);
+  const hasSource = config.sourceType === "expression" ? Boolean(config.expression?.trim()) : Boolean(config.tag);
+  const activeValue = config.animateWhenTrue === false ? false : true;
+  const value = preview ? activeValue : hasSource ? getMultiStateSourceValue(config) : config.mode === "playback" ? activeValue : undefined;
+  const qualityGood = preview || config.sourceType === "expression" || !hasSource ||
+    !isExplicitBadQuality(tagQualityCache.get(normalizeTagCacheKey(config.connection_id, config.tag)));
+  return entry.clock.select(config, now, value, qualityGood);
+}
+
+function scheduleAnimatorPainting() {
+  if (animatorAnimationRequest !== null || !animatorMountedRegions.size) return;
+  animatorAnimationRequest = requestAnimationFrame(now => {
+    animatorAnimationRequest = null;
+    for (const entry of animatorMountedRegions) {
+      if (!entry.host.isConnected || entry.edit !== isEditMode) {
+        animatorMountedRegions.delete(entry); continue;
+      }
+      const frame = selectAnimatorMountedFrame(entry, now);
+      if (!entry.clock.needsTick()) animatorMountedRegions.delete(entry);
+      if (frame?.id === entry.frameId) continue;
+      entry.frameId = frame?.id;
+      const drawing = HmiAnimator.display(entry.source, frame);
+      delete drawing.animator;
+      try {
+        const oldAnimations = entry.host.getAnimations?.({ subtree: true }) || [];
+        const staging = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        entry.host.append(staging);
+        const previousDefs = runtimeObjectDefs;
+        const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+        staging.appendChild(defs);
+        runtimeObjectDefs = defs;
+        try { renderObjectInto(staging, drawing, entry.inherited); }
+        finally { runtimeObjectDefs = previousDefs; }
+        oldAnimations.forEach(animation => animation.cancel());
+        entry.host.replaceChildren(staging);
+      } catch (error) {
+        entry.host.lastChild?.remove();
+        console.warn("[animator] frame painting failed", error);
+        animatorMountedRegions.delete(entry);
+      }
+    }
+    scheduleAnimatorPainting();
+  });
+}
+
+function mountAnimator(parent, source, inherited) {
+  const host = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  parent.append(host);
+  const canvas = parent.ownerSVGElement || parent;
+  let clocks = animatorInstanceClocks.get(canvas);
+  if (!clocks) { clocks = new Map(); animatorInstanceClocks.set(canvas, clocks); }
+  const key = source.animator.frames[0]?.id;
+  let clock = clocks.get(key);
+  if (!clock) { clock = HmiAnimator.controller(); clocks.set(key, clock); }
+  const entry = { host, source, inherited, clock, edit: isEditMode, frameId: null };
+  const frame = selectAnimatorMountedFrame(entry, performance.now());
+  entry.frameId = frame?.id;
+  const drawing = HmiAnimator.display(source, frame);
+  delete drawing.animator;
+  renderObjectInto(host, drawing, inherited);
+  if (entry.clock.needsTick()) {
+    animatorMountedRegions.add(entry);
+    scheduleAnimatorPainting();
+  }
+}
+function renderAnimatorEditor(obj) {
+  if (!objectDynamicAnimatorHost) return;
+  const config = obj.animator;
+  const form = document.createElement("div");
+  form.className = "properties-form";
+  const commit = (change) => {
+    recordHistory();
+    change();
+    config.frames.forEach(frame => {
+      delete frame.matchMode; delete frame.value; delete frame.minimum; delete frame.maximum; delete frame.weight;
+    });
+    delete config.durationMs;
+    setDirty(true);
+    syncEditorFromScreen();
+    renderScreen();
+    updatePropertiesPanel();
+  };
+  const row = (title, control) => {
+    const el = document.createElement("div"); el.className = "prop-row";
+    const label = document.createElement("label"); label.textContent = title;
+    el.append(label, control); form.append(el); return el;
+  };
+  const button = (title, action) => {
+    const el = document.createElement("button"); el.type = "button";
+    el.className = "panel-btn"; el.textContent = title; el.onclick = action;
+    return el;
+  };
+  const input = (title, key, type = "number") => {
+    const el = document.createElement("input"); el.type = type;
+    el.value = config[key] ?? "";
+    if (config[key] === undefined && key === "startValue") el.value = 0;
+    if (config[key] === undefined && key === "stopValue") el.value = 100;
+    if (type === "number") el.step = "any";
+    if (key === "frameIntervalMs") { el.min = "1"; el.value = config[key] ?? 100; }
+    el.onchange = () => {
+      const value = type === "number" ? (el.value === "" ? null : Number(el.value)) : el.value;
+      if (type === "number" && value !== null && !Number.isFinite(value)) return;
+      if (key === "frameIntervalMs" && !(value > 0)) {
+        el.setCustomValidity("Enter a frame interval greater than zero."); el.reportValidity(); return;
+      }
+      el.setCustomValidity("");
+      commit(() => config[key] = value);
+    };
+    row(title, el);
+  };
+  const mode = document.createElement("select");
+  mode.innerHTML = '<option value="playback">Playback</option><option value="value">Value Selection</option>';
+  mode.value = config.mode;
+  mode.onchange = () => commit(() => config.mode = mode.value);
+  row("Mode", mode);
+  const enabled = document.createElement("input"); enabled.type = "checkbox";
+  enabled.checked = config.enabled !== false;
+  enabled.onchange = () => commit(() => config.enabled = enabled.checked);
+  row("Enabled", enabled);
+  const sourceType = document.createElement("select");
+  sourceType.innerHTML = '<option value="tag">Tag</option><option value="expression">Expression</option>';
+  sourceType.value = config.sourceType || "tag";
+  sourceType.onchange = () => commit(() => config.sourceType = sourceType.value);
+  row(config.mode === "value" ? "Value Source" : "Active When", sourceType);
+  if (config.sourceType === "expression") {
+    const summary = document.createElement("div"); summary.className = "expression-summary";
+    summary.textContent = config.expression || "(empty)";
+    row("Expression", summary);
+    row("", button("Edit…", () => openAutomationNumericExpressionModal({
+      title: "Animator Expression", value: config.expression || "",
+      apply: expression => commit(() => config.expression = expression)
+    })));
+  } else {
+    registerCompactTagBinding({ id: "animator-source", container: form,
+      buttonLabel: "Source", modalTitle: "Animator Source Tag",
+      read: () => ({ connection_id: config.connection_id || "", tag: config.tag || "" }),
+      apply: binding => commit(() => Object.assign(config, binding)) });
+  }
+  if (config.mode === "value") {
+    input("Start Value", "startValue");
+    input("Stop Value", "stopValue");
+    const hint = document.createElement("p"); hint.className = "reference-property-hint";
+    hint.textContent = "The source selects evenly spaced frames from Start to Stop. Values outside the range use the first or last frame; unavailable data uses the fallback. The source controls timing.";
+    form.append(hint);
+  } else {
+    input("Frame Interval (ms)", "frameIntervalMs");
+    input("Repeats (blank = continuous)", "repeatCount");
+    const choice = (title, key, options, current, decode = value => value) => {
+      const control = document.createElement("select");
+      options.forEach(([value, text]) => {
+        const option = document.createElement("option"); option.value = value; option.textContent = text;
+        control.append(option);
+      });
+      control.value = current;
+      control.onchange = () => commit(() => config[key] = decode(control.value));
+      row(title, control);
+    };
+    choice("Animate When", "animateWhenTrue", [["true", "True"], ["false", "False"]],
+      String(config.animateWhenTrue !== false), value => value === "true");
+    choice("When Inactive", "inactiveVisible", [["true", "Visible"], ["false", "Invisible"]],
+      String(config.inactiveVisible !== false), value => value === "true");
+    choice("Inactive Frame", "inactiveFrame", [["fallback", "Fallback Frame"], ["current", "Hold Current Frame"]],
+      config.inactiveFrame === "current" ? "current" : "fallback");
+    const hint = document.createElement("p"); hint.className = "reference-property-hint";
+    hint.textContent = "Playback restarts from the first frame when active. Unavailable data uses the fallback frame or stays invisible.";
+    form.append(hint);
+  }
+  const previewActions = document.createElement("div"); previewActions.className = "prop-inline";
+  previewActions.append(button("Play Preview", () => {
+    const key = config.frames[0]?.id;
+    animatorPreviews.set(key, true);
+    animatorInstanceClocks.get(hmiSvg)?.get(key)?.reset();
+    renderScreen();
+  }), button("Stop Preview", () => {
+    animatorPreviews.delete(config.frames[0]?.id); renderScreen();
+  }));
+  if (config.mode === "playback") row("Preview", previewActions);
+  const selectedId = animatorEditorFrames.get(config.frames[0]?.id) || config.frames[0]?.id;
+  const selected = config.frames.find(frame => frame.id === selectedId) || config.frames[0];
+  const list = document.createElement("div"); list.className = "animator-frame-buttons";
+  config.frames.forEach((frame, index) => {
+    const el = button(String(index + 1), () => {
+      editAnimatorFrame(obj, frame.id);
+    });
+    el.classList.toggle("is-active", frame === selected); list.append(el);
+    el.setAttribute("aria-pressed", String(frame === selected));
+  });
+  row("Frames", list);
+  const editingFrame = getActiveGroup();
+  if (editingFrame?.animatorFrameContainer && groupEditStack.includes(obj)) {
+    const destination = document.createElement("select");
+    config.frames.forEach((frame, index) => {
+      const option = document.createElement("option"); option.value = frame.id;
+      option.textContent = `Frame ${index + 1}`;
+      option.disabled = frame.id === editingFrame.animatorFrameId;
+      destination.append(option);
+    });
+    destination.value = config.frames.find(frame => frame.id !== editingFrame.animatorFrameId)?.id || "";
+    const move = button("Move Selected Objects", () => {
+      const target = HmiAnimator.frameObject(obj, destination.value);
+      if (!target || target === editingFrame) return;
+      if (Number(editingFrame.rotation || 0) || Number(target.rotation || 0)) {
+        window.alert("Reset frame group rotation before moving objects between frames."); return;
+      }
+      commit(() => {
+        const objects = selectedIndices.map(index => editingFrame.children[index]).filter(Boolean);
+        HmiAnimator.transfer(obj, editingFrame.animatorFrameId, destination.value, objects).forEach(object =>
+          translateObject(object, Number(editingFrame.x || 0) - Number(target.x || 0), Number(editingFrame.y || 0) - Number(target.y || 0)));
+        selectedIndices = [];
+      });
+    });
+    move.disabled = !selectedIndices.length || config.frames.length < 2;
+    const actions = document.createElement("div"); actions.className = "prop-inline";
+    actions.append(destination, move); row("Move to Frame", actions);
+    row("Group", button("Finish Frame Editing", () => {
+      groupEditStack.splice(groupEditStack.indexOf(obj));
+      selectedIndices = [getActiveObjects().indexOf(obj)].filter(index => index >= 0);
+      currentObjectDynamicTab = "animator";
+      renderScreen(); updateGroupBreadcrumb(); updatePropertiesPanel();
+    }));
+  }
+  row("Frame Actions", button("Add Frame", () => {
+    recordHistory();
+    const frame = HmiAnimator.addFrame(obj);
+    animatorEditorFrames.set(config.frames[0]?.id, frame.id);
+    setDirty(true); syncEditorFromScreen(); editAnimatorFrame(obj, frame.id);
+  }));
+  const showAll = document.createElement("input"); showAll.type = "checkbox";
+  showAll.checked = animatorShowAllFrames.has(config.frames[0]?.id);
+  showAll.onchange = () => {
+    if (showAll.checked) animatorShowAllFrames.add(config.frames[0]?.id);
+    else animatorShowAllFrames.delete(config.frames[0]?.id);
+    renderScreen();
+  };
+  row("Show All Frames", showAll);
+  if (selected) {
+    const actions = document.createElement("div"); actions.className = "prop-inline";
+    actions.append(button("↑", () => commit(() => HmiAnimator.move(config, selected.id, -1))),
+      button("↓", () => commit(() => HmiAnimator.move(config, selected.id, 1))),
+      button("Duplicate", () => commit(() => HmiAnimator.duplicateFrame(obj, selected.id))));
+    if (config.frames.length > 1) actions.append(button("Delete", () => commit(() => HmiAnimator.removeFrame(obj, selected.id))));
+    row("Frame Actions", actions);
+    row(config.mode === "value" ? "Fallback Frame" : "Stopped Frame", button("Use Selected", () => commit(() => config.stoppedFrameId = selected.id)));
+    row("Edit Drawing", button("Edit Frame", () => {
+      editAnimatorFrame(obj, selected.id);
+    }));
+  }
+  row("Binding", button("Delete Binding", () => commit(() => {
+    HmiAnimator.detach(obj); currentObjectDynamicTab = "properties";
+  })));
+  objectDynamicAnimatorHost.replaceChildren(form);
+  renderCompactTagBindingRows();
+}
+
+objectDynamicTabAnimatorBtn?.addEventListener("click", () => {
+  setObjectDynamicTab("animator"); updatePropertiesPanel();
+});
 
 const ungroupSelected = () => {
   const activeObjects = getActiveObjects();
@@ -11405,11 +11764,12 @@ const updateMenuState = () => {
   toggleFlipItem(flipMenuVertical);
   toggleReorderItem(moveToFrontMenuBtn);
   toggleReorderItem(moveToBackMenuBtn);
-  toggleDynamicMenuItem(dynamicsMenuBtn, canOpenDynamics || canAddShadow || Boolean(selectedObject));
-  toggleDynamicMenuItem(toolbarDynamicsBtn, canOpenDynamics || canAddShadow || Boolean(selectedObject));
+  toggleDynamicMenuItem(dynamicsMenuBtn, canOpenDynamics || canAddShadow || Boolean(selectedObject) || selectedIndices.length >= 2);
+  toggleDynamicMenuItem(toolbarDynamicsBtn, canOpenDynamics || canAddShadow || Boolean(selectedObject) || selectedIndices.length >= 2);
   toggleDynamicMenuItem(dynamicsAddVisibilityMenuBtn, canOpenDynamics);
   toggleDynamicMenuItem(dynamicsAddColorMenuBtn, canAddColorDynamic);
   toggleDynamicMenuItem(dynamicsAddStatesMenuBtn, canAddStatesDynamic);
+  toggleDynamicMenuItem(dynamicsAddAnimatorMenuBtn, selectedIndices.length >= 2 || selectedObject?.type === "group");
   toggleDynamicMenuItem(dynamicsAddRotationMenuBtn, canAddRotationDynamic);
   toggleDynamicMenuItem(dynamicsAddMotionMenuBtn, canAddMotionDynamic);
   toggleDynamicMenuItem(dynamicsAddShadowMenuBtn, canAddShadow && !selectedObject?.shadow);
@@ -11417,7 +11777,8 @@ const updateMenuState = () => {
   toggleDynamicMenuItem(dynamicsAddClickMenuBtn, Boolean(selectedObject) && !hasClickTab(selectedObject));
   toolbarDynamicsFlyout?.querySelectorAll("[data-add-dynamic]").forEach((button) => {
     const kind = button.dataset.addDynamic;
-    const enabled = kind === "click" ? Boolean(selectedObject) && !hasClickTab(selectedObject)
+    const enabled = kind === "animator" ? selectedIndices.length >= 2 || selectedObject?.type === "group"
+      : kind === "click" ? Boolean(selectedObject) && !hasClickTab(selectedObject)
       : kind === "box-shadow" ? canAddShadow && !selectedObject?.shadow
       : kind === "drop-shadow" ? canAddShadow && !selectedObject?.dropShadow
       : kind === "color" ? canAddColorDynamic
@@ -13876,6 +14237,10 @@ const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
 
 const renderObjectContentInto = (parent, obj, inheritedGroupColorOverrides = null) => {
   if (!parent || !obj) return;
+  if (obj.type === "group" && obj.animator && (!isEditMode || animatorPreviews.has(obj.animator.frames[0]?.id))) {
+    mountAnimator(parent, obj, inheritedGroupColorOverrides);
+    return;
+  }
   obj = getDisplayObject(obj);
   obj = applyGroupColorOverridesToObject(obj, inheritedGroupColorOverrides);
   if (!shouldPaintObject(obj)) return;
@@ -17577,6 +17942,7 @@ const updatePropertiesPanel = () => {
   const activeObjects = getActiveObjects();
   const obj = isSingle ? activeObjects?.[selectedIndices[0]] : null;
   renderSelectedReferenceProperties(obj);
+  const animatorOwner = getAnimatorEditorOwner(obj);
   renderClickActionList(obj);
   if (editorPaneTitle) {
     editorPaneTitle.textContent = isMulti ? "Multiple Properties" : getPropertiesPaneTitle(obj);
@@ -17647,7 +18013,7 @@ const updatePropertiesPanel = () => {
   if (((showDynamicRect && !hasRectMotionDynamic(obj)) || (showDynamicLine && !hasLineMotionDynamic(obj)) || (showDynamicEllipse && !hasEllipseMotionDynamic(obj)) || (showDynamicText && !hasTextMotionDynamic(obj)) || (showDynamicButton && !hasButtonMotionDynamic(obj)) || (showDynamicCircle && !hasCircleMotionDynamic(obj)) || (showDynamicGroup && !hasGroupMotionDynamic(obj))) && currentObjectDynamicTab === "motion") currentObjectDynamicTab = "properties";
   if (!hasShadow && currentObjectDynamicTab === "box-shadow") currentObjectDynamicTab = "properties";
   if (!hasDropShadow && currentObjectDynamicTab === "drop-shadow") currentObjectDynamicTab = "properties";
-  if (!showDynamicRect && !showDynamicLine && !showDynamicEllipse && !showDynamicText && !showDynamicButton && !showDynamicGroup && !showDynamicCircle && !showDynamicPolygon && !hasShadow && !hasDropShadow && !showClick) {
+  if (!animatorOwner && !showDynamicRect && !showDynamicLine && !showDynamicEllipse && !showDynamicText && !showDynamicButton && !showDynamicGroup && !showDynamicCircle && !showDynamicPolygon && !hasShadow && !hasDropShadow && !showClick) {
     currentObjectDynamicTab = "properties";
     rectVisibilityDraft = null;
     rectVisibilityDraftObject = null;
@@ -17658,7 +18024,7 @@ const updatePropertiesPanel = () => {
     rectMotionDraft = null;
     rectMotionDraftObject = null;
   }
-  if (objectDynamicTabs) objectDynamicTabs.classList.toggle("is-hidden", !(showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle || showDynamicPolygon || hasShadow || hasDropShadow || showClick));
+  if (objectDynamicTabs) objectDynamicTabs.classList.toggle("is-hidden", !(animatorOwner || showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle || showDynamicPolygon || hasShadow || hasDropShadow || showClick));
   syncObjectDynamicVisibilityTabs(obj);
   syncObjectDynamicColorTabs(obj);
   if (objectDynamicTabLevelBtn) objectDynamicTabLevelBtn.classList.toggle("is-hidden", !hasLevelDynamic);
@@ -17667,11 +18033,15 @@ const updatePropertiesPanel = () => {
   if (objectDynamicTabMotionBtn) objectDynamicTabMotionBtn.classList.toggle("is-hidden", !((showDynamicRect && hasRectMotionDynamic(obj)) || (showDynamicLine && hasLineMotionDynamic(obj)) || (showDynamicEllipse && hasEllipseMotionDynamic(obj)) || (showDynamicText && hasTextMotionDynamic(obj)) || (showDynamicButton && hasButtonMotionDynamic(obj)) || (showDynamicCircle && hasCircleMotionDynamic(obj)) || (showDynamicGroup && hasGroupMotionDynamic(obj))));
   if (objectDynamicTabShadowBtn) objectDynamicTabShadowBtn.classList.toggle("is-hidden", !hasShadow);
   if (objectDynamicTabDropShadowBtn) objectDynamicTabDropShadowBtn.classList.toggle("is-hidden", !hasDropShadow);
-  if (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle || showDynamicPolygon || hasShadow || hasDropShadow || showClick) setObjectDynamicTab(currentObjectDynamicTab);
+  if (animatorOwner || showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle || showDynamicPolygon || hasShadow || hasDropShadow || showClick) setObjectDynamicTab(currentObjectDynamicTab);
   const showRectVisibilityTab = (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicGroup || showDynamicCircle || showDynamicPolygon) && isVisibilityDynamicTab(currentObjectDynamicTab) && hasVisibilityDynamic(obj);
   const showRectColorTab = (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicCircle || showDynamicPolygon || showDynamicGroup) && hasEditableColorDynamic(obj) && isColorDynamicTab(currentObjectDynamicTab);
   const showRectLevelTab = hasLevelDynamic && currentObjectDynamicTab === "level";
   const showRectStatesTab = (showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicCircle || showDynamicGroup) && currentObjectDynamicTab === "states" && hasMultiStateDynamic(obj);
+  const showAnimatorTab = Boolean(animatorOwner) && currentObjectDynamicTab === "animator";
+  objectDynamicTabAnimatorBtn?.classList.toggle("is-hidden", !animatorOwner);
+  objectDynamicAnimatorHost?.classList.toggle("is-hidden", !showAnimatorTab);
+  if (showAnimatorTab) renderAnimatorEditor(animatorOwner);
   const showRectRotationTab = ((showDynamicRect && hasRectRotationDynamic(obj)) || (showDynamicLine && hasLineRotationDynamic(obj)) || (showDynamicEllipse && hasEllipseRotationDynamic(obj)) || (showDynamicText && hasTextRotationDynamic(obj)) || (showDynamicButton && hasButtonRotationDynamic(obj)) || (showDynamicGroup && hasGroupRotationDynamic(obj))) && currentObjectDynamicTab === "rotation";
   const showRectMotionTab = ((showDynamicRect && hasRectMotionDynamic(obj)) || (showDynamicLine && hasLineMotionDynamic(obj)) || (showDynamicEllipse && hasEllipseMotionDynamic(obj)) || (showDynamicText && hasTextMotionDynamic(obj)) || (showDynamicButton && hasButtonMotionDynamic(obj)) || (showDynamicCircle && hasCircleMotionDynamic(obj)) || (showDynamicGroup && hasGroupMotionDynamic(obj))) && currentObjectDynamicTab === "motion";
   const showShadowTab = hasShadow && currentObjectDynamicTab === "box-shadow";
@@ -17691,8 +18061,8 @@ const updatePropertiesPanel = () => {
   if (showDynamicGroup && groupProps) groupProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectStatesTab || showRectRotationTab || showRectMotionTab);
   if (showDynamicCircle && circleProps) circleProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectLevelTab || showRectStatesTab || showRectMotionTab);
   if (showDynamicPolygon && polygonProps) polygonProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectLevelTab);
-  if (currentObjectDynamicTab === "click") {
-    [screenProps, textProps, buttonProps, groupProps, viewportProps, numberInputProps, indicatorProps, rectProps, ellipseProps, circleProps, lineProps, curveProps, polylineProps, splineProps, polygonProps, barProps].forEach((panel) => panel?.classList.add("is-hidden"));
+  if (currentObjectDynamicTab === "click" || showAnimatorTab) {
+    [screenProps, textProps, buttonProps, groupProps, objectActionProps, viewportProps, numberInputProps, indicatorProps, rectProps, ellipseProps, circleProps, lineProps, curveProps, polylineProps, splineProps, polygonProps, barProps].forEach((panel) => panel?.classList.add("is-hidden"));
   }
   if (showShadowTab || showDropShadowTab) {
     [textProps, buttonProps, groupProps, objectActionProps, numberInputProps, indicatorProps, rectProps, ellipseProps, circleProps, lineProps, curveProps, polylineProps, splineProps, polygonProps, barProps].forEach((panel) => panel?.classList.add("is-hidden"));
@@ -19973,6 +20343,12 @@ function bindScreenManager() {
     });
   }
 
+  dynamicsAddAnimatorMenuBtn?.addEventListener("click", () => {
+    setDynamicsFlyoutOpen(false);
+    setMenuOpen(false);
+    ensureAnimatorForSelectedObjects();
+  });
+
   if (dynamicsAddRotationMenuBtn) {
     dynamicsAddRotationMenuBtn.addEventListener("click", () => {
       setDynamicsFlyoutOpen(false);
@@ -20014,6 +20390,7 @@ function bindScreenManager() {
     if (!(button instanceof HTMLButtonElement) || button.disabled) return;
     setToolbarDynamicsOpen(false);
     const actions = {
+      animator: ensureAnimatorForSelectedObjects,
       click: ensureClickForSelectedObject,
       visibility: ensureVisibilityDynamicForSelectedObject,
       color: ensureRectColorDynamic,

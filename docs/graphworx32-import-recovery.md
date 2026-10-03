@@ -651,3 +651,35 @@ settings combination as another top-to-bottom two-color fill. Rectangle 8223
 near (4285,3088) transitions from tan `#ddcfb2` to yellow `#e2e200`;
 neighboring panels use dark olive `#717100` to the same yellow. Recovery uses
 each record's colors, without coordinate or color-specific substitutions.
+# Animator investigation (2026-10-02)
+
+The original `animator_sources.py` investigation was audit-only. It is now enabled
+for the screenshot-correlated wall-display settings described below. In the
+wall display it validates 107 OAnimator/group associations using both the dynamic
+object ID and the object's dynamic-ID back-reference. All 107 resolve to the
+constant source `1`. It handles the initial ODynamic base declaration separately
+from subsequent class references, retaining original byte offsets.
+
+The first association is dynamic 610, object 7854, group near (5574, 3436), with
+21 recovered children and timing candidate 180. GraphWorX32's manual defines
+Frame Rate as milliseconds between frames, matching our native frame interval.
+If each child is one frame, the corresponding cycle would be 21 × 180 = 3780 ms.
+That frame-order/membership interpretation and the three settings bytes `010000`
+still require verification against the source Animator inspector before enabling
+normal import. No candidate binding or diagnostic-only metadata is attached to
+saved screens by this audit.
+
+### October 3: wall-display Animator import enabled
+
+The binary import pipeline now maps the wall display's exact Animator settings
+to native grouped Animators. qbU8hbR5m6.png's unique 55 ms setting correlates
+with object 2110/dynamic 225: source 1, Animate When True, Invisible When Off,
+First Frame When Off. The complete common settings block and flags 010000 are
+identical across all 107 records. Accept only this observed combination, not
+unverified individual flag permutations. Each object's serialized child list
+must exactly match the recovered group children before assigning frame IDs.
+
+Actual server import recovers 107 Animators and 2,358 frames, zero Animator
+review/absent groups. Native runtime checks confirm the recovered intervals and
+invisible inactive state for every group. Existing source/previews are unchanged.
+All 121 HMI tests and 80 binary recovery tests pass.

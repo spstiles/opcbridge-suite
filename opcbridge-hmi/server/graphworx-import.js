@@ -325,6 +325,7 @@ const importedShadow = (node) => {
 };
 
 const sourceMetadata = (sourceType, node, extra = {}) => {
+  const selectors = descendants(node, name => name === "gwx:GwxRangeSelector").map(item => ({ ...item, sourceExpression: String(item.DataSource ?? "1") }));
   const colors = descendants(node, (name) => name === "gwx:GwxColor").map((item) => ({
     kind: "color",
     target: String(item.TargetPropertyName || ""),
@@ -374,8 +375,9 @@ const sourceMetadata = (sourceType, node, extra = {}) => {
       target: String(state.TargetPropertyName || "")
     }))
   })).filter((item) => item.sourceExpression);
-  const dynamics = [...colors, ...hides, ...sizes, ...rotations, ...processPoints].filter((item) => item.sourceExpression);
+  const dynamics = [...selectors, ...colors, ...hides, ...sizes, ...rotations, ...processPoints].filter((item) => item.sourceExpression);
   const automationTypes = {
+    "gwx:GwxRangeSelector": { automation: "animator", supported: true },
     "gwx:GwxColor": { automation: "color", supported: true },
     "gwx:GwxHide": { automation: "visibility", supported: true },
     "gwx:GwxRotation": { automation: "rotation", supported: true },
@@ -410,7 +412,7 @@ const sourceMetadata = (sourceType, node, extra = {}) => {
   return {
     source: { format: "graphworx64", type: sourceType, name: node?.Name || null },
     externalReferences: refs,
-    ...(dynamics.length ? { importedDynamics: { colors, hides, sizes, rotations, processPoints } } : {}),
+    ...(dynamics.length || selectors.length ? { importedDynamics: { colors, hides, sizes, rotations, processPoints, selectors } } : {}),
     ...extra
   };
 };
@@ -559,6 +561,78 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
   const applyImportedDynamics = (obj) => {
     const dynamics = obj?.importedDynamics;
     if (!dynamics) return;
+    const selectors = dynamics.selectors || [];
+    if (selectors.length) {
+      const selector = selectors[0];
+      const mode = String(selector.AnimationMode || "Analog").replace(/[^a-z]/gi, "").toLowerCase();
+      const valueMode = ["analog", "analogselector"].includes(mode);
+      const playbackMode = ["discrete", "discreteanimator"].includes(mode);
+      const warnings = [];
+      const reject = reason => {
+        warnings.push(`Range Selector was not activated: ${reason}`);
+        for (const ref of obj.externalReferences || []) {
+          if (ref.automation === "animator") { ref.supported = false; ref.status = "unsupported"; }
+        }
+      };
+      const finite = value => value != null && String(value).trim() !== "" && Number.isFinite(Number(value));
+      const low = selector.LowLimitSource ?? selector.LowLimit ?? 0;
+      const high = selector.HighLimitSource ?? selector.HighLimit ?? 100;
+      const comparison = String(selector.DataComparison || selector.ActiveWhen || "").replace(/\s/g, "").toLowerCase();
+      const unsupportedBehavior = Number(selector.StartDelay || 0) !== 0 ||
+        Number(selector.AccelerationRatio || 0) !== 0 || Number(selector.DecelerationRatio || 0) !== 0 ||
+        Number(selector.PeriodicToggleRate || 0) !== 0 ||
+        ["AutoReverse", "ReverseAnimateWhenFalse", "SkipInitialDuration"].some(key => String(selector[key]).toLowerCase() === "true") ||
+        (selector.PartitionMode && String(selector.PartitionMode).toLowerCase() !== "none") ||
+        Number(selector.StartPercent || 0) !== 0 || Number(selector.EndPercent ?? 1) !== 1 ||
+        (selector.FillBehavior && String(selector.FillBehavior).toLowerCase() !== "holdend");
+      if (selectors.length !== 1 || obj.type !== "group" || !obj.children?.length) reject("requires one selector on a nonempty group.");
+      else if (obj.importAnimatorFramesIncomplete) reject("one or more source frames could not be recovered as a single drawing or group.");
+      else if (!selector.sourceExpression.trim()) reject("source is empty.");
+      else if (!valueMode && !playbackMode) reject("unknown animation mode.");
+      else if (unsupportedBehavior) reject("delay, reverse, easing, partial-cycle, or stop behavior is unsupported.");
+      else if (comparison && !["always", "notequalzero", "data!=0", "equalzero", "data==0"].includes(comparison)) reject("activation comparison is unsupported.");
+      else if (valueMode && comparison && comparison !== "always") reject("conditional value selection is unsupported.");
+      else if (valueMode && (!finite(low) || !finite(high) || Number(high) <= Number(low))) reject("limits must be numeric and increasing.");
+      else if (playbackMode && (!finite(selector.Duration) || Number(selector.Duration) <= 0)) reject("duration must be a positive number of milliseconds.");
+      else if (playbackMode && selector.RepeatCount != null &&
+        !["infinite", "forever"].includes(String(selector.RepeatCount).toLowerCase()) &&
+        (!finite(selector.RepeatCount) || Number(selector.RepeatCount) === 0 || Number(selector.RepeatCount) > 0 && !Number.isInteger(Number(selector.RepeatCount)))) reject("repeat count is unsupported.");
+      else {
+        const raw = selector.sourceExpression.trim();
+        const constant = finite(raw) || /^(true|false)$/i.test(raw);
+        const binding = constant ? { sourceType: "expression", expression: raw.toLowerCase() } : unresolvedBinding(raw);
+        // Always means no activation gate for a time-based selector.
+        const activeBinding = playbackMode && comparison === "always" ? { sourceType: "expression", expression: String(selector.AnimateWhenTrue).toLowerCase() === "false" ? "0" : "1" } : binding;
+        const frames = obj.children.map(child => {
+          const id = `frame_${crypto.randomUUID()}`;
+          child.animatorFrameId = id;
+          return { id };
+        });
+        obj.animator = {
+          ...activeBinding, enabled: String(selector.Enabled).toLowerCase() !== "false",
+          mode: valueMode ? "value" : "playback", frames, stoppedFrameId: frames[0].id,
+          animateWhenTrue: ["equalzero", "data==0"].includes(comparison)
+            ? String(selector.AnimateWhenTrue).toLowerCase() === "false"
+            : String(selector.AnimateWhenTrue).toLowerCase() !== "false",
+          inactiveVisible: true,
+          inactiveFrame: String(selector.FreezeWhenNotAnimating).toLowerCase() === "true" ? "current" : "fallback",
+          startValue: valueMode ? Number(low) : 0, stopValue: valueMode ? Number(high) : 100,
+          frameIntervalMs: playbackMode ? Number(selector.Duration) / frames.length : 100,
+          repeatCount: selector.RepeatCount == null || Number(selector.RepeatCount) < 0 || /^(infinite|forever)$/i.test(selector.RepeatCount) ? null : Number(selector.RepeatCount)
+        };
+        if (constant || playbackMode && comparison === "always") {
+          obj.externalReferences = (obj.externalReferences || []).filter(ref => ref.automation !== "animator");
+        }
+        const distribution = String(selector.FrameDistribution || "").trim();
+        if (distribution) {
+          const weights = distribution.split(/[\s,;]+/).map(Number);
+          if (weights.length !== frames.length || weights.some(weight => !Number.isFinite(weight) || weight <= 0 || Math.abs(weight - weights[0]) > 1e-9)) {
+            warnings.push("Range Selector frame distribution was replaced with evenly spaced frames; review animation timing and value selection.");
+          }
+        }
+      }
+      for (const message of warnings) issues.push({ severity: "warning", category: "animator-import", id: `animator-notice:${issues.length + 1}`, status: "notice", message });
+    }
     const colorRules = (dynamics.colors || [])
       .filter((item) => String(item.sourceExpression || "").trim())
       .map((item) => {
@@ -670,6 +744,7 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
   };
   const add = (obj) => {
     applyImportedDynamics(obj);
+    delete obj.importAnimatorFramesIncomplete;
     obj.importId = `gwx_${++objectSequence}`;
     objectTarget.push(obj);
     for (const ref of obj.externalReferences || []) {
@@ -752,7 +827,13 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
         const children = [];
         const previousTarget = objectTarget;
         objectTarget = children;
-        entries.forEach((entry) => walk(entry.name, entry.node));
+        let incompleteFrames = false;
+        entries.forEach(entry => {
+          const before = children.length;
+          walk(entry.name, entry.node);
+          // Property elements are configuration; each visual child is one frame.
+          if (!entry.name.includes(".") && !entry.name.startsWith("gwx:") && children.length - before !== 1) incompleteFrames = true;
+        });
         objectTarget = previousTarget;
         if (!children.length) return;
         let x = num(node["Canvas.Left"]);
@@ -771,7 +852,7 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
         }
         const ownedDynamicsNode = { __orderedChildren: ownedDynamicEntries };
         add({
-          type: "group", x, y, w, h, children, ...(action ? { action } : {}),
+          type: "group", x, y, w, h, children, importAnimatorFramesIncomplete: incompleteFrames, ...(action ? { action } : {}),
           ...sourceMetadata(name, ownedDynamicsNode, { source: { format: "graphworx64", type: name, name: node.Name || null }, importConversion: "preserved-group" })
         });
         return;
@@ -946,10 +1027,10 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
     screen: {
       width: num(root.Width, 1920), height: num(root.Height, 1080), background: color(root.Background, "#000000"), objects,
       layers,
-      importInfo: { format: "graphworx64", sourceFile: path.basename(filename), importedAt: new Date().toISOString(), converterVersion: 3, zOrderPreserved: true, layersRecovered: 0, layersSynthesized: 1, limitations: ["GraphWorX64 displays store no layer markup, so all objects are placed on one synthesized backmost layer. Stacking is the source document order, which is preserved.", "Nested Canvas elements are groups, not layers. A group's children belong to the group's layer."] },
+      importInfo: { format: "graphworx64", sourceFile: path.basename(filename), importedAt: new Date().toISOString(), converterVersion: 4, conversionNotices: [...new Set(issues.filter(issue => issue.category === "animator-import").map(issue => issue.message))], zOrderPreserved: true, layersRecovered: 0, layersSynthesized: 1, limitations: ["GraphWorX64 displays store no layer markup, so all objects are placed on one synthesized backmost layer. Stacking is the source document order, which is preserved.", "Nested Canvas elements are groups, not layers. A group's children belong to the group's layer."] },
       referenceHealth: { issues }
     },
-    summary: { imported: true, objects: objects.length, imagesExtracted: embeddedAssets.length, unresolved, notices: issues.length - unresolved, issues: issues.length },
+    summary: { imported: true, objects: objects.length, imagesExtracted: embeddedAssets.length, unresolved, notices: issues.length - unresolved, conversionNotices: [...new Set(issues.filter(issue => issue.category === "animator-import").map(issue => issue.message))], issues: issues.length },
     embeddedAssets
   };
 };
