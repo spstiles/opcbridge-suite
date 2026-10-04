@@ -3,6 +3,7 @@ import json
 import sys
 from pathlib import Path
 import olefile
+from layer_decode import build_records
 from visibility_sources import audit_visibility_sources, bind_visibility_displays
 
 if len(sys.argv) != 5:
@@ -16,7 +17,11 @@ if info.get('format') != 'graphworx32-experimental':
     raise SystemExit('Expected an experimental recovery preview.')
 with olefile.OleFileIO(source) as archive:
     data = archive.openstream('Contents').read()
-rows = audit_visibility_sources(data, json.loads(geometry.read_text()))
+records = json.loads(geometry.read_text())
+layer_ids = {layer.get('source', {}).get('objectId') for layer in screen.get('layers', [])}
+records += [rec for rec in build_records(data, data.find(b'ODynamicManager'))
+            if rec['object_id'] in layer_ids and rec['object_id'] not in {r['object_id'] for r in records}]
+rows = audit_visibility_sources(data, records)
 stats = bind_visibility_displays(screen, rows)
 info.update(staticOnly=False, visibilityBindingsRecovered=stats, visibilityRecoveryAudit=rows)
 info.setdefault('limitations', []).insert(0, 'Visibility: only verified Hide Object when False records recovered. Remap sources before runtime testing. Flash/Disable and other layouts are not converted.')

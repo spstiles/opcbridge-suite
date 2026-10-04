@@ -30,6 +30,21 @@ class VisibilityTests(unittest.TestCase):
         for end in range(len(data)):
             audit_visibility_sources(data[:end], records)
 
+    def test_layer_constants_and_global_alias_expressions(self):
+        rows = audit_visibility_sources(*fixture())
+        layer = dict(id='layer', hidden=True, source=dict(objectId=100))
+        for raw, expression, status in [('1', '1', 'resolved'), ('0', '0', 'resolved'),
+                                        ('x= ~~PLANT-OPS Fail Count~~>3', '{{PLANT-OPS Fail Count}}>3', 'unresolved')]:
+            layer.pop('visibility', None)
+            rows[0]['sources'] = [raw]
+            stats = bind_visibility_displays(dict(objects=[], layers=[layer]), rows)
+            self.assertEqual(stats['layerBindings'], 1)
+            self.assertEqual(stats['absentObjects'], 0)
+            self.assertEqual(layer['visibility']['expression'], expression)
+            self.assertEqual(layer['visibility']['status'], status)
+            self.assertNotIn('tag', layer['visibility'])
+            self.assertTrue(layer['hidden'])
+
     def test_unknown_flags_remain_issues(self):
         rows = audit_visibility_sources(*fixture(b'\x00\x01\x00'))
         self.assertFalse(rows[0]['supported'])

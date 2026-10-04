@@ -70,10 +70,15 @@ def bind_visibility_displays(screen, rows):
             objects[obj.get('source', {}).get('objectId')] = obj
             collect(obj.get('children', []))
     collect(screen.get('objects', []))
+    for layer in screen.get('layers', []):
+        object_id = layer.get('source', {}).get('objectId')
+        if object_id is not None:
+            objects[object_id] = layer
+    layer_ids = {id(layer) for layer in screen.get('layers', [])}
     grouped = {}
     for row in rows:
         grouped.setdefault(row['objectId'], []).append(row)
-    stats = dict(bindings=0, reviewRequired=0, absentObjects=0)
+    stats = dict(bindings=0, layerBindings=0, reviewRequired=0, absentObjects=0)
     for object_id, variants in grouped.items():
         obj = objects.get(object_id)
         if obj is None:
@@ -90,11 +95,19 @@ def bind_visibility_displays(screen, rows):
         row = variants[0]
         raw = row['sources'][0]
         binding = dict(enabled=True, invert=False, status='unresolved', sourceReference=raw)
-        if re.match(r'^\s*x\s*=', raw, re.I) or '{{' in raw:
-            binding.update(sourceType='expression', expression=re.sub(r'^\s*x\s*=\s*', '', raw, flags=re.I))
+        if re.fullmatch(r'\s*[01]\s*', raw):
+            binding = dict(enabled=True, sourceType='expression', expression=raw.strip(), status='resolved')
+        elif re.match(r'^\s*x\s*=', raw, re.I) or '{{' in raw:
+            expression = re.sub(r'^\s*x\s*=\s*', '', raw, flags=re.I)
+            # GraphWorX global-alias references must remain available to the
+            # native reference mapper; never guess a live tag for an alias.
+            expression = re.sub(r'~~([^~]+)~~', lambda match: '{{' + match.group(1) + '}}', expression)
+            binding.update(sourceType='expression', expression=expression)
         else:
             binding.update(sourceType='tag', connection_id='', tag=raw, mode='equals', match='1')
         obj['visibility'] = binding
         obj['source']['visibilityRecovery'] = dict(dynamicId=row['dynamicId'], hideWhen=False)
         stats['bindings'] += 1
+        if id(obj) in layer_ids:
+            stats['layerBindings'] += 1
     return stats

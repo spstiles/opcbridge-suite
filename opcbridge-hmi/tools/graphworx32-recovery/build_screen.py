@@ -11,6 +11,7 @@ import tempfile
 from pathlib import Path
 
 import olefile
+from layer_decode import build_records
 from numeric_sources import audit_numeric_sources, bind_numeric_displays
 from color_sources import audit_color_sources, bind_color_displays
 from visibility_sources import audit_visibility_sources, bind_visibility_displays
@@ -19,9 +20,14 @@ from flash_sources import audit_flash_sources, bind_flash_displays
 
 
 def recover_bindings(screen, data, records):
+    # Geometry candidates omit layer containers. Include their archive records
+    # when linking OHide rules, while retaining geometry records for objects.
+    layer_ids = {layer.get('source', {}).get('objectId') for layer in screen.get('layers', [])}
+    visibility_records = records + [rec for rec in build_records(data, data.find(b'ODynamicManager'))
+                                    if rec['object_id'] in layer_ids and rec['object_id'] not in {r['object_id'] for r in records}]
     audits = dict(numeric=audit_numeric_sources(data, records),
                   color=audit_color_sources(data, records),
-                  visibility=audit_visibility_sources(data, records),
+                  visibility=audit_visibility_sources(data, visibility_records),
                   flash=audit_flash_sources(data, records),
                   animator=audit_animator_sources(data, records))
     stats = dict(numeric=bind_numeric_displays(screen, audits['numeric']),
@@ -47,6 +53,7 @@ def recover_bindings(screen, data, records):
                 obj['text'] = 'RECOVERY PREVIEW — REMAP SOURCES BEFORE USE — PARTIAL READ-ONLY BINDINGS — NO CONTROL ACTIONS'
 
     clean(screen.get('objects', []))
+    clean(screen.get('layers', []))
     info = screen['importInfo']
     info.update(staticOnly=False, bindingsRecovered=stats, skippedBindings=skipped)
     info['limitations'] = [line for line in info.get('limitations', [])

@@ -80,3 +80,16 @@ test('region painting replaces its own definitions and keeps old content on fail
   assert.equal(host.children[0], previous);
   assert.equal(ctx.runtimeObjectDefs, null);
 });
+
+
+test('a hidden layer source triggers rebuilding while unrelated tags remain incremental', () => {
+  const screen = {};
+  const painted = [];
+  const ctx = vm.createContext({currentScreenObj:screen,currentPopupScreenId:null,isEditMode:false,
+    runtimeRenderIndex:{screen,safe:true,byTag:new Map(),layerTagKeys:new Set(['test:Visible'])},
+    paintRuntimeRegion:obj=>painted.push(obj),currentScreenAliasContext:{},console});
+  load(ctx,'updateRuntimeObjects');
+  assert.equal(vm.runInContext('updateRuntimeObjects(["test:Visible"])',ctx),false);
+  assert.equal(vm.runInContext('updateRuntimeObjects(["test:Other"])',ctx),true);
+  assert.deepEqual(painted,[]);
+});

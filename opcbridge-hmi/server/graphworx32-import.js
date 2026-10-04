@@ -40,7 +40,8 @@ const convertGraphWorx32 = async (base64, { filename = 'Imported.gdf', run = exe
     const skipped = sum(screen.importInfo.skippedControls) + sum(screen.importInfo.skippedBindings);
     return { screen, summary: { imported: true, format: 'graphworx32', objects, skipped,
       unresolved: 0, issues: 0, notices: screen.importInfo.conversionNotices || [],
-      animators: Number(screen.importInfo.bindingsRecovered?.animator?.bindings || 0), partial: true } };
+      animators: Number(screen.importInfo.bindingsRecovered?.animator?.bindings || 0),
+      layerVisibility: Number(screen.importInfo.bindingsRecovered?.visibility?.layerBindings || 0), partial: true } };
   } catch (error) {
     if (error.code === 'ENOENT' || /No module named ['"]olefile/.test(error.stderr || '')) {
       throw new Error('GraphWorX32 import requires Python 3 and python3-olefile. Install HMI dependencies with --deps.');

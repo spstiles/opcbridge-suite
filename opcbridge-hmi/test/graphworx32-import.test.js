@@ -18,13 +18,14 @@ test('native import removes the developer notice, summarizes skips and cleans te
     directory = options.env.TMPDIR;
     await fs.writeFile(args[2], JSON.stringify({ objects: [{ id: 'static_preview_warning' }, { id: 'one', type: 'arc' }],
       layers: [{ id: 'gdf32_layer_recovery_warning' }, { id: 'default' }],
-      importInfo: { skippedControls: { trend: 2 }, skippedBindings: { flash: 3 }, bindingsRecovered: { animator: { bindings: 107 } } } }));
+      importInfo: { skippedControls: { trend: 2 }, skippedBindings: { flash: 3 }, bindingsRecovered: { animator: { bindings: 107 }, visibility: { layerBindings: 6 } } } }));
   } });
   assert.equal(result.screen.objects.length, 1);
   assert.equal(result.screen.layers.length, 1);
   assert.equal(result.screen.importInfo.sourceFile, 'Example.gdf');
   assert.equal(result.summary.skipped, 5);
   assert.equal(result.summary.animators, 107);
+  assert.equal(result.summary.layerVisibility, 6);
   await assert.rejects(fs.access(directory));
 });
 

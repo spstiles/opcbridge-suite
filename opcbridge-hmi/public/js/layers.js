@@ -21,9 +21,12 @@
   // editorVisible is the editor Show checkbox and never affects runtime
   // painting. hidden is the runtime flag, so a layer sourced as hidden can stay
   // editable without appearing on the running display.
-  function shouldDraw(layer, isEditMode) {
+  function shouldDraw(layer, isEditMode, evaluateVisibility) {
     if (!layer) return true;
     if (isEditMode) return layer.editorVisible !== false;
+    if (layer.visibility && layer.visibility.enabled !== false && evaluateVisibility) {
+      return Boolean(evaluateVisibility(layer));
+    }
     return layer.hidden !== true;
   }
   function layerOf(screen, obj) {

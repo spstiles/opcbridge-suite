@@ -7071,6 +7071,7 @@ const reconcileReferenceHealthMetadata = () => {
     (obj?.children || []).forEach(reconcileObject);
   };
   (currentScreenObj.objects || []).forEach(reconcileObject);
+  (currentScreenObj.layers || []).forEach(reconcileObject);
 
   const findObjectByReferenceId = (objects, objectId) => {
     for (const obj of objects || []) {
@@ -7327,6 +7328,7 @@ const getReferenceHealthIssues = () => {
     });
   };
   (currentScreenObj?.objects || []).forEach(collectObjectIssues);
+  (currentScreenObj?.layers || []).forEach(layer => collectObjectIssues(layer, undefined));
   referenceHealthIssuesScreen = currentScreenObj;
   referenceHealthIssuesCache = issues;
   return issues;
@@ -7544,6 +7546,14 @@ const closeReferenceHealth = () => {
 };
 
 const selectReferenceIssueObject = (issue) => {
+  const layer = currentScreenObj?.layers?.find(item => String(item.id) === String(issue?.objectImportId || ""));
+  if (layer && isEditMode) {
+    activeLayerId = layer.id;
+    expandedLayerVisibility.add(layer.id);
+    closeReferenceHealth();
+    openLayersDialog();
+    return;
+  }
   const objects = currentScreenObj?.objects || [];
   const findImportedObjectPath = (items, importId, parents = []) => {
     for (let index = 0; index < (items || []).length; index += 1) {
@@ -8318,7 +8328,7 @@ const importGraphWorxFile = async (file) => {
     });
     setEditorStatusSafe(`Imported ${summary.objects || 0} objects; ${summary.issues || 0} reference items need review.`);
     showHmiToast(summary.format === 'graphworx32'
-      ? `GraphWorX32 imported with ${summary.animators || 0} Animators and partial read-only bindings. ${summary.skipped || 0} unsupported items skipped. Remap source tags before use. ${(summary.notices || []).join(' ')}`
+      ? `GraphWorX32 imported with ${summary.animators || 0} Animators, ${summary.layerVisibility || 0} layer visibility rules, and partial read-only bindings. ${summary.skipped || 0} unsupported items skipped. Remap source tags before use. ${(summary.notices || []).join(' ')}`
       : `GraphWorX import succeeded. ${summary.unresolved || 0} unresolved references were preserved. ${(summary.conversionNotices || []).join(" ")}`, 12000);
     openReferenceHealth();
   } catch (error) {
@@ -9004,6 +9014,117 @@ const editLayerModel = (change) => {
   finishLayerChange();
   setDirty(true);
 };
+const expandedLayerVisibility = new Set();
+const renderLayerVisibilityControls = (layer, act) => {
+  const details = document.createElement("details");
+  details.className = "layer-runtime-controls";
+  details.open = expandedLayerVisibility.has(layer.id);
+  details.ontoggle = () => {
+    if (details.open) expandedLayerVisibility.add(layer.id);
+    else expandedLayerVisibility.delete(layer.id);
+  };
+  const dynamic = layer.visibility && layer.visibility.enabled !== false;
+  const summary = document.createElement("summary");
+  summary.textContent = "Runtime visibility — " + (dynamic ? "From source" : layer.hidden ? "Always hidden" : "Always shown");
+  details.append(summary);
+  const field = (label, input) => {
+    const row = document.createElement("label");
+    row.className = "layer-runtime-field";
+    row.append(document.createTextNode(label), input); details.append(row);
+    return input;
+  };
+  const select = (options, value) => {
+    const input = document.createElement("select");
+    for (const [key, label] of options) {
+      const option = document.createElement("option"); option.value = key; option.textContent = label; input.append(option);
+    }
+    input.value = value;
+    return input;
+  };
+  const mode = field("Visibility", select([["shown", "Always shown"], ["hidden", "Always hidden"], ["source", "From source"]], dynamic ? "source" : layer.hidden ? "hidden" : "shown"));
+  mode.onchange = () => act(() => {
+    expandedLayerVisibility.add(layer.id);
+    if (mode.value === "source") layer.visibility = { ...(layer.visibility || { sourceType: "tag", mode: "equals", match: "1" }), enabled: true };
+    else { layer.hidden = mode.value === "hidden"; if (layer.visibility) layer.visibility.enabled = false; }
+  });
+  if (!dynamic) return details;
+  const vis = layer.visibility;
+  const update = (patch) => act(() => {
+    const next = { ...vis, ...patch, enabled: true };
+    if (["sourceType", "connection_id", "tag", "expression"].some(key => key in patch)) {
+      delete next.status; delete next.sourceReference; delete next.sourceTarget;
+    }
+    layer.visibility = normalizeVisibilityState(next);
+    expandedLayerVisibility.add(layer.id);
+  });
+  const sourceType = field("Source", select([["tag", "Tag"], ["expression", "Expression"]], vis.sourceType === "expression" ? "expression" : "tag"));
+  sourceType.onchange = () => update(sourceType.value === "expression"
+    ? { sourceType: "expression" }
+    : { sourceType: "tag", mode: "equals", match: "1" });
+  const connection = document.createElement("select");
+  populateConnectionSelect(connection);
+  setConnectionSelectValue(connection, vis.connection_id || "");
+  const tag = document.createElement("select");
+  const empty = document.createElement("option"); empty.value = ""; empty.textContent = "Select tag…"; tag.append(empty);
+  const names = new Set(tagsCache.filter(item => String(item.connection_id || "") === connection.value).map(item => String(item.name || "")));
+  if (vis.tag) names.add(vis.tag);
+  for (const name of [...names].sort((a, b) => a.localeCompare(b))) {
+    const option = document.createElement("option"); option.value = name; option.textContent = name; tag.append(option);
+  }
+  tag.value = vis.tag || "";
+  field("Connection", connection); field("Tag", tag);
+  if (sourceType.value === "expression") {
+    const expression = document.createElement("textarea");
+    expression.rows = 3; expression.value = vis.expression || "";
+    expression.placeholder = 'tag("connection", "tag name") > 3';
+    field("Expression", expression);
+    const error = document.createElement("div"); error.className = "layer-runtime-note"; error.setAttribute("role", "status"); details.append(error);
+    const validate = () => {
+      error.textContent = importedExpressionReferences(expression.value).length
+        ? "Map imported references before running this layer."
+        : getVisibilityExpressionValidationError(expression.value);
+    };
+    expression.oninput = validate;
+    const applyExpression = document.createElement("button");
+    applyExpression.type = "button"; applyExpression.className = "panel-btn";
+    applyExpression.textContent = "Apply expression";
+    applyExpression.onclick = () => {
+      validate();
+      if (!importedExpressionReferences(expression.value).length && getVisibilityExpressionValidationError(expression.value)) return;
+      update({ expression: expression.value });
+    };
+    details.append(applyExpression);
+    const insert = document.createElement("button"); insert.type = "button"; insert.className = "panel-btn"; insert.textContent = "Insert selected tag";
+    insert.onclick = () => {
+      if (!connection.value || !tag.value) { error.textContent = "Select a connection and tag first."; return; }
+      expression.setRangeText(`tag(${JSON.stringify(connection.value)}, ${JSON.stringify(tag.value)})`, expression.selectionStart, expression.selectionEnd, "end");
+      expression.focus(); validate();
+    };
+    details.append(insert); validate();
+    connection.onchange = () => {
+      tag.replaceChildren(empty); tagsCache.filter(item => String(item.connection_id || "") === connection.value).forEach(item => {
+        const option = document.createElement("option"); option.value = item.name; option.textContent = item.name; tag.append(option);
+      });
+    };
+  } else {
+    connection.onchange = () => update({ connection_id: connection.value, tag: "" });
+    tag.onchange = () => update({ connection_id: connection.value, tag: tag.value });
+    const comparison = field("Show when", select([["equals", "Equals"], ["threshold", "At or above"]], vis.mode === "threshold" ? "threshold" : "equals"));
+    comparison.onchange = () => update({ mode: comparison.value });
+    const value = document.createElement("input"); value.type = comparison.value === "threshold" ? "number" : "text";
+    if (value.type === "number") value.step = "any";
+    value.value = comparison.value === "threshold" ? (vis.threshold ?? "") : (vis.match ?? "1");
+    field(comparison.value === "threshold" ? "Threshold" : "Value", value);
+    value.onchange = () => update(comparison.value === "threshold" ? { threshold: value.value } : { match: value.value });
+    if (vis.status === "unresolved") {
+      const note = document.createElement("p"); note.className = "layer-runtime-note"; note.textContent = "Map the imported reference or select a connection and tag."; details.append(note);
+    }
+  }
+  const invert = document.createElement("input"); invert.type = "checkbox"; invert.checked = Boolean(vis.invert);
+  field("Invert result", invert); invert.onchange = () => update({ invert: invert.checked });
+  return details;
+};
+
 const renderLayerRows = () => {
   const host = document.getElementById("layerRows");
   host.replaceChildren();
@@ -9046,7 +9167,7 @@ const renderLayerRows = () => {
       if (destination === "DELETE" && !window.confirm("Delete this layer and all its objects?")) return;
       act(() => HmiLayers.remove(currentScreenObj, layer.id, target));
     });
-    host.append(row);
+    host.append(row, renderLayerVisibilityControls(layer, act));
   });
   document.getElementById("moveToLayerBtn").disabled = !moveLayerSelection.length || !activeLayerEditable();
 };
@@ -10116,6 +10237,22 @@ const evaluateVisibilityRule = (vis) => {
   const next = vis.invert ? !isOn : isOn;
   runtimeAutomationStateCache.set(vis, next);
   return next;
+};
+
+// Reuse resolved layer rules across redraws so missing updates retain the last state.
+const runtimeLayerVisibilityCache = new WeakMap();
+const shouldDrawLayer = (layer, aliasContext = currentScreenAliasContext) => {
+  if (!layer || isEditMode || !layer.visibility || layer.visibility.enabled === false) {
+    return HmiLayers.shouldDraw(layer, isEditMode);
+  }
+  const resolved = resolveAliasObject(layer, aliasContext);
+  const signature = JSON.stringify(resolved.visibility);
+  let cached = runtimeLayerVisibilityCache.get(layer);
+  if (!cached || cached.signature !== signature) {
+    cached = { signature, layer: resolved };
+    runtimeLayerVisibilityCache.set(layer, cached);
+  }
+  return HmiLayers.shouldDraw(cached.layer, false, shouldRenderObject);
 };
 
 const shouldRenderObject = (obj) => {
@@ -15546,6 +15683,9 @@ const paintRuntimeRegion = (host, obj) => {
 const updateRuntimeObjects = (keys) => {
   const index = runtimeRenderIndex;
   if (!index || !index.safe || index.screen !== currentScreenObj || isEditMode || currentPopupScreenId) return false;
+  // A layer source can reveal previously omitted regions. Rebuild their
+  // stacking slots only when that source changes; other tags stay incremental.
+  for (const key of keys) if (index.layerTagKeys?.has(key)) return false;
   const affected = new Set();
   for (const key of keys) for (const region of index.byTag.get(key) || []) affected.add(region);
   try {
@@ -16011,7 +16151,7 @@ const openPopup = (screenId, requestedOptions = null) => {
   const popupAliasContext = buildAliasContext(child, currentPopupOptions.aliases, currentPopupOptions.parentAliasContext);
   currentPopupAliasContext = popupAliasContext;
   HmiLayers.entries(child).forEach(({ object: childObj }) => {
-    if (!HmiLayers.shouldDraw(HmiLayers.layerOf(child, childObj), isEditMode)) return;
+    if (!shouldDrawLayer(HmiLayers.layerOf(child, childObj), popupAliasContext)) return;
     renderObjectInto(popupSvg, resolveAliasObject(childObj, popupAliasContext));
   });
 
@@ -16062,7 +16202,7 @@ const renderScreen = ({ refreshReferenceHealth = true } = {}) => {
     : null;
   let numberInputRestore = null;
   const { width, height, background, border, objects = [] } = currentScreenObj;
-  const nextRuntimeIndex = { screen: currentScreenObj, safe: !isEditMode && objects.every(isIncrementalRuntimeObject), byTag: new Map() };
+  const nextRuntimeIndex = { screen: currentScreenObj, safe: !isEditMode && objects.every(isIncrementalRuntimeObject), byTag: new Map(), layerTagKeys: new Set() };
   const screenWidth = Number(width) || 1920;
   const screenHeight = Number(height) || 1080;
 
@@ -16115,9 +16255,10 @@ const renderScreen = ({ refreshReferenceHealth = true } = {}) => {
 
   // Alias discovery traverses the whole screen; share one context for this redraw.
   const screenAliasContext = isEditMode ? buildAliasPreviewContext(currentScreenObj) : currentScreenAliasContext;
+  collectTagKeysFromValue(resolveAliasObject(currentScreenObj.layers, screenAliasContext), nextRuntimeIndex.layerTagKeys);
   HmiLayers.entries(currentScreenObj).forEach(({ object: sourceObj, index }) => {
     const layer = currentScreenObj.layers.find(item => item.id === sourceObj.layerId);
-    if (!HmiLayers.shouldDraw(layer, isEditMode)) return;
+    if (!shouldDrawLayer(layer, screenAliasContext)) return;
     const obj = getDisplayObject(resolveAliasObject(sourceObj, screenAliasContext));
     if (nextRuntimeIndex.safe) {
       // Keep a host even for currently invisible objects so they can reappear
@@ -16343,9 +16484,9 @@ const renderScreen = ({ refreshReferenceHealth = true } = {}) => {
             scaledGroup.appendChild(bgImg);
           }
           HmiLayers.entries(child).forEach(({ object: childObj }) => {
-            if (!HmiLayers.shouldDraw(HmiLayers.layerOf(child, childObj), isEditMode)) return;
             const aliasSource = viewportAliasMappings.get(String(obj.id || "")) || { mappings: obj.aliases || {}, parentContext: currentScreenAliasContext };
             const aliasContext = buildAliasContext(child, aliasSource.mappings, aliasSource.parentContext);
+            if (!shouldDrawLayer(HmiLayers.layerOf(child, childObj), aliasContext)) return;
             renderObjectInto(scaledGroup, resolveAliasObject(childObj, aliasContext));
           });
         } else {
@@ -30538,11 +30679,11 @@ const getObjectByScreenPath = (screenObj, screenPath) => {
   return current || null;
 };
 
-const findHitInObjectList = (objects, point, pathPrefix = [], screen = null) => {
+const findHitInObjectList = (objects, point, pathPrefix = [], screen = null, aliasContext = currentScreenAliasContext) => {
   if (!Array.isArray(objects)) return null;
   const indices = screen ? HmiLayers.entries(screen).map(entry => entry.index) : objects.map((_, index) => index);
   for (const i of indices.reverse()) {
-    if (screen && !HmiLayers.shouldDraw(HmiLayers.layerOf(screen, objects[i]), isEditMode)) continue;
+    if (screen && !shouldDrawLayer(HmiLayers.layerOf(screen, objects[i]), aliasContext)) continue;
     const obj = getDisplayObject(objects[i]);
     if (!obj || !shouldRenderObject(obj)) continue;
     if (obj.type === "group") {
@@ -30550,7 +30691,7 @@ const findHitInObjectList = (objects, point, pathPrefix = [], screen = null) => 
       if (!groupBox) continue;
       if (!pointInBox(point, groupBox)) continue;
       const localPoint = { x: point.x - Number(obj.x ?? 0), y: point.y - Number(obj.y ?? 0) };
-      const hitChild = findHitInObjectList(obj.children, localPoint, [...pathPrefix, i]);
+      const hitChild = findHitInObjectList(obj.children, localPoint, [...pathPrefix, i], null, aliasContext);
       return hitChild || { path: [...pathPrefix, i] };
     }
     const bounds = getObjectBounds(obj);
@@ -30574,7 +30715,9 @@ const findRuntimeChildMetaInViewport = (viewportObj, viewportIndex, point) => {
   if (!transform.scale) return null;
   const localX = (point.x - transform.x - transform.offsetX) / transform.scale;
   const localY = (point.y - transform.y - transform.offsetY) / transform.scale;
-  const hit = findHitInObjectList(child.objects, { x: localX, y: localY }, [], child);
+  const aliasSource = viewportAliasMappings.get(String(viewportObj.id || "")) || { mappings: viewportObj.aliases || {}, parentContext: currentScreenAliasContext };
+  const aliasContext = buildAliasContext(child, aliasSource.mappings, aliasSource.parentContext);
+  const hit = findHitInObjectList(child.objects, { x: localX, y: localY }, [], child, aliasContext);
   if (!hit?.path) return null;
   return {
     index: viewportIndex,
@@ -30646,6 +30789,7 @@ const getMetaAtPoint = (point) => {
     const item = renderedElementMeta[i];
     const obj = getDisplayObject(getActiveObjects()?.[item.index]);
     if (isEditMode && !objectOnEditableLayer(getActiveObjects()?.[item.index])) continue;
+    if (!isEditMode && !shouldDrawLayer(HmiLayers.layerOf(currentScreenObj, obj))) continue;
     if (!isEditMode && !shouldRenderObject(obj)) continue;
     if (obj?.type === "line" && pointHitsLine(point, obj)) {
       return item;
@@ -30899,13 +31043,13 @@ const findRuntimeGroupHotspot = (point) => {
     width: bounds.width * scale,
     height: bounds.height * scale
   });
-  const findInList = (objects, offsetX, offsetY, path, testPoint = point, screen = null) => {
+  const findInList = (objects, offsetX, offsetY, path, testPoint = point, screen = null, aliasContext = currentScreenAliasContext) => {
     if (!Array.isArray(objects)) return null;
     const indices = screen ? HmiLayers.entries(screen).map(entry => entry.index) : objects.map((_, index) => index);
     for (const i of indices.reverse()) {
       const obj = objects[i];
       if (!obj) continue;
-      if (screen && !HmiLayers.shouldDraw(HmiLayers.layerOf(screen, obj), isEditMode)) continue;
+      if (screen && !shouldDrawLayer(HmiLayers.layerOf(screen, obj), aliasContext)) continue;
       if (obj.type === "viewport") {
         const targetId = obj.target || obj.screenId || obj.targetScreen || obj.targetId;
         const child = targetId ? screenCache.get(targetId) : null;
@@ -30924,7 +31068,9 @@ const findRuntimeGroupHotspot = (point) => {
           x: (testPoint.x - childOriginX) / transform.scale,
           y: (testPoint.y - childOriginY) / transform.scale
         };
-        const nested = findInList(child.objects, 0, 0, [], childPoint, child);
+        const aliasSource = viewportAliasMappings.get(String(obj.id || "")) || { mappings: obj.aliases || {}, parentContext: aliasContext };
+        const childAliases = buildAliasContext(child, aliasSource.mappings, aliasSource.parentContext);
+        const nested = findInList(child.objects, 0, 0, [], childPoint, child, childAliases);
         if (nested) {
           return {
             ...nested,
@@ -30948,7 +31094,7 @@ const findRuntimeGroupHotspot = (point) => {
       };
       const rotation = getObjectRotationDegrees(obj);
       if (!pointInRotatedObjectBox(testPoint, obj, bounds, rotation)) continue;
-      const nested = findInList(obj.children, offsetX + Number(obj.x ?? 0), offsetY + Number(obj.y ?? 0), [...path, i], testPoint);
+      const nested = findInList(obj.children, offsetX + Number(obj.x ?? 0), offsetY + Number(obj.y ?? 0), [...path, i], testPoint, null, aliasContext);
       if (nested) return nested;
       const action = obj.action;
       if (!action || !action.type) continue;

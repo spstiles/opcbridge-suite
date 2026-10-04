@@ -4425,3 +4425,10 @@ body.edit-mode:not(.status-bar-hidden) #workspace { height: calc(100% - 31px); }
 .layer-row label { white-space: nowrap; font-size: 12px; }
 .layers-actions { display: flex; gap: 8px; margin-top: 12px; }
 #layerMessage { margin-top: 8px; }
+
+.layer-runtime-controls { padding: 6px 8px 12px; border-bottom: 1px solid #384454; }
+.layer-runtime-controls summary { cursor: pointer; font-size: 13px; }
+.layer-runtime-field { display: grid; grid-template-columns: 120px minmax(0, 1fr); align-items: center; gap: 8px; margin: 8px 0; font-size: 13px; }
+.layer-runtime-field input, .layer-runtime-field select, .layer-runtime-field textarea { min-width: 0; width: 100%; box-sizing: border-box; }
+.layer-runtime-field input[type="checkbox"] { width: auto; justify-self: start; }
+.layer-runtime-note { color: #e8b86d; margin: 6px 0; font-size: 12px; }

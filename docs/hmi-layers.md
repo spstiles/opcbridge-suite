@@ -76,6 +76,35 @@ identical to document order.
 Attaching real layers to `.gdfx` needs a sample display that actually uses the
 feature. None was available.
 
-Not yet implemented: runtime layer visibility bindings driven by process values,
-nested layers, and layer-level runtime actions. Do not yet use editor Show as a
-runtime alarm-overlay control.
+## Runtime visibility
+
+In edit mode open View → Layers (or Layers… in the status bar), expand a layer's
+Runtime visibility, and choose Always shown, Always hidden, or From source.
+From source uses the same visibility model as objects: select a connection/tag
+and Equals or At or above, or choose Expression and enter a Boolean expression.
+The connection/tag selectors can insert a `tag("connection", "tag name")` call
+into an expression. Click Apply expression after editing; invalid expressions
+are reported without changing the saved rule. Invert result reverses the rule.
+Save the screen normally. Layer settings participate in undo/redo.
+
+An enabled visibility rule determines runtime visibility for the whole layer,
+including groups. It takes precedence over the stored `hidden` fallback. Always
+shown/hidden disables the rule but keeps its settings for later reuse. Editor
+Show and Lock remain independent. Hidden runtime layers are neither painted nor
+hit tested in the main screen, popups, or viewports. Their sources stay subscribed
+so they can become visible again. Layer tag changes rebuild the display's layer
+slots; unrelated tag updates retain incremental object repainting. Missing values
+retain the last known state; an expression/tag without an initial value starts
+false, consistent with object visibility.
+
+GraphWorX32 import recovers verified OHide rules attached to layer containers as
+well as ordinary objects. The wall display's six layer rules are recovered:
+PlantOpsSwitch and FieldOpsSwitch show above three failures, GRAPHICS,
+LargeBackground and CallBobNow have constant 1, and Background has constant 0.
+Constants become native expressions. GraphWorX `~~global alias~~` references are
+preserved as `{{global alias}}` mapping placeholders; use the existing reference
+mapping workflow to select live tags before runtime. Imported saved visibility
+remains available as the fallback if automation is disabled. Unverified/conflicting
+rules are skipped as for object bindings.
+
+Nested layers and layer-level pick actions are not yet implemented.

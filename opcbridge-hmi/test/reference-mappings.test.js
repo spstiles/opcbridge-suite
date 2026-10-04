@@ -5,9 +5,9 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '../public/js/hmi.js'), 'utf8');
-function mappings(objects) {
+function mappings(objects, layers = []) {
   const context = vm.createContext({
-    currentScreenObj: { objects },
+    currentScreenObj: { objects, layers },
     aliasTokenName: () => '',
     resolveMappedConnectionId: value => value
   });
@@ -66,4 +66,16 @@ test('keeps direct unresolved bindings and skips brace-like text inside quoted s
   assert.equal(groups.length, 2);
   assert.ok(groups.some(group => group.current === 'ac:Missing'));
   assert.ok(groups.some(group => group.current === 'Plant::Good'));
+});
+
+
+test('layer visibility references use the normal mapper and retain the failure threshold', () => {
+  const visibility = {enabled:true,sourceType:'expression',expression:'{{PLANT-OPS Fail Count}}>3',status:'unresolved'};
+  const groups = mappings([], [{id:'plant-layer',name:'PlantOpsSwitch',visibility}]);
+  assert.equal(groups.length,1);
+  assert.equal(groups[0].current,'PLANT-OPS Fail Count');
+  assert.equal(groups[0].occurrences[0].objectId,'plant-layer');
+  assert.equal(groups[0].occurrences[0].apply('Memory::Plant Fail Count',true),true);
+  assert.equal(visibility.expression,'tag("Memory", "Plant Fail Count")>3');
+  assert.equal(visibility.status,'resolved');
 });

@@ -683,3 +683,16 @@ Actual server import recovers 107 Animators and 2,358 frames, zero Animator
 review/absent groups. Native runtime checks confirm the recovered intervals and
 invisible inactive state for every group. Existing source/previews are unchanged.
 All 121 HMI tests and 80 binary recovery tests pass.
+
+
+### Runtime layer visibility recovery
+
+The visibility audit now includes layer-container records omitted by the geometry
+probe. Native layer visibility rules use the same schema as object rules and are
+edited through View → Layers → Runtime visibility. The wall sample recovers six
+layer OHide bindings, including `PLANT-OPS Fail Count > 3` and
+`FIELD-OPS Fail Count > 3`. Four constant sources become expressions `1`/`0`;
+global aliases become reference-mapping placeholders rather than guessed tags.
+The saved layer hidden state remains the fallback when its rule is disabled.
+Runtime checks cover main/child-screen visibility, alias context, click exclusion,
+and reappearance after tag changes. See hmi-layers.md for the editing workflow.
