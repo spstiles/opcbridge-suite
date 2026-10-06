@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <title>OPCBridge SCADA</title>
   <link rel="icon" href="favicon.svg?v=20260510" type="image/svg+xml" />
-  <link rel="stylesheet" href="styles.css?v=20260902_historian_retention_width_v10" />
+  <link rel="stylesheet" href="styles.css?v=0.2.62" />
 </head>
 <body>
   <header class="topbar">
@@ -109,9 +109,26 @@
 
     <section id="tab-configure" class="panel">
       <h2>Configure Server</h2>
-      <div class="hint">SCADA server settings (where to find OPCBridge/alarms/HMI, refresh rate). Tokens stay on the SCADA server.</div>
+      <div class="hint">Manage connections, project backups, security, and notifications. Use the shortcuts to jump to a section.</div>
 
-      <div class="card">
+      <div class="configure-layout">
+        <nav class="configure-nav" aria-label="Server settings sections">
+          <button type="button" class="configure-shortcut" data-configure-target="configure-settings" aria-controls="configure-settings">Server settings</button>
+          <button type="button" class="configure-shortcut" data-configure-target="configure-api" aria-controls="configure-api">API reference</button>
+          <button type="button" class="configure-shortcut" data-configure-target="authAdminCard" aria-controls="authAdminCard">Backup & restore</button>
+          <button type="button" class="configure-shortcut" data-configure-target="configure-auth" aria-controls="configure-auth">Admin tokens</button>
+          <button type="button" class="configure-shortcut" data-configure-target="configure-modem" aria-controls="configure-modem">Voice modem</button>
+          <button type="button" class="configure-shortcut" data-configure-target="configure-tts" aria-controls="configure-tts">Text-to-speech</button>
+          <button type="button" class="configure-shortcut" data-configure-target="configure-sip" aria-controls="configure-sip">SIP calling</button>
+          <button type="button" class="configure-shortcut" data-configure-target="configure-email" aria-controls="configure-email">SMTP email</button>
+          <button type="button" class="configure-shortcut" data-configure-target="configure-sound" aria-controls="configure-sound">Sound</button>
+          <button type="button" class="configure-shortcut" data-configure-target="configure-delay" aria-controls="configure-delay">Activation delay</button>
+          <button type="button" class="configure-shortcut" data-configure-target="configure-service" aria-controls="configure-service">Service & endpoints</button>
+          <button type="button" class="configure-shortcut" data-configure-target="configure-opcua" aria-controls="configure-opcua">OPC UA trust</button>
+          <button type="button" class="configure-shortcut" data-configure-target="configure-mqtt-certs" aria-controls="configure-mqtt-certs">MQTT certificates</button>
+        </nav>
+        <div class="configure-content" id="configureContent">
+      <div class="card configure-section" id="configure-settings" tabindex="-1">
         <div class="card-title">Server Settings</div>
         <div class="card-body">
           <div class="form" style="max-width: 720px;">
@@ -206,7 +223,7 @@
         </div>
       </div>
 
-      <div class="card" style="margin-top: 14px;">
+      <div class="card configure-section" id="configure-api" tabindex="-1">
         <div class="card-title">API Quick Reference</div>
         <div class="hint">Common endpoints derived from the OPCBridge/alarms host settings above (copy/paste for troubleshooting).</div>
         <div class="card-body">
@@ -214,7 +231,7 @@
         </div>
       </div>
 
-      <div class="card" id="authAdminCard" style="margin-top: 14px;">
+      <div class="card configure-section" id="authAdminCard" tabindex="-1">
         <div class="card-title">Project Backup / Restore</div>
         <div class="hint">Download or restore the complete project configuration: OPCBridge config, alarms/audio, HMI screens/assets, SCADA settings, and data logger config. Database credentials and history are optional. Restore overwrites project files and creates a pre-restore backup in <code>/tmp</code>.</div>
         <div class="card-body">
@@ -253,7 +270,7 @@
         </div>
       </div>
 
-      <div class="card" style="margin-top: 14px;">
+      <div class="card configure-section" id="configure-auth" tabindex="-1">
         <div class="card-title">Auth / Admin</div>
         <div class="hint">Service/admin tokens used by SCADA server for upstream admin endpoints.</div>
         <div class="card-body">
@@ -284,7 +301,7 @@
         </div>
       </div>
 
-	      <div class="card" style="margin-top: 14px;">
+	      <div class="card configure-section" id="configure-modem" tabindex="-1">
 	        <div class="card-title">Voice Modem Settings</div>
 	        <div class="hint">Hardware setup for USB/serial voice modem alarm dialing. Contacts and call lists are configured separately.</div>
         <div class="card-body">
@@ -366,7 +383,7 @@
 	        </div>
 		      </div>
 
-			      <div class="card" style="margin-top: 14px;">
+			      <div class="card configure-section" id="configure-tts" tabindex="-1">
 			        <div class="card-title">Text-to-Speech</div>
 			        <div class="hint">Applies to all text-to-speech (SIP and voice modem). Voice selection is supported by espeak/espeak-ng and flite.</div>
 			        <div class="card-body">
@@ -394,7 +411,7 @@
 			        </div>
 			      </div>
 
-		      <div class="card" style="margin-top: 14px;">
+		      <div class="card configure-section" id="configure-sip" tabindex="-1">
 		        <div class="card-title">SIP Settings</div>
 		        <div class="hint">Account and server settings for SIP-based callout (VPN-friendly). Used by SIP notification policies and SIP test.</div>
 		        <div class="card-body">
@@ -477,7 +494,7 @@
 		        </div>
 		      </div>
 
-		      <div class="card" style="margin-top: 14px;">
+		      <div class="card configure-section" id="configure-email" tabindex="-1">
 		        <div class="card-title">SMTP Email Settings</div>
 		        <div class="hint">External SMTP account used by email notification policies.</div>
 		        <div class="card-body">
@@ -516,7 +533,7 @@
 		        </div>
 		      </div>
 
-      <div class="card" style="margin-top: 14px;">
+      <div class="card configure-section" id="configure-sound" tabindex="-1">
 	        <div class="card-title">Sound Settings</div>
 	        <div class="hint">Alarm annunciation output for local speakers, amplifiers, or PA systems.</div>
 	        <div class="card-body">
@@ -546,7 +563,7 @@
 	        </div>
 	      </div>
 
-      <div class="card" style="margin-top: 14px;">
+      <div class="card configure-section" id="configure-delay" tabindex="-1">
         <div class="card-title">Alarm Activation Delay</div>
         <div class="card-body">
           <div class="form" style="max-width: 720px;">
@@ -558,7 +575,7 @@
         </div>
       </div>
 
-      <div class="card" style="margin-top: 14px;">
+      <div class="card configure-section" id="configure-service" tabindex="-1">
         <div class="card-title">OPCBridge Service (systemd drop-in)</div>
         <div class="hint">Writes a drop-in override for <code>opcbridge.service</code> to enable/disable endpoints and ports, then restarts the service.</div>
         <div class="card-body">
@@ -607,7 +624,7 @@
         </div>
       </div>
 
-      <div class="card" style="margin-top: 14px;">
+      <div class="card configure-section" id="configure-opcua" tabindex="-1">
         <div class="card-title">OPC UA Client Trust</div>
         <div class="hint">A secure OPC UA client appears under Rejected after its first connection attempt. Verify its identity and fingerprint, then trust it here and reconnect the client.</div>
         <div class="card-body">
@@ -658,7 +675,7 @@
         </div>
       </div>
 
-      <div class="card" style="margin-top: 14px;">
+      <div class="card configure-section" id="configure-mqtt-certs" tabindex="-1">
         <div class="card-title">MQTT Certificate Library</div>
         <div class="hint">Manage reusable certificates for MQTT connections. Certificates can still be uploaded while creating a connection.</div>
         <div class="card-body">
@@ -679,6 +696,8 @@
         </div>
       </div>
 
+        </div>
+      </div>
     </section>
 
     <section id="tab-users" class="panel">
@@ -2665,6 +2684,17 @@
           <div class="form-row"><label>Name</label><input id="loggerReportName" type="text" placeholder="e.g. 5-minute Historian" /></div>
           <div class="form-row"><label>Database</label><select id="loggerReportDatabase"></select></div>
           <div class="form-row"><label>Table</label><input id="loggerReportTable" type="text" placeholder="tag_log" /></div>
+          <div class="divider"></div>
+          <div class="form-row"><label>Column mapping</label><label class="check-pill"><input id="loggerReportCustomColumns" type="checkbox" class="inline-check" /> Customize destination columns</label></div>
+          <div class="hint" id="loggerReportColumnsHint">Default columns are shown below. Enable customization to rename or omit fields.</div>
+          <div style="overflow-x:auto; margin-bottom:12px;">
+            <table class="table" aria-label="Collected fields and destination columns">
+              <thead><tr><th scope="col">Include</th><th scope="col">Collected field</th><th scope="col">Destination column</th></tr></thead>
+              <tbody id="loggerReportColumnsBody"></tbody>
+            </table>
+          </div>
+          <div class="form-row"><label>Static fields (JSON)</label><textarea id="loggerReportStaticFields" rows="3" placeholder='{"site":"Racine","line":1}'></textarea></div>
+          <div class="hint">Optional column/value pairs included in every row. Values may be strings, numbers, booleans, or null. Destination columns must already exist.</div>
           <div class="form-row"><label>Mode</label><select id="loggerReportMode">
             <option value="scheduled">Scheduled</option>
             <option value="event">Event (not yet supported)</option>
@@ -2931,6 +2961,7 @@
   <script src="vendor/codemirror/mode/javascript/javascript.min.js"></script>
   <script src="vendor/codemirror/addon/edit/matchbrackets.min.js"></script>
   <script src="tag-audit.js"></script>
-  <script src="app.js?v=20260901_historian_tiers_v12"></script>
+  <script src="logger-columns.js"></script>
+  <script src="app.js?v=0.2.62"></script>
 </body>
 </html>

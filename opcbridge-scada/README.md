@@ -52,7 +52,9 @@ If you change the SCADA listen host/port, restart `opcbridge-scada`.
 
 ## Data Logger
 
-The **Data Logger** tab configures `opcbridge-logger`.
+The **Data Logger** tab configures `opcbridge-logger`. Log Job settings include
+optional **Column mapping** and **Static fields (JSON)** for writing
+selected fields to existing MySQL table columns, one row per tag. Keep customization off to use the default schema. See [column mapping configuration](../docs/data_logger_field_mapping_notes.md).
 
 The **Reports** tab (also available at `/reports`) lists published definitions
 from `/etc/opcbridge/report/reports.json` and downloads XLSX, ODS, or CSV files

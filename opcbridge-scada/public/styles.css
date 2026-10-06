@@ -2105,3 +2105,25 @@ details.advanced summary {
 .data-entry-field input { width: 100%; box-sizing: border-box; }
 .data-entry-field.is-delete { border-color: #ef4444; background: rgba(239, 68, 68, .13); }
 .data-entry-field.is-delete input { text-decoration: line-through; opacity: .65; }
+
+/* Configure Server: persistent section shortcuts with an independent settings pane. */
+body.app-viewport #tab-configure.is-active { display: flex; flex-direction: column; overflow: hidden; }
+#tab-configure > .hint { margin-bottom: 14px; }
+.configure-layout { display: grid; grid-template-columns: 210px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: 18px; min-height: 0; flex: 1; }
+.configure-nav { min-height: 0; min-width: 0; overflow-y: auto; scrollbar-gutter: stable; padding: 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); align-self: stretch; }
+.configure-nav-group { padding: 16px 10px 6px; color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+.configure-shortcut { display: block; width: 100%; padding: 9px 10px; margin: 2px 0; text-align: left; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
+.configure-shortcut:hover { background: rgba(79,140,255,.08); color: var(--text); }
+.configure-shortcut.is-active { background: rgba(79,140,255,.14); border-color: rgba(79,140,255,.35); color: var(--text); font-weight: 700; }
+.configure-shortcut:focus-visible, .configure-section:focus-visible { outline: 2px solid #4f8cff; outline-offset: -2px; }
+.configure-content { overflow: auto; min-height: 0; min-width: 0; padding: 0 6px 24px 0; }
+.configure-content > .configure-section + .configure-section { margin-top: 16px; }
+.configure-section > .card-title { font-size: 12px; letter-spacing: .04em; color: var(--text); padding: 14px 16px; }
+.configure-section > .card-body { padding: 16px; }
+.configure-section > .hint { padding: 10px 16px 0; }
+@media (max-width: 760px) {
+  .configure-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 12px; }
+  .configure-nav { display: flex; flex-wrap: wrap; gap: 4px; max-height: 150px; padding: 8px; }
+  .configure-nav-group { display: none; }
+  .configure-shortcut { width: auto; margin: 0; padding: 7px 10px; }
+}

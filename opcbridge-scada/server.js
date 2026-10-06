@@ -17,6 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const child_process = require('child_process');
 const opcuaCertificate = require('./opcua-certificate');
+const loggerColumns = require('./public/logger-columns');
 
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
@@ -3857,6 +3858,8 @@ const server = http.createServer(async (req, res) => {
         next.mode = String(next.mode || 'scheduled').trim() || 'scheduled';
         next.database_id = sanitizeId(next.database_id);
         next.table = String(next.table || 'tag_log').trim() || 'tag_log';
+        if (incoming.field_map === null) delete next.field_map;
+        loggerColumns.validate(next);
         next.tags = Array.isArray(next.tags) ? next.tags : [];
         next.historian_fields = Array.isArray(next.historian_fields) ? next.historian_fields : [];
         next.enabled = Boolean(next.enabled);

@@ -501,6 +501,10 @@
   loggerReportCloseBtn: document.getElementById('loggerReportCloseBtn'),
   loggerReportCancelBtn: document.getElementById('loggerReportCancelBtn'),
   loggerReportSaveBtn: document.getElementById('loggerReportSaveBtn'),
+  loggerReportCustomColumns: document.getElementById('loggerReportCustomColumns'),
+  loggerReportColumnsBody: document.getElementById('loggerReportColumnsBody'),
+  loggerReportColumnsHint: document.getElementById('loggerReportColumnsHint'),
+  loggerReportStaticFields: document.getElementById('loggerReportStaticFields'),
   loggerReportName: document.getElementById('loggerReportName'),
   loggerReportDatabase: document.getElementById('loggerReportDatabase'),
   loggerReportTable: document.getElementById('loggerReportTable'),
@@ -7168,6 +7172,51 @@ async function saveLoggerReportTagsFromPanel(report) {
   loggerSetStatus(`Updated '${rid}' with ${savedCount} field(s).${suffix ? ` ${suffix}` : ''}`);
 }
 
+function renderLoggerReportColumns(report) {
+  const custom = Boolean(report && Object.prototype.hasOwnProperty.call(report, 'field_map'));
+  if (els.loggerReportCustomColumns) els.loggerReportCustomColumns.checked = custom;
+  const descriptions = {
+    job_name: 'Log job ID', timestamp_ms: 'Sample time (epoch milliseconds)',
+    timestamp_dt: 'Sample date and time', connection_id: 'Connection ID',
+    tag_name: 'Tag / output name', tag_description: 'Tag description', datatype: 'Data type',
+    value_numeric: 'Numeric value', value_string: 'Text value', quality: 'Quality', created_at: 'Database insert time'
+  };
+  if (els.loggerReportColumnsBody) els.loggerReportColumnsBody.innerHTML = LoggerColumns.sources.map(source => {
+    const included = !custom || Object.prototype.hasOwnProperty.call(report.field_map || {}, source);
+    const destination = included && custom ? report.field_map[source] : source;
+    return `<tr data-source="${source}">
+      <td class="cell-check"><input type="checkbox" class="inline-check" data-column-include aria-label="Include ${escapeHtml(descriptions[source])}" ${included ? 'checked' : ''} /></td>
+      <td>${escapeHtml(descriptions[source])}<div class="hint">${source}</div></td>
+      <td><input type="text" data-column-destination aria-label="Destination column for ${escapeHtml(descriptions[source])}" value="${escapeHtml(destination)}" maxlength="64" /></td>
+    </tr>`;
+  }).join('');
+  updateLoggerReportColumns();
+}
+
+function updateLoggerReportColumns() {
+  const custom = Boolean(els.loggerReportCustomColumns?.checked);
+  els.loggerReportColumnsBody?.querySelectorAll('tr[data-source]').forEach(row => {
+    const include = row.querySelector('[data-column-include]');
+    const destination = row.querySelector('[data-column-destination]');
+    include.disabled = !custom;
+    destination.disabled = !custom || !include.checked;
+  });
+  if (els.loggerReportColumnsHint) els.loggerReportColumnsHint.textContent = custom
+    ? 'Check the fields to write and enter their destination columns. The selected table and columns must already exist. Each tag produces one row.'
+    : 'Default columns are shown below. Enable customization to rename or omit fields. Saving with customization off restores the default schema.';
+}
+
+function loggerReportColumnMapping() {
+  if (!els.loggerReportCustomColumns?.checked) return {};
+  const field_map = {};
+  els.loggerReportColumnsBody?.querySelectorAll('tr[data-source]').forEach(row => {
+    if (row.querySelector('[data-column-include]').checked) {
+      field_map[row.dataset.source] = row.querySelector('[data-column-destination]').value.trim();
+    }
+  });
+  return { field_map };
+}
+
 function openLoggerReportModal(opts = {}) {
   const mode = String(opts.mode || 'edit').trim() || 'edit';
   const id = String(opts.id || '').trim();
@@ -7198,6 +7247,8 @@ function openLoggerReportModal(opts = {}) {
     els.loggerReportDatabase.value = String(report?.database_id || '');
   }
 
+  renderLoggerReportColumns(report);
+  if (els.loggerReportStaticFields) els.loggerReportStaticFields.value = report?.static_fields ? JSON.stringify(report.static_fields, null, 2) : '';
   if (els.loggerReportTable) els.loggerReportTable.value = String(report?.table || 'tag_log');
   if (els.loggerReportMode) els.loggerReportMode.value = String(report?.mode || 'scheduled');
   if (els.loggerReportEnabled) els.loggerReportEnabled.checked = Boolean(report?.enabled);
@@ -7265,7 +7316,9 @@ function getReportFromModalUi() {
     enabled,
     schedule: { on_calendar: onCalendar, persistent },
     tags,
-    historian_fields: historianFields
+    historian_fields: historianFields,
+    ...loggerReportColumnMapping(),
+    static_fields: els.loggerReportStaticFields?.value.trim() ? JSON.parse(els.loggerReportStaticFields.value) : {}
   };
 }
 
@@ -7273,6 +7326,8 @@ async function saveAndApplyReporterReport() {
   loggerReportModalSetStatus('Saving…');
   try {
     const report = getReportFromModalUi();
+    LoggerColumns.validate(report);
+    if (!Object.prototype.hasOwnProperty.call(report, 'field_map')) report.field_map = null;
     if (!report.name) throw new Error('Name is required.');
     if (!report.database_id) throw new Error('Database is required.');
     if (report.mode === 'scheduled' && !report.schedule.on_calendar) throw new Error('OnCalendar is required for scheduled log jobs.');
@@ -7516,6 +7571,7 @@ async function validateReporterReport(id) {
     else if (!db) result.errors.push(`Database not found: ${dbId}`);
 
     const table = String(report.table || '').trim();
+    try { LoggerColumns.validate(report); } catch (err) { result.errors.push(err.message); }
     if (!table) result.errors.push('Table is required.');
     else if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(table)) result.errors.push('Table name should contain only letters, numbers, and underscores, and must not start with a number.');
 
@@ -8183,6 +8239,11 @@ function wireLoggerUi() {
   if (els.loggerDbSaveBtn) els.loggerDbSaveBtn.addEventListener('click', () => saveReporterDatabase());
   if (els.loggerReportCloseBtn) els.loggerReportCloseBtn.addEventListener('click', closeLoggerReportModal);
   if (els.loggerReportCancelBtn) els.loggerReportCancelBtn.addEventListener('click', closeLoggerReportModal);
+  if (els.loggerReportCustomColumns) els.loggerReportCustomColumns.addEventListener('change', () => {
+    if (!els.loggerReportCustomColumns.checked) renderLoggerReportColumns(null);
+    else updateLoggerReportColumns();
+  });
+  if (els.loggerReportColumnsBody) els.loggerReportColumnsBody.addEventListener('change', updateLoggerReportColumns);
   if (els.loggerReportSaveBtn) els.loggerReportSaveBtn.addEventListener('click', saveAndApplyReporterReport);
   if (els.loggerReportDownloadTagsBtn) els.loggerReportDownloadTagsBtn.addEventListener('click', downloadLoggerTagCsvFromModal);
   if (els.loggerReportUploadTagsBtn) els.loggerReportUploadTagsBtn.addEventListener('click', () => uploadLoggerTagCsvToModal().catch(() => {}));
@@ -16674,6 +16735,44 @@ async function loadSvcSettings() {
 let opcuaTrustEventsSocket = null;
 let opcuaTrustEventsReconnectTimer = 0;
 let opcuaTrustEventsPort = 0;
+
+function wireConfigureNavigationUi() {
+  const panel = document.getElementById('tab-configure');
+  const content = document.getElementById('configureContent');
+  if (!panel || !content) return;
+  const shortcuts = Array.from(panel.querySelectorAll('[data-configure-target]'));
+  const sections = Array.from(content.querySelectorAll('.configure-section'));
+  const markActive = id => shortcuts.forEach(button => {
+    const active = button.dataset.configureTarget === id;
+    button.classList.toggle('is-active', active);
+    if (active) button.setAttribute('aria-current', 'location');
+    else button.removeAttribute('aria-current');
+  });
+  shortcuts.forEach(button => button.addEventListener('click', () => {
+    const section = document.getElementById(button.dataset.configureTarget);
+    if (!section || section.hidden || section.style.display === 'none') return;
+    const top = section.getBoundingClientRect().top - content.getBoundingClientRect().top + content.scrollTop;
+    content.scrollTo({ top, behavior: 'instant' });
+    section.focus({ preventScroll: true });
+    markActive(section.id);
+  }));
+  let pending = false;
+  content.addEventListener('scroll', () => {
+    if (pending) return;
+    pending = true;
+    requestAnimationFrame(() => {
+      pending = false;
+      const top = content.getBoundingClientRect().top;
+      const visible = sections.filter(section => !section.hidden && section.style.display !== 'none');
+      let current = visible[0];
+      for (const section of visible) {
+        if (section.getBoundingClientRect().top <= top + 40) current = section;
+      }
+      if (current) markActive(current.id);
+    });
+  }, { passive: true });
+  markActive(sections[0]?.id);
+}
 
 function configureServerTabIsActive() {
   return Boolean(document.querySelector('.tab[data-tab="configure"].is-active'));
@@ -29589,6 +29688,7 @@ async function main() {
   updateUsersTabVisibility();
 
   wireScadaSettingsUi();
+  wireConfigureNavigationUi();
   wireAlarmNotificationUi();
   wireSvcUi();
   wireMqttTabUi();

@@ -20,3 +20,8 @@ $(TARGET): $(SRCS) VERSION ../VERSION
 
 clean:
 	rm -f $(TARGET)
+
+.PHONY: test
+test:
+	$(CXX) $(CXXFLAGS) -o /tmp/opcbridge-logger-column-mapping-test test/column-mapping.cpp $(LDFLAGS)
+	/tmp/opcbridge-logger-column-mapping-test

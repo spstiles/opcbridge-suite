@@ -415,6 +415,9 @@ struct Job {
     std::unordered_map<std::string, std::string> tag_output_names_by_key;
     std::unordered_map<std::string, std::vector<std::pair<std::string, std::string>>> tag_output_globs_by_conn;
     std::vector<HistorianField> historian_fields;
+    bool custom_columns = false;
+    std::map<std::string, std::string> field_map;
+    json static_fields = json::object();
 };
 
 struct JobStatus {
@@ -969,6 +972,95 @@ static std::string sql_string_literal(MYSQL* conn, const std::string& val) {
     return "'" + buf + "'";
 }
 
+static const std::vector<std::string> log_source_fields = {
+    "job_name", "timestamp_ms", "timestamp_dt", "connection_id", "tag_name",
+    "tag_description", "datatype", "value_numeric", "value_string", "quality", "created_at"
+};
+
+static bool log_identifier_valid(const std::string& value) {
+    return value.size() <= 64 && std::regex_match(value, std::regex("[A-Za-z_][A-Za-z0-9_]*"));
+}
+
+static bool parse_job_columns(const json& config, Job& job, std::string& error) {
+    job.custom_columns = config.contains("field_map");
+    if (!log_identifier_valid(job.table)) { error = "Invalid logger table name"; return false; }
+    const json mapping = config.value("field_map", json::object());
+    const json constants = config.value("static_fields", json::object());
+    if (!mapping.is_object() || !constants.is_object()) {
+        error = "field_map and static_fields must be objects"; return false;
+    }
+    std::set<std::string> destinations;
+    if (!job.custom_columns) destinations.insert(log_source_fields.begin(), log_source_fields.end());
+    for (auto it = mapping.begin(); it != mapping.end(); ++it) {
+        if (std::find(log_source_fields.begin(), log_source_fields.end(), it.key()) == log_source_fields.end() ||
+            !it.value().is_string() || !log_identifier_valid(it.value().get<std::string>())) {
+            error = "Invalid logger field mapping: " + it.key(); return false;
+        }
+        std::string destination = it.value().get<std::string>();
+        std::string folded = destination;
+        std::transform(folded.begin(), folded.end(), folded.begin(), [](unsigned char c) { return std::tolower(c); });
+        if (!destinations.insert(folded).second) { error = "Duplicate logger destination column: " + destination; return false; }
+        job.field_map[it.key()] = destination;
+    }
+    for (auto it = constants.begin(); it != constants.end(); ++it) {
+        std::string folded = it.key();
+        std::transform(folded.begin(), folded.end(), folded.begin(), [](unsigned char c) { return std::tolower(c); });
+        if (!log_identifier_valid(it.key()) || !destinations.insert(folded).second ||
+            !(it.value().is_null() || it.value().is_primitive())) {
+            error = "Invalid or duplicate static column: " + it.key(); return false;
+        }
+    }
+    if (job.custom_columns && mapping.empty() && constants.empty()) {
+        error = "Custom column mapping must include at least one column"; return false;
+    }
+    job.static_fields = constants;
+    return true;
+}
+
+// Values are already encoded SQL literals; destination identifiers are validated at reload.
+static std::string log_insert_sql(MYSQL* conn, const Job& job, const std::vector<std::string>& values) {
+    std::string columns, encoded;
+    auto append = [&](const std::string& column, const std::string& value) {
+        if (!columns.empty()) { columns += ","; encoded += ","; }
+        columns += "`" + column + "`"; encoded += value;
+    };
+    for (size_t i = 0; i < log_source_fields.size(); ++i) {
+        auto mapped = job.field_map.find(log_source_fields[i]);
+        if (!job.custom_columns) append(log_source_fields[i], values[i]);
+        else if (mapped != job.field_map.end()) append(mapped->second, values[i]);
+    }
+    for (auto it = job.static_fields.begin(); it != job.static_fields.end(); ++it) {
+        const auto& value = it.value();
+        append(it.key(), value.is_null() ? "NULL" : value.is_string() ? sql_string_literal(conn, value.get<std::string>()) :
+            value.is_boolean() ? (value.get<bool>() ? "1" : "0") : value.dump());
+    }
+    return "INSERT INTO `" + job.table + "` (" + columns + ") VALUES (" + encoded + ");";
+}
+
+static bool inspect_log_columns(MYSQL* conn, const Job& job, std::string& error) {
+    if (mysql_query(conn, ("SHOW COLUMNS FROM `" + job.table + "`").c_str()) != 0) {
+        error = "Cannot inspect logger table '" + job.table + "': " + mysql_error(conn); return false;
+    }
+    MYSQL_RES* result = mysql_store_result(conn);
+    if (!result) { error = mysql_error(conn); return false; }
+    std::set<std::string> columns;
+    MYSQL_ROW row;
+    while ((row = mysql_fetch_row(result))) {
+        std::string name = row[0];
+        std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return std::tolower(c); });
+        columns.insert(name);
+    }
+    mysql_free_result(result);
+    auto exists = [&](std::string column) {
+        std::transform(column.begin(), column.end(), column.begin(), [](unsigned char c) { return std::tolower(c); });
+        if (columns.count(column)) return true;
+        error = "Logger table '" + job.table + "' is missing destination column '" + column + "'"; return false;
+    };
+    for (const auto& mapping : job.field_map) if (!exists(mapping.second)) return false;
+    for (auto it = job.static_fields.begin(); it != job.static_fields.end(); ++it) if (!exists(it.key())) return false;
+    return true;
+}
+
 static std::string normalize_historian_statistic(std::string s);
 
 static int insert_tags_for_job(MYSQL* conn, const json& tags, const Job& job, std::string& error) {
@@ -1036,20 +1128,14 @@ static int insert_tags_for_job(MYSQL* conn, const json& tags, const Job& job, st
                 }
             }
 
-            std::string sql = "INSERT INTO `" + job.table + "` "
-                              "(job_name, timestamp_ms, timestamp_dt, connection_id, tag_name, tag_description, datatype, "
-                              "value_numeric, value_string, quality, created_at) VALUES (";
-            sql += sql_string_literal(conn, job.name) + ", ";
-            sql += std::to_string(timestamp_ms) + ", ";
-            sql += sql_string_literal(conn, timestamp_dt) + ", ";
-            sql += sql_string_literal(conn, connection_id) + ", ";
-            sql += sql_string_literal(conn, output_name.empty() ? tag_name : output_name) + ", ";
-            sql += tag_description.empty() ? "NULL, " : sql_string_literal(conn, tag_description) + ", ";
-            sql += datatype.empty() ? "NULL, " : sql_string_literal(conn, datatype) + ", ";
-            sql += has_numeric ? std::to_string(value_numeric) + ", " : "NULL, ";
-            sql += has_string ? sql_string_literal(conn, value_string) + ", " : "NULL, ";
-            sql += has_quality ? std::to_string(quality_val) + ", " : "NULL, ";
-            sql += "CURRENT_TIMESTAMP);";
+            std::string sql = log_insert_sql(conn, job, {
+                sql_string_literal(conn, job.name), std::to_string(timestamp_ms), sql_string_literal(conn, timestamp_dt),
+                sql_string_literal(conn, connection_id), sql_string_literal(conn, output_name.empty() ? tag_name : output_name),
+                tag_description.empty() ? "NULL" : sql_string_literal(conn, tag_description),
+                datatype.empty() ? "NULL" : sql_string_literal(conn, datatype),
+                has_numeric ? std::to_string(value_numeric) : "NULL", has_string ? sql_string_literal(conn, value_string) : "NULL",
+                has_quality ? std::to_string(quality_val) : "NULL", "CURRENT_TIMESTAMP"
+            });
 
             if (mysql_query(conn, sql.c_str()) != 0) {
                 error = std::string("MySQL insert error: ") + mysql_error(conn);
@@ -1110,20 +1196,14 @@ static int insert_historian_fields_for_job(MYSQL* conn, const ServiceConfig& svc
                 description = field.connection_id + ":" + field.tag_name + " " + stat + " over " + field.range;
             }
 
-            std::string sql = "INSERT INTO `" + job.table + "` "
-                              "(job_name, timestamp_ms, timestamp_dt, connection_id, tag_name, tag_description, datatype, "
-                              "value_numeric, value_string, quality, created_at) VALUES (";
-            sql += sql_string_literal(conn, job.name) + ", ";
-            sql += std::to_string(timestamp_ms) + ", ";
-            sql += sql_string_literal(conn, timestamp_dt) + ", ";
-            sql += sql_string_literal(conn, field.connection_id) + ", ";
-            sql += sql_string_literal(conn, field.field_name.empty() ? (field.tag_name + "_" + stat) : field.field_name) + ", ";
-            sql += sql_string_literal(conn, description) + ", ";
-            sql += datatype.empty() ? "NULL, " : sql_string_literal(conn, datatype) + ", ";
-            sql += has_numeric ? std::to_string(value_numeric) + ", " : "NULL, ";
-            sql += has_string ? sql_string_literal(conn, value_string) + ", " : "NULL, ";
-            sql += has_numeric ? "1, " : "0, ";
-            sql += "CURRENT_TIMESTAMP);";
+            std::string sql = log_insert_sql(conn, job, {
+                sql_string_literal(conn, job.name), std::to_string(timestamp_ms), sql_string_literal(conn, timestamp_dt),
+                sql_string_literal(conn, field.connection_id),
+                sql_string_literal(conn, field.field_name.empty() ? (field.tag_name + "_" + stat) : field.field_name),
+                sql_string_literal(conn, description), datatype.empty() ? "NULL" : sql_string_literal(conn, datatype),
+                has_numeric ? std::to_string(value_numeric) : "NULL", has_string ? sql_string_literal(conn, value_string) : "NULL",
+                has_numeric ? "1" : "0", "CURRENT_TIMESTAMP"
+            });
 
             if (mysql_query(conn, sql.c_str()) != 0) {
                 error = std::string("MySQL insert error: ") + mysql_error(conn);
@@ -1429,6 +1509,10 @@ public:
             job.enabled = r.value("enabled", false);
             job.on_calendar = object_value_or_empty(r, "schedule").value("on_calendar", "");
             std::string parse_error;
+            if (!parse_job_columns(r, job, parse_error)) {
+                error = "Log job '" + job.name + "': " + parse_error;
+                return false;
+            }
             if (job.name.empty() ||
                 !parse_job_tags(r.value("tags", json::array()), job, parse_error) ||
                 !parse_historian_fields(r.value("historian_fields", json::array()), job, parse_error)) continue;
@@ -3146,11 +3230,16 @@ private:
         }
 
         TableSqlMap table_sql_map;
-        if (!ensure_table_exists(conn, job.table, table_sql_map, result.error)) {
+        if (!job.custom_columns && !ensure_table_exists(conn, job.table, table_sql_map, result.error)) {
             mysql_close(conn);
             return result;
         }
-        if (!ensure_table_column_exists(conn, job.table, "tag_description", "VARCHAR(255) NULL AFTER `tag_name`", result.error)) {
+        if (!job.custom_columns && !ensure_table_column_exists(conn, job.table, "tag_description", "VARCHAR(255) NULL AFTER `tag_name`", result.error)) {
+            mysql_close(conn);
+            return result;
+        }
+
+        if (!inspect_log_columns(conn, job, result.error)) {
             mysql_close(conn);
             return result;
         }
