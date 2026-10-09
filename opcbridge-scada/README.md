@@ -154,3 +154,15 @@ Notes:
   - Derived Alias: `source_tag` (no `bit`) with optional scaling
 
 For the canonical tag schema and examples, see `opcbridge/docs/manual.md`.
+
+## Central audit pilot
+
+SCADA can collect audit events from installations on the closed local SCADA
+network. In **Logs**, choose **Central audit (all enrolled nodes)** to filter
+records and inspect collection health. It requires `suite.view_logs`.
+Collection and forwarding are opt-in; see [setup and limits](../shared/audit/README.md).
+
+Configure Server → Central server selects Standalone, Central server, or
+Connected to central server. One connection controls both central users and
+audit delivery. Enrollment and user/audit health live here; Users retains account
+management. See [central setup](../shared/audit/README.md) for deployment details.

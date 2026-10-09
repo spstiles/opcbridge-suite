@@ -5,6 +5,8 @@ const fsp = require("fs/promises");
 const crypto = require("crypto");
 const stripJsonComments = require("strip-json-comments");
 const { createScreensRouter } = require("./screens");
+const { createRuntime: createAuditRuntime } = require("../../shared/audit/runtime");
+const centralAudit = createAuditRuntime("hmi");
 
 const ROOT = path.join(__dirname, "..");
 const FILES_ROOT = String(process.env.OPCBRIDGE_HMI_FILES_ROOT || "/etc/opcbridge/hmi");
@@ -12,7 +14,7 @@ const CONFIG_PATH = path.join(ROOT, "public", "js", "config.jsonc");
 const CONFIG_EXAMPLE_PATH = path.join(ROOT, "public", "js", "config.jsonc.example");
 const IMAGES_DIR = path.join(ROOT, "public", "img");
 const PASSWORDS_PATH = path.join(ROOT, "passwords.jsonc");
-const AUDIT_PATH = path.join(ROOT, "audit.jsonl");
+const AUDIT_PATH = String(process.env.OPCBRIDGE_HMI_AUDIT_PATH || path.join(ROOT, "audit.jsonl"));
 const HMI_BUILD = "2025-12-28-alarms-panel-v18";
 const SUITE_VERSION_PATH = path.join(ROOT, "..", "VERSION");
 const COMPONENT_VERSION_PATH = path.join(ROOT, "VERSION");
@@ -183,8 +185,9 @@ const pruneAuditLog = async () => {
 };
 
 const appendAudit = async (req, event) => {
-  const actorUser = String(req.headers["x-opcbridge-hmi-user"] || "").trim();
-  const actorRole = String(req.headers["x-opcbridge-hmi-role"] || "").trim();
+  const checkedActor = req.auditActor;
+  const actorUser = checkedActor ? checkedActor.name : String(req.headers["x-opcbridge-hmi-user"] || "").trim();
+  const actorRole = checkedActor ? (checkedActor.groups || []).join(',') : String(req.headers["x-opcbridge-hmi-role"] || "").trim();
   const payload = {
     ts: new Date().toISOString(),
     ip: getClientIp(req),
@@ -193,6 +196,11 @@ const appendAudit = async (req, event) => {
     role: actorRole || undefined,
     ...event
   };
+  centralAudit.record({ timestamp_ms: Date.parse(payload.ts),
+    action: String(payload.event || payload.event_type || 'hmi.audit'),
+    target: String(payload.tag || payload.filename || payload.path || payload.ref || payload.screen_id || ''),
+    result: String(payload.result || 'recorded'), station_id: payload.ip,
+    actor: { name: actorUser, attribution: checkedActor ? checkedActor.attribution : actorUser ? 'client_reported' : 'unknown' }, details: payload });
   const line = `${JSON.stringify(payload)}\n`;
   await fsp.appendFile(AUDIT_PATH, line, "utf8");
   await pruneAuditLog();
@@ -523,11 +531,11 @@ const createApp = () => {
       try {
         raw = await fsp.readFile(AUDIT_PATH, "utf8");
       } catch (error) {
-        if (String(error).includes("ENOENT")) return res.json({ exists: false, count: 0 });
+        if (String(error).includes("ENOENT")) return res.json({ exists: false, count: 0, central_audit: centralAudit.status() });
         throw error;
       }
       const lines = raw.split(/\r?\n/).filter((line) => line.trim().length > 0);
-      res.json({ exists: true, count: lines.length });
+      res.json({ exists: true, count: lines.length, central_audit: centralAudit.status() });
     } catch (error) {
       res.status(500).json({ error: String(error) });
     }
@@ -740,6 +748,8 @@ const createApp = () => {
   });
 
   app.post("/api/opc/write", async (req, res) => {
+    // Only the core response may establish the identity of an interactive write.
+    req.auditActor = { name: "", groups: [], attribution: "unknown" };
     try {
       const { config: parsed } = await readConfig();
       const opcbridge = parsed?.opcbridge || {};
@@ -801,9 +811,10 @@ const createApp = () => {
       };
       let response = null;
       try {
-        response = await fetch(`http://${host}:${port}/write`, {
+        response = await fetch(`http://${host}:${port}/write/interactive`, {
           method: "POST",
-          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          headers: { "Content-Type": "application/json", Accept: "application/json",
+            ...(req.headers.cookie ? { Cookie: String(req.headers.cookie) } : {}) },
           body: JSON.stringify({ connection_id, name, value: valueString, token })
         });
       } catch (error) {
@@ -811,6 +822,13 @@ const createApp = () => {
         throw error;
       }
       const text = await response.text();
+      let parsedResponse = null;
+      try { parsedResponse = JSON.parse(text); } catch { /* Preserve the existing error response below. */ }
+      const checkedUser = parsedResponse?.authenticated_user;
+      if (typeof checkedUser?.username === 'string' && checkedUser.username.trim()) {
+        req.auditActor = { name: checkedUser.username.trim(),
+          groups: Array.isArray(checkedUser.groups) ? checkedUser.groups.map(String) : [], attribution: 'authenticated' };
+      }
       if (!response.ok) {
         let upstreamError = `OPCBridge HTTP ${response.status}`;
         let details = text;
@@ -822,7 +840,9 @@ const createApp = () => {
           if (text) upstreamError += ` - ${text}`;
         }
         await appendAudit(req, { ...auditBase, result: "failure", error: upstreamError, details });
-        return res.status(502).json({ error: upstreamError, details });
+        return res.status(response.status === 401 || response.status === 403 ? response.status : 502).json({
+          error: response.status === 404 ? "OPCBridge must be updated to support authenticated HMI writes." : upstreamError, details
+        });
       }
       await appendAudit(req, { ...auditBase, result: "success" });
       try {

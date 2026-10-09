@@ -1,0 +1,21 @@
+{
+  "node": { "site_id": "plant-1", "node_id": "panel-1", "station_id": "panel-1" },
+  "forwarding": {
+    "enabled": false,
+    "url": "https://scada-central.local/api/audit/ingest",
+    "token": "REPLACE_WITH_A_UNIQUE_RANDOM_NODE_TOKEN",
+    "queue_dir": "/var/lib/opcbridge/audit/outbox",
+    "max_pending_bytes": 67108864,
+    "interval_ms": 5000,
+    "allow_http": false
+  },
+  "collector": {
+    "enabled": false,
+    "data_dir": "/var/lib/opcbridge/audit/central",
+    "allow_http": false,
+    "trusted_proxy_addresses": [],
+    "nodes": [
+      { "site_id": "plant-1", "node_id": "panel-1", "token": "REPLACE_WITH_A_UNIQUE_RANDOM_NODE_TOKEN" }
+    ]
+  }
+}

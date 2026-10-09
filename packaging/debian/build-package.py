@@ -18,7 +18,7 @@ def copy(src,dst,mode=None):
     shutil.copy2(src,dst)
     if mode is not None: dst.chmod(mode)
 tracked=subprocess.check_output(['git','ls-files','-z'],text=True).split('\0')
-for module,folder in [('opcbridge-scada','scada'),('opcbridge-hmi','hmi')]:
+for module,folder in [('opcbridge-scada','scada'),('opcbridge-hmi','hmi'),('shared/audit','shared/audit')]:
     for name in tracked:
         if not name.startswith(module+'/'): continue
         rel=pathlib.Path(name).relative_to(module)
@@ -57,6 +57,7 @@ for module in ('opcbridge','opcbridge-alarms'):
 for module in ('scada','logger','flow','report','historian'):
     for src in (root/f'opcbridge-{module}').glob('*.example'):
         copy(src,f'/usr/share/opcbridge-suite/defaults/{module}/{src.name}')
+copy(root/'shared/audit/config.json.example','/usr/share/opcbridge-suite/defaults/audit/config.json.example')
 copy(root/'opcbridge-historian/schema.sql','/usr/share/opcbridge-suite/defaults/historian/schema.sql')
 copy(root/'opcbridge-historian/schema.sql','/opt/opcbridge-suite/share/opcbridge-historian/schema.sql')
 # Generate the same service definitions as install.sh, without host changes.

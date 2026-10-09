@@ -3868,6 +3868,13 @@ body.runtime-mode #editor-pane {
   transition: border-color 0.15s ease;
 }
 
+#textBindingConnection,
+#textBindingConnection option {
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 400;
+}
+
 #textBindingExpression {
   min-width: 0;
   min-height: 64px;

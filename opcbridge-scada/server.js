@@ -18,6 +18,12 @@ const path = require('path');
 const child_process = require('child_process');
 const opcuaCertificate = require('./opcua-certificate');
 const loggerColumns = require('./public/logger-columns');
+const { createRuntime: createAuditRuntime } = require('../shared/audit/runtime');
+const { handleIngest: handleAuditIngest } = require('../shared/audit/http');
+const { writeJson: writeAuditJson } = require('../shared/audit/storage');
+const { publicSettings: publicCentralSettings, buildSettings: buildCentralSettings, validateSettings: validateCentralSettings } = require('../shared/audit/settings');
+const AUDIT_CONFIG_PATH = process.env.OPCBRIDGE_AUDIT_CONFIG || '/etc/opcbridge/audit/config.json';
+const centralAudit = createAuditRuntime('scada', AUDIT_CONFIG_PATH);
 
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
@@ -1530,8 +1536,8 @@ function remoteUserDirectoryJson(candidate, method, apiPath, bodyObj = null, coo
   });
 }
 
-async function exportRemoteUserDirectory({ address, username, password }) {
-  const candidates = remoteUserDirectoryCandidates(address);
+async function exportRemoteUserDirectory({ address, username, password, scadaOnly = false }) {
+  const candidates = scadaOnly ? [{ origin: new URL(address).origin, prefix: '/api/opcbridge' }] : remoteUserDirectoryCandidates(address);
   let lastError = 'Source OPCBridge service was not found.';
   for (const candidate of candidates) {
     const login = await remoteUserDirectoryJson(candidate, 'POST', '/auth/login', { username, password });
@@ -1567,7 +1573,14 @@ async function localCallerCanManageUsers(cookie) {
   return Boolean(status.ok && status.json?.user_logged_in && permissions.includes('auth.manage_users'));
 }
 
+function readAuditSettings() {
+  try { return JSON.parse(fs.readFileSync(AUDIT_CONFIG_PATH, 'utf8')); }
+  catch (error) { if (error.code === 'ENOENT') return {}; throw error; }
+}
+
 function readIdentitySyncConfig() {
+  const managed = readAuditSettings().central?.identity_sync;
+  if (managed) return managed;
   try {
     const parsed = JSON.parse(fs.readFileSync(IDENTITY_SYNC_PATH, 'utf8'));
     return parsed && typeof parsed === 'object' ? parsed : {};
@@ -1577,10 +1590,14 @@ function readIdentitySyncConfig() {
 }
 
 function writeIdentitySyncConfig(config) {
-  fs.mkdirSync(path.dirname(IDENTITY_SYNC_PATH), { recursive: true });
-  fs.writeFileSync(IDENTITY_SYNC_PATH, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
-  fs.chmodSync(IDENTITY_SYNC_PATH, 0o600);
+  const audit = readAuditSettings();
+  if (audit.central) {
+    audit.central.identity_sync = config;
+    writeAuditJson(AUDIT_CONFIG_PATH, audit);
+  } else writeAuditJson(IDENTITY_SYNC_PATH, config);
 }
+
+let centralSettingsSaving = false;
 
 function localOpcbridgeCandidate() {
   const scheme = String(cfg?.opcbridge?.scheme || 'http');
@@ -1592,7 +1609,7 @@ function localOpcbridgeCandidate() {
 
 let identitySyncRunning = false;
 async function synchronizeCentralIdentity({ force = false } = {}) {
-  if (identitySyncRunning) return { ok: false, skipped: true, error: 'Synchronization is already running.' };
+  if (centralSettingsSaving || identitySyncRunning) return { ok: false, skipped: true, error: 'Synchronization is already running.' };
   const sync = readIdentitySyncConfig();
   if (sync.mode !== 'central') return { ok: true, skipped: true, mode: 'local' };
   const intervalMs = Math.max(15000, Number(sync.interval_ms) || 60000);
@@ -1600,7 +1617,7 @@ async function synchronizeCentralIdentity({ force = false } = {}) {
   identitySyncRunning = true;
   sync.last_attempt_ms = Date.now();
   try {
-    const remote = await exportRemoteUserDirectory({ address: sync.central_url, username: sync.username, password: sync.password });
+    const remote = await exportRemoteUserDirectory({ address: sync.central_url, username: sync.username, password: sync.password, scadaOnly: Boolean(readAuditSettings().central) });
     const imported = await remoteUserDirectoryJson(localOpcbridgeCandidate(), 'POST', '/auth/directory/import', {
       file: remote.file, passphrase: remote.passphrase, mode: 'replace', preview: false
     }, '', { 'X-Admin-Token': ADMIN_TOKEN });
@@ -2429,6 +2446,7 @@ function buildProjectBackup({ includeSecrets = false, includeHistory = false, in
     includeExts: opcExts,
     excludeNames: ['admin_auth.json.bak']
   }).forEach((rel) => {
+    if (!includeSecrets && (rel === 'audit/config.json' || path.resolve(DEFAULT_OPCBRIDGE_CONFIG_DIR, rel) === path.resolve(AUDIT_CONFIG_PATH))) return;
     if (!includeSecrets && ['passwords.jsonc', 'admin_auth.json', 'config.secrets.json'].includes(path.basename(rel))) return;
     add('opcbridge_config', DEFAULT_OPCBRIDGE_CONFIG_DIR, rel);
   });
@@ -2981,6 +2999,12 @@ const server = http.createServer(async (req, res) => {
     url.pathname = url.pathname.replace(/^\/api\/logger/, '/api/reporter');
   }
 
+  // Node ingestion uses its own scoped credentials, not browser/admin sessions.
+  if (url.pathname === '/api/audit/ingest') {
+    await handleAuditIngest(req, res, centralAudit, readBody, sendJson);
+    return;
+  }
+
   if (!requireUiAuth(req, res)) return;
 
   async function requireViewLogsPerm() {
@@ -3071,6 +3095,68 @@ const server = http.createServer(async (req, res) => {
     return status;
   }
 
+  if (url.pathname === '/api/central-server') {
+    if (!['GET', 'PUT'].includes(req.method)) { sendJson(res, 405, { ok: false, error: 'Method not allowed' }); return; }
+    if (!await requireManageServerPerm()) return;
+    if (req.method === 'GET') {
+      try {
+        const identity = readIdentitySyncConfig();
+        sendJson(res, 200, { ok: true, settings: publicCentralSettings(readAuditSettings(), identity),
+          health: { identity: { last_sync_ms: identity.last_sync_ms || 0, last_error: identity.last_error || '' }, audit: centralAudit.status() } });
+      } catch (error) { sendJson(res, 503, { ok: false, error: error.message }); }
+      return;
+    }
+    if (!await localCallerCanManageUsers(String(req.headers.cookie || ''))) {
+      sendJson(res, 403, { ok: false, error: 'Both server-management and user-management permissions are required.' }); return;
+    }
+    if (centralSettingsSaving || identitySyncRunning) { sendJson(res, 409, { ok: false, error: 'A settings save or user synchronization is in progress. Try again shortly.' }); return; }
+    centralSettingsSaving = true;
+    let previous; let previousIdentity; let switched = false; let persisting = false;
+    try {
+      const body = JSON.parse((await readBody(req, 256 * 1024)).toString('utf8') || '{}');
+      previous = readAuditSettings(); previousIdentity = readIdentitySyncConfig();
+      const next = buildCentralSettings(body, previous, previousIdentity, cfg.listen.port);
+      const identity = next.central.identity_sync;
+      const result = await remoteUserDirectoryJson(localOpcbridgeCandidate(), 'PUT', '/auth/identity', {
+        mode: identity.mode, central_name: identity.central_name, central_url: identity.central_url,
+        last_sync_ms: identity.last_sync_ms || 0, revision: identity.last_sync_ms || 0
+      }, String(req.headers.cookie || ''));
+      if (!result.ok) throw new Error(result.json?.error || result.error || 'Failed to change identity mode.');
+      switched = true;
+      validateCentralSettings(next);
+      persisting = true;
+      writeAuditJson(AUDIT_CONFIG_PATH, next);
+      centralAudit.reload();
+      centralSettingsSaving = false;
+      const sync = identity.mode === 'central' ? await synchronizeCentralIdentity({ force: true }) : { ok: true, mode: 'local' };
+      sendJson(res, 200, { ok: true, settings: publicCentralSettings(readAuditSettings()), sync });
+    } catch (error) {
+      let recovery = '';
+      if (persisting) {
+        try { writeAuditJson(AUDIT_CONFIG_PATH, previous); centralAudit.reload(); }
+        catch { recovery = ' Settings rollback failed; check the configuration file before retrying.'; }
+      }
+      if (switched) {
+        const restored = await remoteUserDirectoryJson(localOpcbridgeCandidate(), 'PUT', '/auth/identity', {
+          mode: previousIdentity.mode === 'central' ? 'central' : 'local', central_name: previousIdentity.central_name || '', central_url: previousIdentity.central_url || ''
+        }, '', { 'X-Admin-Token': ADMIN_TOKEN });
+        if (!restored.ok) recovery += ' Identity rollback failed; check the local identity source before retrying.';
+      }
+      sendJson(res, 400, { ok: false, error: error.message + recovery });
+    } finally { centralSettingsSaving = false; }
+    return;
+  }
+
+  if (url.pathname === '/api/audit/status') {
+    if (req.method !== 'GET') { sendJson(res, 405, { ok: false, error: 'Method not allowed' }); return; }
+    if (!await requireViewLogsPerm()) return;
+    try {
+      const status = centralAudit.status();
+      sendJson(res, 200, { ok: true, ...status });
+    } catch (error) { sendJson(res, 503, { ok: false, error: 'Audit status storage unavailable' }); }
+    return;
+  }
+
   if (url.pathname === '/api/logs/query') {
     if (req.method !== 'GET') { sendJson(res, 405, { ok: false, error: 'Method not allowed' }); return; }
     if (!await requireViewLogsPerm()) return;
@@ -3122,6 +3208,20 @@ const server = http.createServer(async (req, res) => {
         const up = await fetchUpstreamJson(req, cfg.alarms, `/alarm/api/alarms/history?${params}`, { timeoutMs: 12000 }); if (up.status < 200 || up.status >= 300) throw new Error(`Alarm server HTTP ${up.status}`);
         (Array.isArray(up.json?.events) ? up.json.events : []).forEach((row) => { const alarmSource = row.source || {}; const fallback = [row.group, row.site, alarmSource.connection_id, alarmSource.tag].filter(Boolean).join(' / ');
           pushRecord({ timestamp_ms: row.ts_ms, type: row.type || 'alarm', subject: row.alarm_id || '', message: row.message || fallback || `value=${JSON.stringify(row.value)}`, details: row, raw: row }); });
+      } else if (source === 'central_audit') {
+        const result = centralAudit.collector.query({
+          limit, since_ms: sinceMs, until_ms: untilMs, q: search, user, result: resultFilter,
+          site_id: site, node_id: url.searchParams.get('node_id') || '', station_id: url.searchParams.get('station_id') || '',
+          component: url.searchParams.get('component') || '', action: url.searchParams.get('action') || '', connection_id: connection, tag
+        });
+        const centralRecords = result.events.map(({ event, received_ms }) => ({
+          timestamp_ms: event.timestamp_ms, source: `${event.site_id} / ${event.node_id} / ${event.component}`,
+          station: event.station_id, actor: event.actor.name || '(unknown)', attribution: event.actor.attribution, type: event.action,
+          subject: event.target, message: event.result, details: { ...event, received_ms }, raw: { ...event, received_ms }
+        }));
+        sendJson(res, 200, { ok: true, source, matched: result.matched, records: centralRecords,
+          audit_status: centralAudit.status(), coverage: 'New HMI and successful data-entry events from enrolled nodes with forwarding enabled.' });
+        return;
       } else if (source === 'hmi_audit') {
         const params = new URLSearchParams({ limit: String(limit) }); if (sinceMs) params.set('start', new Date(sinceMs).toISOString()); if (untilMs) params.set('end', new Date(untilMs).toISOString()); if (connection) params.set('connection_id', connection); if (tag) params.set('tag', tag); if (user) params.set('user', user); if (resultFilter) params.set('result', resultFilter); if (search) params.set('q', search);
         const up = await fetchUpstreamJson(req, cfg.hmi, `/api/audit/query?${params}`, { timeoutMs: 12000 }); if (up.status < 200 || up.status >= 300) throw new Error(`HMI HTTP ${up.status}`);
@@ -5472,14 +5572,19 @@ const server = http.createServer(async (req, res) => {
       const database = readReporterDatabasesRaw().find((candidate) => sanitizeId(candidate?.id) === sanitizeId(target.database_id)) || {};
       const result = await reporterApiRequest('POST', `/databases/${encodeURIComponent(target.database_id)}/data-entry`, dataEntryLoggerPayload(form, target, operation, body), reporterDatabaseDiscoveryTimeoutMs(database));
       if (operation === 'save' && result.ok && result.json?.ok) {
+        const auditEvent = { timestamp: new Date().toISOString(), form_id: form.id,
+          record_date: body.record_date, username: authStatusUsername(status) || null,
+          remote_address: String(req.socket?.remoteAddress || ''), changes: body.changes,
+          inserted: result.json.inserted || 0, updated: result.json.updated || 0, deleted: result.json.deleted || 0 };
+        centralAudit.record({ timestamp_ms: Date.parse(auditEvent.timestamp), action: 'data_entry.save', target: form.id, result: 'success',
+          station_id: auditEvent.remote_address,
+          actor: { name: auditEvent.username || '', attribution: auditEvent.username ? 'authenticated' : 'unknown' }, details: auditEvent });
         try {
           ensureDirForFile(DATA_ENTRY_AUDIT_PATH);
-          fs.appendFileSync(DATA_ENTRY_AUDIT_PATH, JSON.stringify({ timestamp: new Date().toISOString(), form_id: form.id,
-            record_date: body.record_date, username: authStatusUsername(status) || null,
-            remote_address: String(req.socket?.remoteAddress || ''), changes: body.changes,
-            inserted: result.json.inserted || 0, updated: result.json.updated || 0, deleted: result.json.deleted || 0 }) + '\n', 'utf8');
+          fs.appendFileSync(DATA_ENTRY_AUDIT_PATH, JSON.stringify(auditEvent) + '\n', 'utf8');
         } catch { /* data save succeeded; audit failure must not duplicate the write on retry */ }
       }
+
       sendJson(res, result.ok ? 200 : (result.status || 502), result.json || { ok: false, error: result.error || 'Logger data-entry request failed.' });
     } catch (err) { sendJson(res, 400, { ok: false, error: String(err.message || err) }); }
     return;
@@ -6133,6 +6238,7 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         const body = JSON.parse((await readBody(req, 64 * 1024)).toString('utf8') || '{}');
+        if (readAuditSettings().central) { sendJson(res, 409, { ok: false, error: 'Use Configure Server → Central server to change the shared connection.' }); return; }
         const previous = readIdentitySyncConfig();
         const mode = body.mode === 'central' ? 'central' : 'local';
         const next = {

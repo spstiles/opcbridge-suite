@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <title>OPCBridge SCADA</title>
   <link rel="icon" href="favicon.svg?v=20260510" type="image/svg+xml" />
-  <link rel="stylesheet" href="styles.css?v=0.2.62" />
+  <link rel="stylesheet" href="styles.css?v=0.2.63" />
 </head>
 <body>
   <header class="topbar">
@@ -113,8 +113,9 @@
 
       <div class="configure-layout">
         <nav class="configure-nav" aria-label="Server settings sections">
-          <button type="button" class="configure-shortcut" data-configure-target="configure-settings" aria-controls="configure-settings">Server settings</button>
           <button type="button" class="configure-shortcut" data-configure-target="configure-api" aria-controls="configure-api">API reference</button>
+          <button type="button" class="configure-shortcut" data-configure-target="configure-settings" aria-controls="configure-settings">Server settings</button>
+          <button type="button" class="configure-shortcut" data-configure-target="configure-central" aria-controls="configure-central">Central server</button>
           <button type="button" class="configure-shortcut" data-configure-target="authAdminCard" aria-controls="authAdminCard">Backup & restore</button>
           <button type="button" class="configure-shortcut" data-configure-target="configure-auth" aria-controls="configure-auth">Admin tokens</button>
           <button type="button" class="configure-shortcut" data-configure-target="configure-modem" aria-controls="configure-modem">Voice modem</button>
@@ -128,6 +129,14 @@
           <button type="button" class="configure-shortcut" data-configure-target="configure-mqtt-certs" aria-controls="configure-mqtt-certs">MQTT certificates</button>
         </nav>
         <div class="configure-content" id="configureContent">
+      <div class="card configure-section" id="configure-api" tabindex="-1">
+        <div class="card-title">API Quick Reference</div>
+        <div class="hint">Common endpoints derived from the OPCBridge/alarms host settings (copy/paste for troubleshooting).</div>
+        <div class="card-body">
+          <pre class="mono" id="apiQuickRef">Loading…</pre>
+        </div>
+      </div>
+
       <div class="card configure-section" id="configure-settings" tabindex="-1">
         <div class="card-title">Server Settings</div>
         <div class="card-body">
@@ -223,14 +232,42 @@
         </div>
       </div>
 
-      <div class="card configure-section" id="configure-api" tabindex="-1">
-        <div class="card-title">API Quick Reference</div>
-        <div class="hint">Common endpoints derived from the OPCBridge/alarms host settings above (copy/paste for troubleshooting).</div>
+      <div class="card configure-section" id="configure-central" tabindex="-1">
+        <div class="card-title">Central server</div>
         <div class="card-body">
-          <pre class="mono" id="apiQuickRef">Loading…</pre>
+          <div class="hint">Manage users and collect audit records through one server on your local SCADA network. Cached users and queued audit records keep installations operating when that server is unavailable.</div>
+          <div class="form" style="max-width:720px; margin-top:12px;">
+            <div class="form-row"><label for="centralRole">Installation role</label><select id="centralRole"><option value="standalone">Standalone</option><option value="central">Central server</option><option value="connected">Connected to central server</option></select></div>
+            <div id="centralIdentityFields">
+              <div class="form-row"><label for="centralSiteId">Site ID</label><input id="centralSiteId" placeholder="plant-1" /></div>
+              <div class="form-row"><label for="centralNodeId">Installation ID</label><input id="centralNodeId" placeholder="panel-1" /></div>
+              <div class="hint">Use a unique installation ID for each server or panel running OPCBridge. IDs accept letters, numbers, periods, underscores, and hyphens.</div>
+            </div>
+            <div id="centralConnectionFields" style="display:none;">
+              <div class="form-row"><label for="centralName">Central server name</label><input id="centralName" placeholder="Plant Operations" /></div>
+              <div class="form-row"><label for="centralAddress">Central SCADA address</label><input id="centralAddress" placeholder="https://scada-central.local" /></div>
+              <div class="hint">Users and audit records use this same address. Include the port when required, for example https://scada-central.local:3010.</div>
+              <div class="form-row"><label for="centralUsername">Directory account</label><input id="centralUsername" autocomplete="username" /></div>
+              <div class="form-row"><label for="centralPassword">Directory password</label><input id="centralPassword" type="password" autocomplete="current-password" placeholder="Unchanged when blank" /></div>
+              <div class="form-row"><label for="centralToken">Installation credential</label><input id="centralToken" type="password" autocomplete="off" placeholder="Paste the credential from the central server" /></div>
+              <div class="form-row"><label for="centralInterval">User sync interval (seconds)</label><input id="centralInterval" type="number" min="15" value="60" /></div>
+            </div>
+            <div id="centralTransportFields"><div class="form-row"><label for="centralAllowHttp">Network transport</label><label><input id="centralAllowHttp" type="checkbox" /> Allow HTTP on this closed network</label></div><div class="hint">HTTPS is the default. HTTPS access to SCADA uses your local reverse proxy and certificates.</div></div>
+            <div class="form-row"><label></label><div class="row-actions"><button class="btn primary" id="centralSaveBtn" type="button">Save central settings</button><button class="btn" id="centralRefreshBtn" type="button">Refresh status</button><button class="btn" id="centralSyncBtn" type="button" style="display:none;">Sync users now</button></div></div>
+          </div>
+          <div class="hint mono" id="centralSaveStatus" role="status"></div>
+          <div id="centralEnrollmentFields" style="display:none; margin-top:16px;">
+            <div class="card-title">Enrolled installations</div>
+            <div class="hint">Generate a unique credential for each installation and copy it into that installation’s Central server settings. Save here before connecting it. Existing credentials stay hidden; generating a replacement requires updating that installation.</div>
+            <div class="table-wrap"><table class="table"><thead><tr><th>Site ID</th><th>Installation ID</th><th>Installation credential</th><th></th></tr></thead><tbody id="centralEnrollmentBody"></tbody></table></div>
+            <button class="btn" id="centralAddNodeBtn" type="button">Add installation</button>
+          </div>
+          <div class="divider"></div>
+          <div class="card-title">Connection health</div>
+          <div class="hint" id="centralHealth" role="status">Refresh to load connection health.</div>
+          <div class="table-wrap" id="centralHealthTable"><table class="table"><thead><tr><th>Site</th><th>Installation</th><th>Component</th><th>Last contact</th><th>Queued events</th><th>Status</th></tr></thead><tbody id="centralHealthBody"></tbody></table></div>
         </div>
       </div>
-
       <div class="card configure-section" id="authAdminCard" tabindex="-1">
         <div class="card-title">Project Backup / Restore</div>
         <div class="hint">Download or restore the complete project configuration: OPCBridge config, alarms/audio, HMI screens/assets, SCADA settings, and data logger config. Database credentials and history are optional. Restore overwrites project files and creates a pre-restore backup in <code>/tmp</code>.</div>
@@ -730,19 +767,7 @@
 
           <div id="usersManageWrap" style="display:none; margin-top: 10px;">
             <div class="divider"></div>
-            <div class="form" style="max-width: 720px;">
-              <div class="card-title">Identity Source</div>
-              <div class="form-row"><label for="usersIdentityMode">Directory mode</label><select id="usersIdentityMode"><option value="local">Local Directory</option><option value="central">Central Directory</option></select></div>
-              <div id="usersIdentityCentralFields" style="display:none;">
-                <div class="form-row"><label for="usersIdentityCentralName">Central system name</label><input id="usersIdentityCentralName" type="text" placeholder="Plant Operations Cluster" /></div>
-                <div class="form-row"><label for="usersIdentityCentralUrl">Central address</label><input id="usersIdentityCentralUrl" type="text" placeholder="192.168.1.20" /></div>
-                <div class="form-row"><label for="usersIdentityUsername">Central OPCBridge username</label><input id="usersIdentityUsername" type="text" autocomplete="username" /></div>
-                <div class="form-row"><label for="usersIdentityPassword">Central OPCBridge password</label><input id="usersIdentityPassword" type="password" autocomplete="current-password" placeholder="Unchanged when blank" /></div>
-                <div class="form-row"><label for="usersIdentityInterval">Sync interval (seconds)</label><input id="usersIdentityInterval" type="number" min="15" step="1" value="60" /></div>
-              </div>
-              <div class="form-row"><label></label><div class="row-actions"><button class="btn primary" id="usersIdentitySaveBtn" type="button">Save Identity Source</button><button class="btn" id="usersIdentitySyncBtn" type="button">Sync Now</button></div></div>
-              <div class="hint mono" id="usersIdentityStatus"></div>
-            </div>
+            <div class="hint">The shared user and audit connection is configured in Configure Server → Central server.</div>
             <div id="usersCentralDirectoryNotice" class="status status-degraded" style="display:none; margin:12px 0;">
               <span id="usersCentralDirectoryNoticeText"></span>
               <button class="btn" id="usersCentralDirectoryOpenBtn" type="button">Open Central Users Page</button>
@@ -1927,9 +1952,18 @@
 	            <div class="form-row logs-source-filter" id="logsSeverityRow"><label>Severity</label><input id="logsSeverity" type="number" min="0" placeholder="optional severity" /></div>
 	            <div class="form-row logs-source-filter" id="logsUserRow"><label>User</label><input id="logsUser" type="text" placeholder="optional exact user" /></div>
 	            <div class="form-row logs-source-filter" id="logsResultRow"><label>Result</label><input id="logsResult" type="text" placeholder="optional result" /></div>
+                <div class="form-row logs-central-only" style="display:none;"><label>Node</label><input id="logsNode" type="text" placeholder="optional exact node ID" /></div>
+                <div class="form-row logs-central-only" style="display:none;"><label>Station</label><input id="logsStation" type="text" placeholder="optional exact station ID/address" /></div>
+                <div class="form-row logs-central-only" style="display:none;"><label>Component</label><input id="logsComponent" type="text" placeholder="hmi or scada" /></div>
+                <div class="form-row logs-central-only" style="display:none;"><label>Action</label><input id="logsAction" type="text" placeholder="e.g. hmi.tag_write" /></div>
 	          </div>
 	          <div class="row-actions" style="margin-top:10px;"><button class="btn primary" id="logsRefreshBtn" type="button">Apply Filters</button><button class="btn" id="logsDownloadBtn" type="button">Download CSV</button><div class="hint mono" id="logsStatus"></div></div>
-	          <div class="table-wrap logs-table-wrap"><table class="table" id="logsTable"><thead><tr><th>Timestamp</th><th>Source</th><th>Type / Level</th><th>Subject</th><th>Message</th></tr></thead><tbody id="logsTbody"></tbody></table></div>
+	          <div class="table-wrap logs-table-wrap"><table class="table" id="logsTable"><thead><tr><th>Timestamp</th><th>Source</th><th>Type / Level</th><th>Subject</th><th>Message</th><th class="logs-central-only" style="display:none;">Station</th><th class="logs-central-only" style="display:none;">User</th><th class="logs-central-only" style="display:none;">User verification</th></tr></thead><tbody id="logsTbody"></tbody></table></div>
+            <details class="logs-central-only" style="display:none; margin-top:10px;">
+              <summary>Central audit collection status</summary>
+              <div class="hint" id="centralAuditStatus">Apply filters to refresh collection status.</div>
+              <div class="table-wrap"><table class="table"><thead><tr><th>Site</th><th>Node</th><th>Component</th><th>Last contact</th><th>Freshness</th><th>Queued at last report</th><th>Capture failures</th><th>Error</th></tr></thead><tbody id="centralAuditHealthBody"></tbody></table></div>
+            </details>
 	          <details id="logsDetails" style="margin-top:10px;"><summary>Selected record details</summary><pre class="mono" id="logsOutput" style="max-height:320px; overflow:auto; white-space:pre-wrap;">Select a log record to inspect its details.</pre></details>
 	        </div>
 	      </div>
@@ -2962,6 +2996,6 @@
   <script src="vendor/codemirror/addon/edit/matchbrackets.min.js"></script>
   <script src="tag-audit.js"></script>
   <script src="logger-columns.js"></script>
-  <script src="app.js?v=0.2.62"></script>
+  <script src="app.js?v=0.2.63"></script>
 </body>
 </html>

@@ -25690,6 +25690,7 @@ function getConnectionDisplayName(connectionId) {
 
 function ensureFriendlyConnectionNames(input) {
   if (!input) return;
+  if (input.tagName === "SELECT") { populateConnectionSelect(input); return; }
   let list = document.getElementById("hmiFriendlyConnectionNames");
   if (!list) {
     list = document.createElement("datalist");
@@ -25717,6 +25718,7 @@ function ensureFriendlyConnectionNames(input) {
 
 function setFriendlyConnectionInputValue(input, connectionId) {
   if (!input) return;
+  if (input.tagName === "SELECT") { setConnectionSelectValue(input, connectionId); return; }
   const id = String(connectionId || "").trim();
   input.dataset.connectionId = id;
   input.value = getConnectionDisplayName(id);
@@ -25725,6 +25727,7 @@ function setFriendlyConnectionInputValue(input, connectionId) {
 
 function connectionIdFromFriendlyInput(input) {
   if (!input) return "";
+  if (input.tagName === "SELECT") return String(input.value || "").trim();
   const typed = String(input.value || "").trim();
   const stored = String(input.dataset.connectionId || "").trim();
   if (stored && typed.toLowerCase() === getConnectionDisplayName(stored).toLowerCase()) return stored;

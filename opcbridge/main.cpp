@@ -23520,14 +23520,14 @@ window.addEventListener("load", startAutoRefresh);
             });
 
 	            // POST /write
-            svr.Post("/write", [&](const httplib::Request &req, httplib::Response &res) {
+            auto handle_tag_write = [&](const httplib::Request &req, httplib::Response &res, bool requireUserSession) {
                 json resp;
                 try {
                     json body = json::parse(req.body);
 
                     std::string clientToken = body.value("token", std::string{});
                     bool hasWriteToken = (clientToken == writeToken);
-                    bool isAdmin = is_admin_request(req);
+                    bool isAdmin = !requireUserSession && is_admin_request(req);
 
                     if (!hasWriteToken && !isAdmin) {
                         resp["ok"] = false;
@@ -23535,6 +23535,25 @@ window.addEventListener("load", startAutoRefresh);
                         res.status = 403;
                         res.set_content(resp.dump(2), "application/json");
                         return;
+                    }
+
+                    if (requireUserSession) {
+                        AdminSessionInfo session;
+                        if (!is_user_logged_in(req, session)) {
+                            resp["ok"] = false;
+                            resp["error"] = "Login required for HMI writes.";
+                            res.status = 401;
+                            res.set_content(resp.dump(2), "application/json");
+                            return;
+                        }
+                        resp["authenticated_user"] = {{"username", session.username}, {"groups", session.groups}};
+                        if (!session_has_permission(session, "opcbridge.write_tags")) {
+                            resp["ok"] = false;
+                            resp["error"] = "Write permission required (opcbridge.write_tags).";
+                            res.status = 403;
+                            res.set_content(resp.dump(2), "application/json");
+                            return;
+                        }
                     }
 
                     std::string conn_id = body.at("connection_id").get<std::string>();
@@ -23588,6 +23607,14 @@ window.addEventListener("load", startAutoRefresh);
                 }
 
                 res.set_content(resp.dump(2), "application/json");
+            };
+            // Machine clients retain token-only authorization. HMI requests use
+            // the same write implementation with a checked interactive session.
+            svr.Post("/write", [handle_tag_write](const httplib::Request &req, httplib::Response &res) {
+                handle_tag_write(req, res, false);
+            });
+            svr.Post("/write/interactive", [handle_tag_write](const httplib::Request &req, httplib::Response &res) {
+                handle_tag_write(req, res, true);
             });
 
 	            svr.Post("/reload", [&](const httplib::Request &req, httplib::Response &res) {

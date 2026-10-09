@@ -24,6 +24,7 @@ seed(config/'logger/config.json', '{"listen_host":"127.0.0.1","listen_port":8095
 for name, key in [('databases','databases'),('reports','reports'),('data_checks','data_checks'),('database_sync','sync_jobs')]:
     seed(config/f'logger/{name}.json',json.dumps({key:[]})+'\n')
 seed(config/'data-entry/forms.json','{"targets":[],"forms":[]}\n')
+if not (config/'audit/config.json').exists(): shutil.copyfile(config/'audit/config.json.example',config/'audit/config.json')
 for module in ('flow','report','historian'):
     for example in (config/module).glob('*.json.example'):
         live=example.with_suffix('')
@@ -37,7 +38,7 @@ for line in (config/'opcbridge.env').read_text().splitlines():
     if line.startswith('OPCBRIDGE_WRITE_TOKEN='): token=line.split('=',1)[1]
 seed(hmi/'public/js/config.jsonc',json.dumps({'opcbridge':{'host':'127.0.0.1','httpPort':8080,'wsPort':8090,'writeToken':token},'alarms':{'host':'127.0.0.1','httpPort':8085,'wsPort':8086},'hmi':{'defaultScreen':'console_background','touchscreenMode':False,'viewOnlyMode':False}},indent=2)+'\n')
 PY
-mkdir -p "$CONFIG_ROOT/certs/mqtt" "$CONFIG_ROOT/scada" "$DATA_ROOT/flow" "$DATA_ROOT/logger" "$DATA_ROOT/historian"
+mkdir -p "$CONFIG_ROOT/certs/mqtt" "$CONFIG_ROOT/scada" "$DATA_ROOT/flow" "$DATA_ROOT/logger" "$DATA_ROOT/historian" "$DATA_ROOT/audit"
 /opt/opcbridge-suite/bin/opcbridge-provision-opcua-identity "$CONFIG_ROOT" "$SERVICE_USER" "$SERVICE_GROUP"
 fix_config_permissions
 chown -R "$SERVICE_USER:$SERVICE_GROUP" "$DATA_ROOT" "$LOG_ROOT"

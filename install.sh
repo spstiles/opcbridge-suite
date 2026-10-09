@@ -999,6 +999,11 @@ fix_config_permissions() {
     chown root:root "$ENV_FILE" 2>/dev/null || true
     chmod 600 "$ENV_FILE" 2>/dev/null || true
   fi
+  if [[ -f "$CONFIG_ROOT/audit/config.json" ]]; then
+    chown "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_ROOT/audit/config.json"
+    chmod 0600 "$CONFIG_ROOT/audit/config.json"
+  fi
+
 }
 
 write_env_file() {
@@ -1157,7 +1162,32 @@ copy_tree() {
   (cd "$src" && tar -cf - .) | (cd "$dst" && tar -xf -)
 }
 
+install_audit_support() {
+  mkdir -p "$PREFIX/shared/audit" "$CONFIG_ROOT/audit" "$DATA_ROOT/audit"
+  install -m 0644 "$ROOT_DIR"/shared/audit/*.js "$PREFIX/shared/audit/"
+  install -m 0644 "$ROOT_DIR/shared/audit/config.json.example" "$CONFIG_ROOT/audit/config.json.example"
+  # Opt-in: never enable forwarding/collection or replace enrolled node credentials.
+  if [[ ! -f "$CONFIG_ROOT/audit/config.json" ]]; then
+    install -m 0600 "$ROOT_DIR/shared/audit/config.json.example" "$CONFIG_ROOT/audit/config.json"
+    if have_cmd node; then
+      node - "$CONFIG_ROOT/audit/config.json" "$DATA_ROOT/audit" <<'JS'
+const fs = require('node:fs');
+const path = require('node:path');
+const [file, directory] = process.argv.slice(2);
+const config = JSON.parse(fs.readFileSync(file, 'utf8'));
+config.forwarding.queue_dir = path.join(directory, 'outbox');
+config.collector.data_dir = path.join(directory, 'central');
+fs.writeFileSync(file, JSON.stringify(config, null, 2) + '\n');
+JS
+    fi
+  fi
+  chown "$SERVICE_USER:$SERVICE_GROUP" "$CONFIG_ROOT/audit" "$CONFIG_ROOT/audit/config.json" "$DATA_ROOT/audit"
+  chmod 0750 "$CONFIG_ROOT/audit" "$DATA_ROOT/audit"
+  chmod 0600 "$CONFIG_ROOT/audit/config.json"
+}
+
 install_scada() {
+  install_audit_support
   echo "Installing opcbridge-scada..."
   mkdir -p "$PREFIX/scada"
   if have_cmd rsync; then
@@ -1220,6 +1250,7 @@ EOF
 }
 
 install_hmi() {
+  install_audit_support
   echo "Installing opcbridge-hmi..."
   mkdir -p "$PREFIX/hmi"
 
@@ -1980,6 +2011,7 @@ install_systemd_units() {
 	EnvironmentFile=${ENV_FILE}
 	Environment=OPCBRIDGE_SCADA_CONFIG=${CONFIG_ROOT}/scada/config.json
 	Environment=OPCBRIDGE_SCADA_SECRETS=${CONFIG_ROOT}/scada/config.secrets.json
+	Environment=OPCBRIDGE_AUDIT_CONFIG=${CONFIG_ROOT}/audit/config.json
 	WorkingDirectory=${PREFIX}/scada
 	ExecStart=/bin/sh -c 'PORT=\"\${SCADA_PORT:-3010}\" exec /usr/bin/node ${PREFIX}/scada/server.js'
 	User=${SERVICE_USER}
@@ -2002,6 +2034,7 @@ WantedBy=multi-user.target
 	EnvironmentFile=${ENV_FILE}
 	Environment=HOME=${DATA_ROOT}
 	Environment=NPM_CONFIG_CACHE=${DATA_ROOT}/.npm
+	Environment=OPCBRIDGE_AUDIT_CONFIG=${CONFIG_ROOT}/audit/config.json
 	WorkingDirectory=${PREFIX}/hmi
 	ExecStart=/bin/sh -c 'PORT=\"\${HMI_PORT:-3000}\" exec /usr/bin/node ${PREFIX}/hmi/server.js'
 	User=${SERVICE_USER}

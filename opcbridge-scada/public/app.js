@@ -676,6 +676,12 @@
 
   // Logs
   logsSource: document.getElementById('logsSource'),
+  logsNode: document.getElementById('logsNode'),
+  logsStation: document.getElementById('logsStation'),
+  logsComponent: document.getElementById('logsComponent'),
+  logsAction: document.getElementById('logsAction'),
+  centralAuditStatus: document.getElementById('centralAuditStatus'),
+  centralAuditHealthBody: document.getElementById('centralAuditHealthBody'),
   logsUnit: document.getElementById('logsUnit'),
   logsUnitRow: document.getElementById('logsUnitRow'), logsFrom: document.getElementById('logsFrom'), logsTo: document.getElementById('logsTo'),
   logsSearch: document.getElementById('logsSearch'), logsConnection: document.getElementById('logsConnection'), logsTag: document.getElementById('logsTag'),
@@ -1054,16 +1060,6 @@
   usersTimeoutMinutes: document.getElementById('usersTimeoutMinutes'),
   usersTimeoutSaveBtn: document.getElementById('usersTimeoutSaveBtn'),
   usersTimeoutStatus: document.getElementById('usersTimeoutStatus'),
-  usersIdentityMode: document.getElementById('usersIdentityMode'),
-  usersIdentityCentralFields: document.getElementById('usersIdentityCentralFields'),
-  usersIdentityCentralName: document.getElementById('usersIdentityCentralName'),
-  usersIdentityCentralUrl: document.getElementById('usersIdentityCentralUrl'),
-  usersIdentityUsername: document.getElementById('usersIdentityUsername'),
-  usersIdentityPassword: document.getElementById('usersIdentityPassword'),
-  usersIdentityInterval: document.getElementById('usersIdentityInterval'),
-  usersIdentitySaveBtn: document.getElementById('usersIdentitySaveBtn'),
-  usersIdentitySyncBtn: document.getElementById('usersIdentitySyncBtn'),
-  usersIdentityStatus: document.getElementById('usersIdentityStatus'),
   usersCentralDirectoryNotice: document.getElementById('usersCentralDirectoryNotice'),
   usersCentralDirectoryNoticeText: document.getElementById('usersCentralDirectoryNoticeText'),
   usersCentralDirectoryOpenBtn: document.getElementById('usersCentralDirectoryOpenBtn'),
@@ -8432,6 +8428,30 @@ function wireHmiAuditUi() {
   els.hmiAuditCsvBtn?.addEventListener('click', downloadHmiAuditCsv);
 }
 
+function renderCentralAuditHealth(status = {}) {
+  if (!els.centralAuditStatus || !els.centralAuditHealthBody) return;
+  const local = status.forwarding || {};
+  const notes = ['Coverage: new HMI and successful data-entry events from enrolled nodes. Nodes with no recent contact may have unreceived events.'];
+  if (status.config_error) notes.push(`Configuration error: ${status.config_error}`);
+  if (status.collector?.last_error) notes.push(`Collector error: ${status.collector.last_error}`);
+  if (local.enabled) notes.push(`This SCADA sender: ${local.pending_count ?? 'unknown'} queued; ${local.capture_failures || 0} capture failure(s).${local.last_error ? ` ${local.last_error}` : ''}${local.last_capture_error ? ` ${local.last_capture_error}` : ''}`);
+  els.centralAuditStatus.textContent = notes.join(' ');
+  els.centralAuditHealthBody.textContent = '';
+  for (const node of status.collector?.nodes || []) {
+    const components = node.components?.length ? node.components : [{}];
+    for (const component of components) {
+      const tr = document.createElement('tr');
+      appendTextCell(tr, node.site_id); appendTextCell(tr, node.node_id); appendTextCell(tr, component.component || '—');
+      appendTextCell(tr, component.last_received_ms ? fmtLogTime(component.last_received_ms) : 'No contact yet');
+      appendTextCell(tr, component.last_received_ms ? Date.now() - component.last_received_ms > 120000 ? 'Stale' : 'Recent contact' : 'Unknown');
+      appendTextCell(tr, component.reported_pending_count ?? '—');
+      appendTextCell(tr, component.reported_capture_failures ?? '—');
+      appendTextCell(tr, component.reported_error || component.reported_capture_error || '');
+      els.centralAuditHealthBody.appendChild(tr);
+    }
+  }
+}
+
 async function refreshLogs() {
   if (!els.logsTbody) return;
   const requestSeq = ++state.logsRequestSeq;
@@ -8443,28 +8463,39 @@ async function refreshLogs() {
   if (source === 'systemd' && unit) params.set('unit', unit);
   if (sinceMs != null) params.set('since_ms', String(sinceMs)); if (untilMs != null) params.set('until_ms', String(untilMs));
   if (els.logsSearch?.value.trim()) params.set('q', els.logsSearch.value.trim());
-  if (['tracked_tag_events','alarm_history','hmi_audit'].includes(source) && els.logsConnection?.value.trim()) params.set('connection_id', els.logsConnection.value.trim());
-  if (['tracked_tag_events','alarm_history','hmi_audit'].includes(source) && els.logsTag?.value.trim()) params.set('tag', els.logsTag.value.trim());
+  if (['tracked_tag_events','alarm_history','hmi_audit','central_audit'].includes(source) && els.logsConnection?.value.trim()) params.set('connection_id', els.logsConnection.value.trim());
+  if (['tracked_tag_events','alarm_history','hmi_audit','central_audit'].includes(source) && els.logsTag?.value.trim()) params.set('tag', els.logsTag.value.trim());
   if (source === 'alarm_history' && els.logsAlarm?.value.trim()) params.set('alarm_id', els.logsAlarm.value.trim());
   if (source === 'alarm_history' && els.logsType?.value) params.set('types', els.logsType.value);
   if (source === 'alarm_history' && els.logsGroup?.value.trim()) params.set('group', els.logsGroup.value.trim());
-  if (source === 'alarm_history' && els.logsSite?.value.trim()) params.set('site', els.logsSite.value.trim());
+  if (['alarm_history','central_audit'].includes(source) && els.logsSite?.value.trim()) params.set('site', els.logsSite.value.trim());
   if (source === 'alarm_history' && els.logsSeverity?.value !== '') params.set('severity', els.logsSeverity.value);
-  if (source === 'hmi_audit' && els.logsUser?.value.trim()) params.set('user', els.logsUser.value.trim());
-  if (source === 'hmi_audit' && els.logsResult?.value.trim()) params.set('result', els.logsResult.value.trim());
+  if (['hmi_audit','central_audit'].includes(source) && els.logsUser?.value.trim()) params.set('user', els.logsUser.value.trim());
+  if (['hmi_audit','central_audit'].includes(source) && els.logsResult?.value.trim()) params.set('result', els.logsResult.value.trim());
+  if (source === 'central_audit') {
+    for (const [key, field] of [['node_id', els.logsNode], ['station_id', els.logsStation], ['component', els.logsComponent], ['action', els.logsAction]]) {
+      if (field?.value.trim()) params.set(key, field.value.trim());
+    }
+  }
   logsSetStatus('Loading…');
   try {
     const data = await apiGet(`/api/logs/query?${params}`, { timeoutMs: 30000 }); if (requestSeq !== state.logsRequestSeq) return; if (!data?.ok) throw new Error(data?.error || 'Log query failed.');
     state.logsLast = Array.isArray(data.records) ? data.records : []; els.logsTbody.textContent = '';
     state.logsLast.forEach((record) => {
       const tr = document.createElement('tr'); appendTextCell(tr, fmtLogTime(record.timestamp_ms), { code: true }); appendTextCell(tr, record.source || source); appendTextCell(tr, record.type || '', { code: true }); appendTextCell(tr, record.subject || '', { code: true }); appendTextCell(tr, record.message || '');
+      if (source === 'central_audit') {
+        appendTextCell(tr, record.station || ''); appendTextCell(tr, record.actor || '');
+        appendTextCell(tr, ({ authenticated: 'Authenticated', client_reported: 'Unverified', unknown: 'Unknown', service: 'Service' })[record.attribution] || 'Unknown');
+      }
       tr.addEventListener('click', () => { logsSetOutput(JSON.stringify(record.raw ?? record.details ?? record, null, 2)); if (els.logsDetails) els.logsDetails.open = true; }); els.logsTbody.appendChild(tr);
     });
+    if (source === 'central_audit') renderCentralAuditHealth(data.audit_status);
     logsSetStatus(state.logsLast.length ? `${state.logsLast.length} record(s) shown` : 'No matching log records found.');
     logsSetOutput('Select a log record to inspect its details.'); if (els.logsDetails) els.logsDetails.open = false;
   } catch (err) {
     if (requestSeq !== state.logsRequestSeq) return;
     state.logsLast = []; els.logsTbody.textContent = ''; logsSetStatus(`Failed: ${err.message}`); logsSetOutput('');
+    if (source === 'central_audit' && els.centralAuditStatus) { els.centralAuditStatus.textContent = `Collection status unavailable: ${err.message}`; els.centralAuditHealthBody.textContent = ''; }
   }
 }
 
@@ -8476,8 +8507,8 @@ function applyLogsRange(range) {
 }
 
 function downloadLogsCsv() {
-  const rows = (state.logsLast || []).map((record) => ({ timestamp: fmtLogTime(record.timestamp_ms), timestamp_ms: record.timestamp_ms || '', source: record.source || '', type: record.type || '', subject: record.subject || '', message: record.message || '', details: JSON.stringify(record.details || {}) }));
-  downloadTextFile({ filename: `opcbridge-${els.logsSource?.value || 'logs'}.csv`, mime: 'text/csv;charset=utf-8', text: toCsv(rows, ['timestamp','timestamp_ms','source','type','subject','message','details']) });
+  const rows = (state.logsLast || []).map((record) => ({ timestamp: fmtLogTime(record.timestamp_ms), timestamp_ms: record.timestamp_ms || '', source: record.source || '', type: record.type || '', subject: record.subject || '', message: record.message || '', station: record.station || '', actor: record.actor || '', attribution: record.attribution || '', details: JSON.stringify(record.details || {}) }));
+  downloadTextFile({ filename: `opcbridge-${els.logsSource?.value || 'logs'}.csv`, mime: 'text/csv;charset=utf-8', text: toCsv(rows, ['timestamp','timestamp_ms','source','type','subject','message','station','actor','attribution','details']) });
 }
 
 function wireLogsUi() {
@@ -8494,7 +8525,8 @@ function wireLogsUi() {
 	      { value: 'opcbridge_runtime', label: 'OPCBridge runtime diagnostics' },
 	      { value: 'alarm_history', label: 'Alarm history' },
 	      { value: 'tracked_tag_events', label: 'Tracked tag events' },
-      { value: 'hmi_audit', label: 'HMI audit' }
+      { value: 'hmi_audit', label: 'HMI audit' },
+      { value: 'central_audit', label: 'Central audit (all enrolled nodes)' }
     ].map((s) => `<option value="${escapeHtml(s.value)}">${escapeHtml(s.label)}</option>`).join('');
   }
 
@@ -8522,9 +8554,10 @@ function wireLogsUi() {
     const source = String(els.logsSource?.value || 'systemd').trim() || 'systemd';
     if (els.logsUnitRow) els.logsUnitRow.style.display = source === 'systemd' ? '' : 'none';
     const show = (row, visible) => { if (row) row.style.display = visible ? '' : 'none'; };
-    show(els.logsConnectionRow, ['tracked_tag_events','alarm_history','hmi_audit'].includes(source)); show(els.logsTagRow, ['tracked_tag_events','alarm_history','hmi_audit'].includes(source));
-    show(els.logsAlarmRow, source === 'alarm_history'); show(els.logsTypeRow, source === 'alarm_history'); show(els.logsUserRow, source === 'hmi_audit'); show(els.logsResultRow, source === 'hmi_audit');
-    show(els.logsGroupRow, source === 'alarm_history'); show(els.logsSiteRow, source === 'alarm_history'); show(els.logsSeverityRow, source === 'alarm_history');
+    show(els.logsConnectionRow, ['tracked_tag_events','alarm_history','hmi_audit','central_audit'].includes(source)); show(els.logsTagRow, ['tracked_tag_events','alarm_history','hmi_audit','central_audit'].includes(source));
+    show(els.logsAlarmRow, source === 'alarm_history'); show(els.logsTypeRow, source === 'alarm_history'); show(els.logsUserRow, ['hmi_audit','central_audit'].includes(source)); show(els.logsResultRow, ['hmi_audit','central_audit'].includes(source));
+    document.querySelectorAll('.logs-central-only').forEach(element => { element.style.display = source === 'central_audit' ? '' : 'none'; });
+    show(els.logsGroupRow, source === 'alarm_history'); show(els.logsSiteRow, ['alarm_history','central_audit'].includes(source)); show(els.logsSeverityRow, source === 'alarm_history');
   };
   if (els.logsSource) {
     els.logsSource.addEventListener('change', () => {
@@ -11423,6 +11456,7 @@ function setTab(id) {
   document.body.classList.toggle('app-viewport', !REPORTS_PORTAL_MODE || id === 'reports');
   if (id !== 'reports') document.body.classList.remove('reports-builder-active');
 
+  if (id === 'configure') refreshCentralServerSettings().catch(() => {});
   if (id === 'users') {
     refreshUsersPanel().catch(() => {});
     refreshUserAuthLine().catch(() => {});
@@ -28205,6 +28239,7 @@ async function refreshVisible() {
     if (isPanelActive('tab-overview')) refreshComponentVersions().catch(() => {});
     setAlarmRuntimeWarningUi(computeAlarmRuntimeWarning(alarmsStatus));
 
+    if (isPanelActive('tab-configure')) refreshCentralServerSettings().catch(() => {});
     const wantLiveTags = isPanelActive('tab-workspace') || isPanelActive('tab-tags');
     if (wantLiveTags) {
       const tags = await loadVisibleLiveTags();
@@ -28451,22 +28486,117 @@ function setUsersDirectoryStatus(msg) {
   if (els.usersDirectoryStatus) els.usersDirectoryStatus.textContent = String(msg || '');
 }
 
-function setUsersIdentityStatus(msg) {
-  if (els.usersIdentityStatus) els.usersIdentityStatus.textContent = String(msg || '');
+const centralField = id => document.getElementById(id);
+let centralSettingsLoaded = false;
+let centralSavedRole = 'standalone';
+let centralSettingsRefreshing = null;
+function updateCentralRoleFields() {
+  const role = centralField('centralRole')?.value;
+  for (const [id, visible] of [['centralIdentityFields', role !== 'standalone'], ['centralConnectionFields', role === 'connected'], ['centralEnrollmentFields', role === 'central'], ['centralTransportFields', role !== 'standalone'], ['centralSyncBtn', role === 'connected']]) {
+    const element = centralField(id); if (element) element.style.display = visible ? '' : 'none';
+  }
 }
+function addCentralEnrollment(node = {}) {
+  const row = document.createElement('tr');
+  for (const key of ['site_id', 'node_id', 'token']) {
+    const cell = document.createElement('td'); const input = document.createElement('input');
+    input.dataset.field = key; input.value = node[key] || ''; input.setAttribute('aria-label', key === 'token' ? 'Installation credential' : key === 'site_id' ? 'Site ID' : 'Installation ID');
+    input.placeholder = key === 'token' ? 'Unchanged when blank' : key === 'site_id' ? 'plant-1' : 'panel-1';
+    input.autocomplete = 'off'; cell.appendChild(input); row.appendChild(cell);
+  }
+  const actions = document.createElement('td');
+  const generate = document.createElement('button'); generate.type = 'button'; generate.className = 'btn'; generate.textContent = 'Generate';
+  generate.addEventListener('click', () => {
+    const bytes = new Uint8Array(32); crypto.getRandomValues(bytes);
+    row.querySelector('[data-field="token"]').value = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+    centralField('centralSaveStatus').textContent = 'Copy the generated credential to the installation, then save these settings.';
+  });
+  const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'btn'; remove.textContent = 'Remove'; remove.addEventListener('click', () => row.remove());
+  actions.append(generate, remove); row.appendChild(actions); centralField('centralEnrollmentBody').appendChild(row);
+}
+function renderCentralServerHealth(health = {}, hmi = null) {
+  const identity = health.identity || {}; const audit = health.audit || {};
+  const date = value => value ? new Date(value).toLocaleString() : 'Never';
+  const messages = [];
+  if (centralSavedRole === 'connected') messages.push(`Users last synchronized: ${date(identity.last_sync_ms)}.${identity.last_error ? ` ${identity.last_error}` : ''}`);
+  for (const [label, status] of [['SCADA', audit.forwarding], ['HMI', hmi?.forwarding]]) {
+    if (status?.enabled) messages.push(`${label}: ${status.pending_count ?? 'unknown'} queued; last delivery ${date(status.last_success_ms)}.${status.last_error ? ` ${status.last_error}` : ''}${status.last_capture_error ? ` Capture error: ${status.last_capture_error}` : ''}`);
+  }
+  if (audit.config_error) messages.push(audit.config_error);
+  if (hmi?.config_error) messages.push(`HMI: ${hmi.config_error}`);
+  if (audit.collector?.last_error) messages.push(audit.collector.last_error);
+  if (centralSavedRole === 'central') messages.push('This installation collects local and enrolled installation events. No contact means records may still be pending at that installation.');
+  centralField('centralHealth').textContent = messages.join(' ') || 'Standalone: users and audit records stay local.';
+  const body = centralField('centralHealthBody'); body.textContent = '';
+  for (const node of audit.collector?.nodes || []) for (const component of node.components?.length ? node.components : [{}]) {
+    const row = document.createElement('tr');
+    for (const text of [node.site_id, node.node_id, component.component || '—', date(component.last_received_ms), component.reported_pending_count ?? '—', component.reported_error || component.reported_capture_error || (!component.last_received_ms ? 'No contact yet' : Date.now() - component.last_received_ms > 120000 ? 'Stale' : 'Recent contact')]) appendTextCell(row, text);
+    body.appendChild(row);
+  }
+  centralField('centralHealthTable').style.display = audit.collector?.enabled ? '' : 'none';
+}
+async function refreshCentralServerSettings({ populate = !centralSettingsLoaded } = {}) {
+  if (!canAccessConfigureTab()) return;
+  if (centralSettingsRefreshing) {
+    await centralSettingsRefreshing;
+    if (!populate) return;
+  }
+  let finishRefresh;
+  centralSettingsRefreshing = new Promise(resolve => { finishRefresh = resolve; });
+  try {
+    const data = await apiGet('/api/central-server');
+    centralSavedRole = data.settings?.role || 'standalone';
+    if (populate) {
+      const settings = data.settings || {};
+      for (const [id, key] of [['centralRole','role'], ['centralName','name'], ['centralAddress','address'], ['centralSiteId','site_id'], ['centralNodeId','node_id'], ['centralUsername','username']]) centralField(id).value = settings[key] || (key === 'role' ? 'standalone' : '');
+      centralField('centralInterval').value = Math.round((settings.interval_ms || 60000) / 1000);
+      centralField('centralAllowHttp').checked = settings.allow_http === true;
+      centralField('centralPassword').value = ''; centralField('centralToken').value = '';
+      centralField('centralToken').placeholder = settings.token_set ? 'Unchanged when blank' : 'Paste the credential from the central server';
+      centralField('centralEnrollmentBody').textContent = '';
+      for (const node of settings.nodes || []) addCentralEnrollment(node);
+      centralSettingsLoaded = true; updateCentralRoleFields();
+      if (!settings.managed && settings.role !== 'standalone') centralField('centralSaveStatus').textContent = 'Existing settings detected. Save here to combine users and audit logging under this connection.';
+    }
+    let hmi = null;
+    try { hmi = (await apiGet('/api/hmi/api/audit/status')).central_audit; } catch { /* HMI is optional. */ }
+    renderCentralServerHealth(data.health, hmi);
+  } catch (error) { centralField('centralHealth').textContent = `Connection health unavailable: ${error.message}`; }
+  finally { centralSettingsRefreshing = null; finishRefresh(); }
+}
+async function saveCentralServerSettings() {
+  const button = centralField('centralSaveBtn'); button.disabled = true;
+  centralField('centralSaveStatus').textContent = 'Saving central settings…';
+  try {
+    const value = id => centralField(id).value.trim();
+    const body = {
+      role: value('centralRole'), name: value('centralName'), address: value('centralAddress'), site_id: value('centralSiteId'), node_id: value('centralNodeId'),
+      username: value('centralUsername'), password: centralField('centralPassword').value, token: value('centralToken'),
+      interval_ms: Math.max(15, Number(value('centralInterval')) || 60) * 1000, allow_http: centralField('centralAllowHttp').checked,
+      nodes: Array.from(centralField('centralEnrollmentBody').children, row => Object.fromEntries(Array.from(row.querySelectorAll('input'), input => [input.dataset.field, input.value.trim()])))
+    };
+    const result = await apiJson('/api/central-server', { method: 'PUT', bodyObj: body, timeoutMs: 60000 });
+    await refreshCentralServerSettings({ populate: true });
+    centralField('centralSaveStatus').textContent = result.sync?.ok === false ? `Settings saved. Users are using the local cache; synchronization failed: ${result.sync.error}` : 'Central settings saved. Both users and audit logging follow the selected role.';
+    await refreshUsersPanel().catch(() => {});
+  } catch (error) { centralField('centralSaveStatus').textContent = `Save failed: ${error.message}`; }
+  finally { button.disabled = false; }
+}
+centralField('centralRole')?.addEventListener('change', updateCentralRoleFields);
+centralField('centralAddNodeBtn')?.addEventListener('click', () => addCentralEnrollment({ site_id: centralField('centralSiteId').value.trim() }));
+centralField('centralSaveBtn')?.addEventListener('click', saveCentralServerSettings);
+centralField('centralRefreshBtn')?.addEventListener('click', () => refreshCentralServerSettings());
+centralField('centralSyncBtn')?.addEventListener('click', async () => {
+  try { await apiJson('/api/users/identity-sync', { method: 'POST', bodyObj: {}, timeoutMs: 60000 }); await refreshCentralServerSettings(); }
+  catch (error) { centralField('centralSaveStatus').textContent = `User synchronization failed: ${error.message}`; }
+});
+updateCentralRoleFields();
 
 function renderUsersIdentity(identity = {}) {
   const mode = identity.mode === 'central' ? 'central' : 'local';
   state.usersIdentity = { ...state.usersIdentity, ...identity, mode };
-  if (els.usersIdentityMode) els.usersIdentityMode.value = mode;
-  if (els.usersIdentityCentralFields) els.usersIdentityCentralFields.style.display = mode === 'central' ? 'block' : 'none';
-  if (els.usersIdentityCentralName && document.activeElement !== els.usersIdentityCentralName) els.usersIdentityCentralName.value = String(identity.central_name || '');
-  if (els.usersIdentityCentralUrl && document.activeElement !== els.usersIdentityCentralUrl) els.usersIdentityCentralUrl.value = String(identity.central_url || '');
-  if (identity.username !== undefined && els.usersIdentityUsername && document.activeElement !== els.usersIdentityUsername) els.usersIdentityUsername.value = String(identity.username || '');
-  if (identity.interval_ms && els.usersIdentityInterval) els.usersIdentityInterval.value = String(Math.max(15, Math.round(Number(identity.interval_ms) / 1000)));
   if (els.usersLocalDirectoryControls) els.usersLocalDirectoryControls.style.display = mode === 'local' ? 'block' : 'none';
   if (els.usersCentralDirectoryNotice) els.usersCentralDirectoryNotice.style.display = mode === 'central' ? 'flex' : 'none';
-  if (els.usersIdentitySyncBtn) els.usersIdentitySyncBtn.style.display = mode === 'central' ? '' : 'none';
   if (els.usersCentralDirectoryNoticeText && mode === 'central') {
     const last = Number(identity.last_sync_ms || 0) ? new Date(Number(identity.last_sync_ms)).toLocaleString() : 'never';
     els.usersCentralDirectoryNoticeText.textContent = `Users are managed by ${identity.central_name || 'the central directory'} at ${identity.central_url || 'an unspecified address'}. Cached login remains available if it is offline. Last sync: ${last}${identity.last_error ? ` · Error: ${identity.last_error}` : ''}`;
@@ -28479,7 +28609,7 @@ async function refreshUsersIdentitySettings() {
     const data = await apiGet('/api/users/identity-settings');
     renderUsersIdentity(data.settings || {});
   } catch (err) {
-    setUsersIdentityStatus(`Identity settings failed: ${err.message}`);
+    setUsersStatus(`Identity status failed: ${err.message}`);
   }
 }
 
@@ -29024,43 +29154,6 @@ async function refreshUsersPanel() {
 
 function wireUsersUi() {
   if (els.usersRefreshBtn) els.usersRefreshBtn.addEventListener('click', refreshUsersPanel);
-  els.usersIdentityMode?.addEventListener('change', () => {
-    if (els.usersIdentityCentralFields) els.usersIdentityCentralFields.style.display = els.usersIdentityMode.value === 'central' ? 'block' : 'none';
-  });
-  els.usersIdentitySaveBtn?.addEventListener('click', async () => {
-    const mode = els.usersIdentityMode?.value === 'central' ? 'central' : 'local';
-    if (mode === 'local' && state.usersIdentity.mode === 'central' && !window.confirm('Switch back to the preserved local user directory? Central users and password changes will no longer apply here.')) return;
-    setUsersIdentityStatus('Saving identity source…');
-    try {
-      const body = {
-        mode,
-        central_name: String(els.usersIdentityCentralName?.value || '').trim(),
-        central_url: String(els.usersIdentityCentralUrl?.value || '').trim(),
-        username: String(els.usersIdentityUsername?.value || '').trim(),
-        password: String(els.usersIdentityPassword?.value || ''),
-        interval_ms: Math.max(15, Number(els.usersIdentityInterval?.value) || 60) * 1000
-      };
-      const result = await apiJson('/api/users/identity-settings', { method: 'PUT', bodyObj: body, timeoutMs: 45000 });
-      if (els.usersIdentityPassword) els.usersIdentityPassword.value = '';
-      renderUsersIdentity(result.settings || body);
-      await Promise.all([refreshUserAuthLine(), refreshUsersPanel()]);
-      setUsersIdentityStatus(mode === 'central'
-        ? (result.sync?.ok ? 'Central directory enabled and synchronized.' : `Central directory enabled using its cached copy. Sync failed: ${result.sync?.error || 'unknown error'}`)
-        : 'Local directory restored.');
-    } catch (err) {
-      setUsersIdentityStatus(`Save failed: ${err.message}`);
-    }
-  });
-  els.usersIdentitySyncBtn?.addEventListener('click', async () => {
-    setUsersIdentityStatus('Synchronizing…');
-    try {
-      const result = await apiPostJson('/api/users/identity-sync', {}, { timeoutMs: 45000 });
-      await Promise.all([refreshUserAuthLine(), refreshUsersPanel()]);
-      setUsersIdentityStatus(`Synchronized ${result.users || 0} users and ${result.groups || 0} groups.`);
-    } catch (err) {
-      setUsersIdentityStatus(`Sync failed: ${err.message}`);
-    }
-  });
   els.usersCentralDirectoryOpenBtn?.addEventListener('click', () => {
     let address = String(state.usersIdentity.central_url || '').trim();
     if (!address) return;
