@@ -145,6 +145,8 @@ Modbus TCP connections use the same connection file shape with `driver` set to `
 
 For Modbus TCP, `gateway` is the Modbus server IP/host with optional port, and `path` is the Modbus unit/server ID (`0`-`255`). If `path` is omitted, opcbridge defaults to unit ID `1`.
 
+Modbus read failures are retried with a one-second backoff. If errors persist for 30 seconds without any successful read on the connection, opcbridge automatically reloads that connection using a fresh TCP transport. Recovery coordinates all polling lanes and writes; other connections continue polling. A successful read on any tag prevents a connection reset. The server log reports `rebuilding transport` when automatic recovery starts.
+
 3.2 Tags — config/tags/*.json
 
 Each file defines a set of tags belonging to one connection:

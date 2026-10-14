@@ -41,6 +41,7 @@
 #include <algorithm>
 #include <regex>
 #include <array>
+#include <tuple>
 #include <functional>
 #include "modbus_read_recovery.h"
 
@@ -5299,8 +5300,20 @@ static void init_tag_scaling(TagRuntime &rt, const std::string &sourcePathForLog
     rt.out_datatype = outDt.empty() ? std::string("float64") : outDt;
 }
 
+// libplctag shares Modbus transports by gateway, unit, and connection group.
+// Rotate the group on recovery so replacement handles cannot reuse a stuck socket.
+static std::mutex g_modbusTransportMutex;
+static std::unordered_map<std::string, int> g_modbusTransportGroups;
+static int g_nextModbusTransportGroup = 1;
+
 std::string build_base_conn_str(const ConnectionConfig &c, const std::string &pathOverride = std::string{}) {
     std::string s = is_modbus_connection(c) ? "protocol=modbus_tcp" : "protocol=ab_eip";
+    if (is_modbus_connection(c)) {
+        std::lock_guard<std::mutex> lock(g_modbusTransportMutex);
+        auto &group = g_modbusTransportGroups[c.id];
+        if (group == 0) group = g_nextModbusTransportGroup++;
+        s += "&connection_group_id=" + std::to_string(group);
+    }
     s += "&gateway=" + c.gateway;
     const std::string effectivePath = trim_copy(pathOverride).empty() ? c.path : trim_copy(pathOverride);
     s += "&path=" + effectivePath;
@@ -29951,7 +29964,45 @@ window.addEventListener("load", startAutoRefresh);
 	        });
 	        logicSchedulerThread.detach();
 
+        std::unordered_map<std::string, ModbusConnectionRecovery> modbusConnectionRecovery;
 	        while (true) {
+            // Snapshot counters without nesting runtime locks under the reload lock.
+            std::vector<std::tuple<std::string, uint64_t, uint64_t>> modbusCounters;
+            {
+                std::lock_guard<std::mutex> driverLock(driverMutex);
+                std::lock_guard<std::mutex> metricsLock(g_metricsMutex);
+                for (const auto &driver : drivers) {
+                    if (!is_modbus_connection(driver.conn)) continue;
+                    auto metrics = g_connPollMetrics.find(driver.conn.id);
+                    if (metrics == g_connPollMetrics.end() || !metrics->second) continue;
+                    modbusCounters.emplace_back(driver.conn.id,
+                        metrics->second->reads_ok.load(std::memory_order_relaxed),
+                        metrics->second->reads_err.load(std::memory_order_relaxed));
+                }
+            }
+            // The normal reload path joins every lane and excludes writes before
+            // replacing handles. Never overwrite a reload requested by the user.
+            {
+                std::lock_guard<std::mutex> reloadLock(g_reloadMutex);
+                const auto now = std::chrono::steady_clock::now();
+                for (const auto &counters : modbusCounters) {
+                    const auto &id = std::get<0>(counters);
+                    auto &recovery = modbusConnectionRecovery[id];
+                    const bool needsRecovery = recovery.observe(std::get<1>(counters), std::get<2>(counters), now);
+                    if (!needsRecovery || g_reloadState.requested || g_reloadState.in_progress) continue;
+                    {
+                        std::lock_guard<std::mutex> transportLock(g_modbusTransportMutex);
+                        g_modbusTransportGroups[id] = g_nextModbusTransportGroup++;
+                    }
+                    g_reloadState = ReloadState{};
+                    g_reloadState.requested = true;
+                    g_reloadState.gen = g_reloadRequestGeneration.fetch_add(1, std::memory_order_relaxed) + 1;
+                    g_reloadState.target_connection_id = id;
+                    recovery.reset(now);
+                    std::cerr << "Modbus connection [" << id
+                              << "] has no successful reads for 30 seconds after errors; rebuilding transport." << std::endl;
+                }
+            }
 	            // Handle /reload requests (triggered by the HTTP thread) in the main thread.
 		            bool doReload = false;
 		            uint64_t requestedGen = 0;
