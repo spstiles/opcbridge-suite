@@ -1,3 +1,5 @@
+#include "async_poll_batch.h"
+#include "poll_sweep_estimate.h"
 // main.cpp - AB/libplctag "OPC bridge core" with:
 //   - JSON-with-comments config for connections/tags
 //   - Multi-connection EtherNet/IP via libplctag
@@ -23905,6 +23907,8 @@ window.addEventListener("load", startAutoRefresh);
 								double sweep_ms_last = 0.0;
 								double sweep_ms_avg_10s = 0.0;
 								double sweep_ms_avg_60s = 0.0;
+                                double sweep_elapsed_ms = 0.0;
+                                uint64_t sweep_seen_count = 0;
 								std::shared_ptr<ConnPollMetrics> connectionMetrics;
 								std::string runtimeIssue;
 
@@ -23941,6 +23945,11 @@ window.addEventListener("load", startAutoRefresh);
 											sweep_ms_last = m->sweep_ms_last;
 											sweep_ms_avg_10s = average_connection_sweep_ms_locked(*m, 10000, now_epoch_ms);
 											sweep_ms_avg_60s = average_connection_sweep_ms_locked(*m, 60000, now_epoch_ms);
+                                            sweep_seen_count = m->sweep_seen_count;
+                                            if (m->sweep_started_steady.time_since_epoch().count() != 0) {
+                                                sweep_elapsed_ms = std::chrono::duration<double, std::milli>(
+                                                    std::chrono::steady_clock::now() - m->sweep_started_steady).count();
+                                            }
 										}
 									}
 								}
@@ -23948,27 +23957,14 @@ window.addEventListener("load", startAutoRefresh);
 
 								large_time_sliced = (driver.conn.polling_mode == "time_sliced" || driver.tags.size() >= 500);
 								if (large_time_sliced) {
-									double reads_per_sec = 0.0;
-									const double configured_reads_per_sec = (driver.conn.poll_max_reads_per_sec > 0)
-										? static_cast<double>(driver.conn.poll_max_reads_per_sec)
-										: 0.0;
-									const double measured_reads_per_sec = (measured_read_ms_avg > 0.0)
-										? (1000.0 / measured_read_ms_avg) * static_cast<double>(std::max(1, driver.conn.poll_lanes))
-										: 0.0;
-									if (configured_reads_per_sec > 0.0 && measured_reads_per_sec > 0.0) {
-										reads_per_sec = std::min(configured_reads_per_sec, measured_reads_per_sec);
-									} else if (configured_reads_per_sec > 0.0) {
-										reads_per_sec = configured_reads_per_sec;
-									} else if (measured_reads_per_sec > 0.0) {
-										reads_per_sec = measured_reads_per_sec;
-									}
-									const uint64_t effective_tag_count = poll_tag_count > 0
-										? poll_tag_count
-										: static_cast<uint64_t>(driver.tags.size());
-									if (reads_per_sec > 0.0 && effective_tag_count > 0) {
-										expected_sweep_ms = static_cast<int64_t>(
-											std::ceil((static_cast<double>(effective_tag_count) / reads_per_sec) * 1000.0)
-										);
+                                    const uint64_t effective_tag_count = poll_tag_count > 0
+                                        ? poll_tag_count
+                                        : static_cast<uint64_t>(driver.tags.size());
+                                    expected_sweep_ms = estimate_poll_sweep_ms(
+                                        sweep_ms_last, sweep_ms_avg_10s, sweep_elapsed_ms,
+                                        sweep_seen_count, effective_tag_count,
+                                        driver.conn.poll_max_reads_per_sec, driver.conn.poll_lanes);
+                                    if (expected_sweep_ms > 0) {
 										// In large time-sliced configs, a tag being older than its requested scan_ms
 										// is expected. Judge health against the achievable sweep time instead.
 										freshness_budget_ms = std::max<int64_t>(freshness_budget_ms, expected_sweep_ms + 30000);
@@ -28769,6 +28765,69 @@ window.addEventListener("load", startAutoRefresh);
 							const auto minReadInterval = (maxReadsPerSec > 0)
 								? std::chrono::microseconds(std::max<int64_t>(1, 1000000LL / maxReadsPerSec))
 								: std::chrono::microseconds(0);
+                            struct LogixReadResult {
+                                int status;
+                                std::chrono::steady_clock::time_point started, finished;
+                                TagSnapshot snapshot;
+                                std::vector<TagSnapshot> elements;
+                            };
+                            std::unordered_map<size_t, LogixReadResult> logixPrefetch;
+                            const std::string logixCpu = to_lower_copy(spec.conn.plc_type);
+                            const bool batchLogix = !is_modbus_connection(spec.conn) &&
+                                !is_opcua_client_driver_name(spec.conn.driver) && maxReadsPerSec == 0 &&
+                                spec.conn.default_read_ms > 0 &&
+                                (logixCpu == "lgx" || logixCpu == "logix" || logixCpu == "controllogix" ||
+                                 logixCpu == "clgx" || logixCpu == "compactlogix");
+                            // Called only with lifecycle and connection gates held. Cache values,
+                            // not handles: a writer can change a handle before publication.
+                            auto prefetchLogixDue = [&](size_t requested, auto dueNow) {
+                                if (!batchLogix || logixPrefetch.count(requested)) return;
+                                std::vector<size_t> indices;
+                                indices.push_back(requested);
+                                for (size_t i = 0; i < spec.tags.size() && indices.size() < static_cast<size_t>(batchSize); ++i) {
+                                    const auto &candidate = spec.tags[i];
+                                    if (i != requested && candidate.next_poll <= dueNow &&
+                                        !logixPrefetch.count(i) && candidate.handle >= 0 &&
+                                        !candidate.handle_deferred && plc_tag_status(candidate.handle) == PLCTAG_STATUS_OK)
+                                        indices.push_back(i);
+                                }
+                                async_poll_batch(indices, spec.conn.default_read_ms,
+                                    PLCTAG_STATUS_PENDING, PLCTAG_ERR_TIMEOUT,
+                                    [&](size_t i) { return plc_tag_read(spec.tags[i].handle, 0); },
+                                    [&](size_t i) { return plc_tag_status(spec.tags[i].handle); },
+                                    [&](size_t i) { plc_tag_abort(spec.tags[i].handle); },
+                                    [&](size_t i, int rc, auto began) {
+                                        auto &item = spec.tags[i];
+                                        LogixReadResult result;
+                                        result.status = rc;
+                                        result.started = began;
+                                        result.finished = std::chrono::steady_clock::now();
+                                        if (rc == PLCTAG_STATUS_OK) {
+                                            TagRuntime runtime;
+                                            runtime.cfg = item.cfg;
+                                            runtime.handle = item.handle;
+                                            runtime.scaling_linear = item.scaling_linear;
+                                            runtime.scale_slope = item.scale_slope;
+                                            runtime.scale_offset = item.scale_offset;
+                                            runtime.out_datatype = item.out_datatype;
+                                            if (item.cfg.elem_count <= 1) {
+                                                update_snapshot_from_plc(result.snapshot, spec.conn, runtime);
+                                            } else {
+                                                const auto timestamp = std::chrono::system_clock::now();
+                                                for (int n = 0; n < item.cfg.elem_count; ++n) {
+                                                    TagSnapshot value;
+                                                    runtime.cfg.logical_name = item.cfg.logical_name + "[" + std::to_string(n) + "]";
+                                                    update_snapshot_from_plc_at_offset(value, spec.conn, runtime,
+                                                        n * static_cast<int>(datatype_size_bytes(item.cfg.datatype)));
+                                                    value.timestamp = timestamp;
+                                                    result.elements.push_back(std::move(value));
+                                                }
+                                            }
+                                        }
+                                        logixPrefetch.emplace(i, std::move(result));
+                                    }, [&] { return spec.stop_requested->load(std::memory_order_relaxed) ||
+                                        g_configGeneration.load(std::memory_order_relaxed) != spec.gen; });
+                            };
 							auto lastReadFinished = std::chrono::steady_clock::now() - minReadInterval;
 							size_t batchReads = 0;
 							auto batchStarted = std::chrono::steady_clock::now();
@@ -28932,7 +28991,7 @@ window.addEventListener("load", startAutoRefresh);
 		                                    if (t.handle < 0) {
 		                                        status = PLCTAG_ERR_NOT_FOUND;
 		                                    } else {
-                                                int32_t handleStatus = plc_tag_status(t.handle);
+                                                int32_t handleStatus = logixPrefetch.count(top.idx) ? PLCTAG_STATUS_OK : plc_tag_status(t.handle);
 			                                if (handleStatus == PLCTAG_STATUS_PENDING) {
 			                                    if (!t.handle_pending_observed) {
 			                                        t.handle_pending_observed = true;
@@ -28972,9 +29031,18 @@ window.addEventListener("load", startAutoRefresh);
 		                                    status = handleStatus;
 		                                } else {
 			                                publishReadyDeferredHandle(t);
-		                                auto t0 = std::chrono::steady_clock::now();
-		                                status = plc_tag_read(t.handle, spec.conn.default_read_ms);
-		                                auto t1 = std::chrono::steady_clock::now();
+                                        prefetchLogixDue(top.idx, nowSteady);
+                                        auto prefetchedLogix = logixPrefetch.find(top.idx);
+                                        auto t0 = std::chrono::steady_clock::now();
+                                        auto t1 = t0;
+                                        if (prefetchedLogix != logixPrefetch.end()) {
+                                            status = prefetchedLogix->second.status;
+                                            t0 = prefetchedLogix->second.started;
+                                            t1 = prefetchedLogix->second.finished;
+                                        } else {
+                                            status = plc_tag_read(t.handle, spec.conn.default_read_ms);
+                                            t1 = std::chrono::steady_clock::now();
+                                        }
                                                 if (modbusRecovery) {
                                                     t.modbus_recovery.completed(status == PLCTAG_STATUS_OK, t1);
                                                     if (status == PLCTAG_STATUS_OK) publishReadyDeferredHandle(t);
@@ -29005,7 +29073,11 @@ window.addEventListener("load", startAutoRefresh);
 		                                }
 		                                record_connection_sweep_progress(spec.metrics, t.sweep_index, spec.total_tag_count);
 
-		                                if (status == PLCTAG_STATUS_OK) {
+                                        if (prefetchedLogix != logixPrefetch.end()) {
+                                            snap = std::move(prefetchedLogix->second.snapshot);
+                                            elemSnaps = std::move(prefetchedLogix->second.elements);
+                                            logixPrefetch.erase(prefetchedLogix);
+                                        } else if (status == PLCTAG_STATUS_OK) {
 		                                    TagRuntime tmp;
 	                                    tmp.cfg = t.cfg;
 	                                    tmp.handle = t.handle;

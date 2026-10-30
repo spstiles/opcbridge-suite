@@ -196,6 +196,10 @@ Common fields:
 - enabled: Optional (default true). Disabled tags remain visible but are not polled.
 - invert: Optional (bool only). Publishes the logical NOT of the bool value (applies to direct bool tags, derived-bit tags, and derived-alias bool tags).
 
+For ControlLogix/CompactLogix connections, the poller queues bounded groups of due reads asynchronously so libplctag can pack multiple tag requests into CIP packets. Each read retains its own timeout and quality result. Completed scalar and array values are copied while reads and writes are coordinated, before normal publication. This does not provide an atomic PLC snapshot. Connection health estimates sweep time from measured wall-clock sweeps (the slower of the latest sweep and the recent ten-second average). Before the first sweep finishes, it projects elapsed wall time from distinct-tag progress; configured read-rate limits provide a minimum sweep duration. Overlapping per-tag read durations are not summed.
+
+The connection's `poll_batch_size` limits each group; when unset, pacing selects 25 (`gentle`), 100 (`balanced`), or 250 (`fast`). Only tags already due in the same polling lane are grouped. Actual packet packing depends on the PLC, route, and packet capacity. Connections with `poll_max_reads_per_sec` set above zero retain sequential reads, as do other PLC types and Modbus.
+
 Direct PLC tag fields:
 
 - plc_tag_name: PLC tag/address to read/write via libplctag.
