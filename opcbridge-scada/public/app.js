@@ -11558,8 +11558,12 @@ function renderOverviewHealth(health, metrics = null) {
   if (els.overviewHealthConnections) {
     const lines = [];
     const metricConns = metrics?.connections && typeof metrics.connections === 'object' ? metrics.connections : {};
-    Object.entries(conns).forEach(([cid, info]) => {
-      const connectionName = displayConnectionName(cid);
+    const sortedConnections = Object.entries(conns)
+      .map(([cid, info]) => ({ cid, info, connectionName: displayConnectionName(cid) }))
+      .sort((a, b) =>
+        a.connectionName.localeCompare(b.connectionName, undefined, { sensitivity: 'base', numeric: true })
+        || a.cid.localeCompare(b.cid));
+    sortedConnections.forEach(({ cid, info, connectionName }) => {
       const st = String(info?.status || 'unknown');
       const metricInfo = metricConns[cid] && typeof metricConns[cid] === 'object' ? metricConns[cid] : {};
       const actionableIssue = String(info?.runtime_issue || '').trim();
