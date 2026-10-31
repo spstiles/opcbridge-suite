@@ -12741,6 +12741,7 @@ async function importDevicesCsvIntoWorkspace() {
     if (isDeleteAction(csvGet(r, 'action'))) {
       if (!existingPath) { skipped += 1; return; }
       state.workspaceDeletePaths?.add?.(relPath);
+      state.workspaceDeletedTagConnectionIds.add(connection_id);
       state.workspaceConnDirty?.delete?.(relPath);
       state.connObjCache?.delete?.(relPath);
       state.connFiles = (state.connFiles || []).filter((f) => String(f?.path || '') !== relPath);
@@ -20199,6 +20200,7 @@ async function saveEditedDeviceFromModal() {
     if (!state.workspaceDeletePaths) state.workspaceDeletePaths = new Set();
     state.workspaceDeletePaths.add(relPath);
     state.workspaceDeletePaths.add(`tags/${oldId}.json`);
+    state.workspaceDeletedTagConnectionIds.add(oldId);
 
     state.connFiles = (state.connFiles || []).filter((f) => String(f?.path || '') !== relPath);
     if (!state.connFiles.some((f) => String(f?.path || '') === newRelPath)) {
@@ -21288,21 +21290,11 @@ async function deleteDeviceById(connectionId, pathRel) {
   try {
     await apiPostJson('/api/opcbridge/config/delete', { path: relPath });
 
-    // Remove tags for this connection_id
+    // The backend deletes all tag stores owned by this connection.
     try {
-      const baseTags = Array.isArray(state.tagConfigLoadedAll) ? state.tagConfigLoadedAll : state.tagConfigAll;
-      const remaining = state.tagConfigAll.filter((t) => String(t?.connection_id || '') !== cid);
-      const tagsOut = remaining.map(sanitizeTagForPost);
-      const emptied = computeEmptiedTagConnectionIds(baseTags, remaining);
-      if (tagsOut.length > 0) {
-        await apiPostJson('/api/opcbridge/config/tags', { tags: tagsOut });
-      }
-      if (emptied.length > 0) {
-        await writeEmptyCanonicalTagFilesForConnections(emptied);
-      }
       await loadTagsConfig();
-    } catch {
-      // ignore
+    } catch (err) {
+      throw new Error(`Device deleted, but refreshing tags failed: ${err.message}`);
     }
 
     if (state.selectedNodeId && String(state.selectedNodeId).includes(relPath)) {
@@ -27106,7 +27098,12 @@ async function saveWorkspaceAllImpl({ applyPolling = false, rebuildOpcua = false
       for (const relPath of Array.from(state.workspaceDeletePaths.values())) {
         const oldObj = state.connObjCache?.get?.(relPath);
         const oldId = String(oldObj?.id || connectionIdForConnFilePath(relPath) || '').trim();
-        if (oldId) changedConnectionIds.add(oldId);
+        if (oldId) {
+          changedConnectionIds.add(oldId);
+          if (String(relPath).startsWith('connections/')) {
+            state.workspaceDeletedTagConnectionIds.add(oldId);
+          }
+        }
         try {
           await apiPostJson('/api/opcbridge/config/delete', { path: relPath });
         } catch (err) {

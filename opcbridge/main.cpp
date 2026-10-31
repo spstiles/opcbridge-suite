@@ -65,6 +65,7 @@
 
 #include <libplctag.h>      // IMPORTANT: libplctag header
 #include <nlohmann/json.hpp>
+#include "connection_tag_cleanup.h"
 #ifndef CPPHTTPLIB_LISTEN_BACKLOG
 #define CPPHTTPLIB_LISTEN_BACKLOG 128
 #endif
@@ -10638,7 +10639,10 @@ bool load_all_drivers(std::vector<DriverContext> &outDrivers,
     }
     for (const auto &kv : tags_by_conn) {
         const std::string &conn_id = kv.first;
-        if (connection_map.count(conn_id)) continue;
+        // Empty orphan files are often left behind by deleted/renamed connections.
+        // all_of(empty) is true, but they must not become virtual memory drivers
+        // and reappear as empty OPC UA connection folders after a full rebuild.
+        if (connection_map.count(conn_id) || kv.second.empty()) continue;
         const bool memoryOnly = std::all_of(kv.second.begin(), kv.second.end(), [](const TagConfig &tag) {
             return is_memory_tag(tag);
         });
@@ -25338,6 +25342,17 @@ window.addEventListener("load", startAutoRefresh);
 						res.set_content(resp.dump(2), "application/json");
 						return;
 					}
+
+                    // Remove every tag store owned by a deleted connection, including
+                    // ignored legacy files and backups, before removing the connection.
+                    // Otherwise a legacy file can restore tags after the canonical file is gone.
+                    if (kind == ConfigFileKind::CONNECTION) {
+                        const json connection = load_json_with_comments(fullPath);
+                        const std::string cid = connection.value("id", std::string{});
+                        if (cid.empty()) throw std::runtime_error("Connection file has no id.");
+                        remove_connection_tag_files(fs::path(configDir) / "tags", cid,
+                            [](const std::string &path) { return load_json_with_comments(path); });
+                    }
 
 					std::error_code ec;
 					fs::remove(fullPath, ec);
