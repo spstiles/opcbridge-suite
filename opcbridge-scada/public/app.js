@@ -26023,6 +26023,9 @@ function buildTree() {
     };
     connectivity.children.push(deviceNode);
   });
+  connectivity.children.sort((a, b) =>
+    a.label.localeCompare(b.label, undefined, { sensitivity: 'base', numeric: true })
+    || a.id.localeCompare(b.id));
 
   const orphanGroups = orphanedTagGroups();
   const orphanRoot = {
