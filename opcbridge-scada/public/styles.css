@@ -1216,9 +1216,7 @@ pre.mono { margin: 0; padding: 12px; overflow: auto; }
 .status-warn { color: var(--warn); font-weight: 700; }
 .status-error { color: var(--bad); font-weight: 700; }
 
-#tagsTable tbody tr:nth-child(even) td,
 #workspaceLiveTagsTable tbody tr:nth-child(even) td { background: rgba(255,255,255,.03); }
-#tagsTable tbody tr:nth-child(odd) td,
 #workspaceLiveTagsTable tbody tr:nth-child(odd) td { background: rgba(0,0,0,.10); }
 .badge { padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); font-size: var(--font-small); }
 .badge.ok { color: #d7ffe7; border-color: rgba(60,190,120,.5); background: rgba(60,190,120,.15); }

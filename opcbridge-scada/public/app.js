@@ -644,7 +644,6 @@
   tagsConfigStatus: document.getElementById('tagsConfigStatus'),
 
   // Live
-  tagsTableBody: document.querySelector('#tagsTable tbody'),
   workspaceLiveTagsTbody: document.getElementById('workspaceLiveTagsTbody'),
   workspaceLiveTagsFilter: document.getElementById('workspaceLiveTagsFilter'),
   workspaceLiveTagsWrap: document.getElementById('workspaceLiveTagsWrap'),
@@ -27451,7 +27450,10 @@ function computeTagStatus(t) {
   let status = 'BAD';
   let cls = 'status-error';
 
-  if (!handleOk) {
+  if (t?.enabled === false || reason === 'disabled') {
+    status = 'DISABLED';
+    cls = 'status-warn';
+  } else if (!handleOk) {
     status = 'BAD_HANDLE';
   } else if (!hasSnap && reason === 'mqtt_disabled') {
     status = 'MQTT_DISABLED';
@@ -27519,9 +27521,6 @@ function renderLiveTags(tagsResp) {
   state.liveTagsPaging.offset = offset;
   state.liveTagsPaging.limit = limit;
   const rowHeight = Number(state.liveTagsPaging.rowHeight || 34);
-  if (isPanelActive('tab-tags')) {
-    renderLiveTagsInto(els.tagsTableBody, tags);
-  }
 
   updateWorkspaceLiveTagFilterLabel();
   if (isPanelActive('tab-workspace')) {
@@ -28209,7 +28208,7 @@ async function refreshVisible() {
     if (isPanelActive('tab-overview')) refreshComponentVersions().catch(() => {});
     setAlarmRuntimeWarningUi(computeAlarmRuntimeWarning(alarmsStatus));
 
-    const wantLiveTags = isPanelActive('tab-workspace') || isPanelActive('tab-tags');
+    const wantLiveTags = isPanelActive('tab-workspace');
     if (wantLiveTags) {
       const tags = await loadVisibleLiveTags();
       renderLiveTags(tags);
