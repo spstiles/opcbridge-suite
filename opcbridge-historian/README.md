@@ -64,6 +64,13 @@ You can enable either or both:
 - **Change-only**: store on change (with optional deadband/throttle), plus optional `max_interval_ms` to force a point occasionally.
 - **Periodic sampling**: store snapshots on a timer by calling opcbridge HTTP `/tags` (works even when values don’t change).
 
+Selected recording rules retain polling demand between samples. A periodic input
+that is explicitly inactive or waiting retries every 250 ms for up to five seconds
+while it wakes, then returns to the configured interval. Rule reloads reset the
+periodic schedule and deadband baseline; pending snapshot responses from the old
+configuration cannot enqueue new samples. Samples already queued remain eligible
+for writing.
+
 ## Health API
 
 The service exposes a local health API, default port `8096`:

@@ -11581,7 +11581,12 @@ function renderOverviewHealth(health, metrics = null) {
       const lastOkAgeMs = (typeof info?.last_ok_age_ms === 'number' && info.last_ok_age_ms >= 0) ? info.last_ok_age_ms : null;
 
       let details = '';
-      if (seen != null && good != null) details += ` • ${good}/${seen} good recent`;
+      if (info?.polling_activity === 'idle') details += ' • polling idle';
+      else if (seen != null && good != null) details += ` • ${good}/${seen} good recent`;
+      if (typeof info?.inactive_tags === 'number' && info.inactive_tags > 0) details += ` • ${info.inactive_tags} inactive`;
+      if (typeof info?.waiting_tags === 'number' && info.waiting_tags > 0) details += ` • ${info.waiting_tags} waiting`;
+      if (typeof info?.active_poll_work === 'number' && typeof info?.configured_poll_work === 'number') details += ` • ${info.active_poll_work}/${info.configured_poll_work} active reads`;
+      if (info?.full_sweep_available === false) details += ' • full sweep unavailable during demand polling';
       if (age != null) details += ` • newest ${age} ms`;
       if (readMsAvg != null) details += ` • read ${formatMsCompact(readMsAvg)} avg`;
       if (sweepAvg10sMs != null) details += ` • sweep ${formatMsCompact(sweepAvg10sMs)} avg10s`;
@@ -16800,6 +16805,10 @@ function connectOpcuaTrustEvents(settings = null) {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const socket = new WebSocket(`${protocol}//${window.location.hostname}:${opcuaTrustEventsPort}`);
   opcuaTrustEventsSocket = socket;
+  socket.onopen = () => {
+    // This socket receives trust notifications; Live Tags uses viewport HTTP reads.
+    socket.send(JSON.stringify({ type: 'subscribe', tags: [] }));
+  };
   socket.onmessage = (event) => {
     let message;
     try { message = JSON.parse(event.data); } catch { return; }
@@ -27441,11 +27450,36 @@ function mergeConfiguredMqttLiveTags(tags) {
 
 // ---------------- Live + alarms ----------------
 
+// Each tab owns its viewport scope; expiry handles abrupt close/network loss.
+const scadaViewerDemand = new ViewerDemand({
+  clientId: globalThis.crypto?.randomUUID?.() || `scada-${Date.now()}-${Math.random()}`,
+  visible: () => document.visibilityState !== 'hidden' && isPanelActive('tab-workspace'),
+  post: async (path, body, keepalive) => {
+    const response = await fetchWithTimeout(`/api/opcbridge${path}`, {
+      method: 'POST', keepalive,
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    }, 5000);
+    if (!response.ok) throw new Error(`Demand HTTP ${response.status}`);
+  }
+});
+window.setInterval(() => scadaViewerDemand.tick(), 1000);
+document.addEventListener('visibilitychange', () => {
+  scadaViewerDemand.tick(true);
+  if (document.visibilityState !== 'hidden' && isPanelActive('tab-workspace')) refreshVisible().catch(() => {});
+});
+window.addEventListener('pagehide', () => scadaViewerDemand.release());
+window.addEventListener('pageshow', () => {
+  scadaViewerDemand.setTags(state.liveTagsLast?.tags || []);
+});
+
+
+
 function computeTagStatus(t) {
   const hasSnap = (t?.has_snapshot !== false);
   const handleOk = (t?.handle_ok !== false);
   const isArrayRoot = (t?.is_array_root === true);
   const reason = String(t?.reason || '').trim().toLowerCase();
+  const pollingState = String(t?.polling_state || '').trim().toLowerCase();
 
   let status = 'BAD';
   let cls = 'status-error';
@@ -27455,6 +27489,12 @@ function computeTagStatus(t) {
     cls = 'status-warn';
   } else if (!handleOk) {
     status = 'BAD_HANDLE';
+  } else if (pollingState === 'inactive') {
+    status = 'INACTIVE';
+    cls = 'status-warn';
+  } else if (pollingState === 'waiting') {
+    status = 'WAITING';
+    cls = 'status-warn';
   } else if (!hasSnap && reason === 'mqtt_disabled') {
     status = 'MQTT_DISABLED';
     cls = 'status-warn';
@@ -27512,6 +27552,7 @@ function renderLiveTagsInto(tbody, tags) {
 
 function renderLiveTags(tagsResp) {
   state.liveTagsLast = tagsResp;
+  scadaViewerDemand.setTags(Array.isArray(tagsResp?.tags) ? tagsResp.tags : []);
   const tags = Array.isArray(tagsResp?.tags) ? tagsResp.tags : [];
   const total = Number(tagsResp?.total ?? tags.length) || tags.length;
   let displayTotal = total;
@@ -27538,6 +27579,8 @@ function renderLiveTags(tagsResp) {
 }
 
 function resetLiveTagsViewport() {
+  scadaViewerDemand.release();
+  state.liveTagsPaging.requestGeneration = (state.liveTagsPaging.requestGeneration || 0) + 1;
   state.liveTagsPaging.offset = 0;
   state.liveTagsPaging.index = [];
   state.liveTagsPaging.valueByKey = new Map();
@@ -27648,13 +27691,18 @@ function sessionSystemRowsForLiveParams(params) {
 }
 
 async function loadVisibleLiveTags() {
+  if (document.visibilityState === 'hidden') return liveTagsBuildVisibleResponse();
   const page = state.liveTagsPaging || { offset: 0, limit: 250, search: '', scopeKey: '', index: [], valueByKey: new Map() };
   state.liveTagsPaging = page;
   const { params } = liveTagsQueryParamsForCurrentScope();
+  const generation = page.requestGeneration = (page.requestGeneration || 0) + 1;
+  const isCurrent = () => state.liveTagsPaging === page && page.requestGeneration === generation
+    && document.visibilityState !== 'hidden';
 
   if (!page.indexLoaded) {
     params.set('limit', '0');
     const indexResp = await apiGet(`/api/opcbridge/tags?${params.toString()}`, { timeoutMs: 30000 });
+    if (!isCurrent()) return liveTagsBuildVisibleResponse();
     const indexByKey = new Map();
     [...(Array.isArray(indexResp?.tags) ? indexResp.tags : []), ...sessionSystemRowsForLiveParams(params)].forEach((row) => {
       const key = liveTagKey(row);
@@ -27689,6 +27737,7 @@ async function loadVisibleLiveTags() {
     .filter((row) => row.connection_id && row.name);
   if (queryTags.length) {
     const liveResp = await apiPostJson('/api/opcbridge/tags/query', { tags: queryTags }, { timeoutMs: 15000 });
+    if (!isCurrent()) return liveTagsBuildVisibleResponse();
     const valueByKey = page.valueByKey instanceof Map ? page.valueByKey : new Map();
     (Array.isArray(liveResp?.tags) ? liveResp.tags : []).forEach((row) => {
       const key = liveTagKey(row);
@@ -28208,7 +28257,7 @@ async function refreshVisible() {
     if (isPanelActive('tab-overview')) refreshComponentVersions().catch(() => {});
     setAlarmRuntimeWarningUi(computeAlarmRuntimeWarning(alarmsStatus));
 
-    const wantLiveTags = isPanelActive('tab-workspace');
+    const wantLiveTags = document.visibilityState !== 'hidden' && isPanelActive('tab-workspace');
     if (wantLiveTags) {
       const tags = await loadVisibleLiveTags();
       renderLiveTags(tags);

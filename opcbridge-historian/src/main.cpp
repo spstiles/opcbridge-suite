@@ -1,3 +1,5 @@
+#include "demand.h"
+#include "snapshot_lifecycle.h"
 #include <atomic>
 #include <algorithm>
 #include <chrono>
@@ -1528,6 +1530,7 @@ int main(int argc, char* argv[])
     std::mutex qMutex;
     std::mutex pgMutex;
     std::mutex cfgMutex;
+    uint64_t demandConfigGeneration = 1; // protected by cfgMutex
     std::vector<Sample> queue;
     queue.reserve(cfg.pg.batch_size * 2);
 
@@ -1538,13 +1541,11 @@ int main(int argc, char* argv[])
     std::unordered_map<std::string, TagState> states;
     states.reserve(16384);
 
-    auto enqueue = [&](Sample s) {
+    auto enqueue = [&](Sample s, std::optional<uint64_t> expectedGeneration = std::nullopt) {
         std::lock_guard<std::mutex> lock(qMutex);
-        size_t queueLimit = cfg.pg.queue_limit;
-        {
-            std::lock_guard<std::mutex> cfgLock(cfgMutex);
-            queueLimit = cfg.pg.queue_limit;
-        }
+        std::lock_guard<std::mutex> cfgLock(cfgMutex);
+        if (expectedGeneration && *expectedGeneration != demandConfigGeneration) return;
+        const size_t queueLimit = cfg.pg.queue_limit;
         if (queue.size() >= queueLimit)
         {
             health.dropped_samples.fetch_add(1);
@@ -1642,6 +1643,7 @@ int main(int argc, char* argv[])
                 cfg.historian_policy = next.historian_policy;
                 cfg.pg.queue_limit = next.pg.queue_limit;
                 cfg.historian_tags = next.historian_tags;
+                ++demandConfigGeneration;
             }
             health.set_error("");
             if (!pg_changed)
@@ -1967,14 +1969,25 @@ int main(int argc, char* argv[])
     snapshotThread = std::thread([&]() {
             std::unordered_map<std::string, int64_t> nextDueByKey;
             std::unordered_map<std::string, double> lastValueByKey;
+            SnapshotLifecycleRetry lifecycleRetry;
+            uint64_t snapshotGeneration = 0;
             while (!stop.load())
             {
                 const int64_t started = now_ms();
                 std::unordered_map<std::string, HistorianTagRule> dueRules;
                 AppCfg cfgCopy;
+                uint64_t generation;
                 {
                     std::lock_guard<std::mutex> cfgLock(cfgMutex);
                     cfgCopy = cfg;
+                    generation = demandConfigGeneration;
+                }
+                if (generation != snapshotGeneration)
+                {
+                    nextDueByKey.clear();
+                    lastValueByKey.clear();
+                    lifecycleRetry.clear();
+                    snapshotGeneration = generation;
                 }
                 if (!cfgCopy.enabled || (cfgCopy.historian_tags.empty() && !cfgCopy.snapshot.enabled))
                 {
@@ -2039,6 +2052,14 @@ int main(int argc, char* argv[])
                             {
                                 auto it = dueRules.find(k);
                                 if (it == dueRules.end()) continue;
+                                const std::string state = t.value("polling_state", "");
+                                const bool cold = s.quality.has_value() && s.quality.value() != 1
+                                    && (state == "inactive" || state == "waiting");
+                                if (lifecycleRetry.retry(k, cold))
+                                {
+                                    nextDueByKey[k] = now_ms() + 250;
+                                    continue;
+                                }
                                 if (!it->second.include_bad_quality && s.quality.has_value() && s.quality.value() != 1) continue;
                                 if (!s.value_double.has_value()) continue;
                                 const double deadband = std::max(0.0, it->second.deadband);
@@ -2048,12 +2069,13 @@ int main(int argc, char* argv[])
                                 lastValueByKey[k] = s.value_double.value();
                             }
                             else if (!want.empty() && want.find(k) == want.end()) continue;
-                            enqueue(std::move(s));
+                            enqueue(std::move(s), generation);
                         }
                     }
                 }
                 else
                 {
+                    lifecycleRetry.clear();
                     health.set_error("snapshot fetch failed");
                 }
 
@@ -2081,12 +2103,34 @@ int main(int argc, char* argv[])
     ix::WebSocket ws;
     ws.setUrl(wsUrl);
     ws.disablePerMessageDeflate();
+    std::atomic<bool> refreshDemand{true};
+    uint64_t sentDemandGeneration = 0; // only accessed by the main loop
+
+    auto updateDemand = [&]() {
+        if (ws.getReadyState() != ix::ReadyState::Open) return;
+        const bool requested = refreshDemand.exchange(false);
+        AppCfg copy;
+        uint64_t generation;
+        {
+            std::lock_guard<std::mutex> cfgLock(cfgMutex);
+            generation = demandConfigGeneration;
+            if (!requested && generation == sentDemandGeneration) return;
+            copy = cfg;
+        }
+        std::vector<std::string> keys;
+        if (copy.enabled && copy.historian_tags.empty() && copy.snapshot.enabled &&
+            copy.subscribe_mode == "patterns") keys = resolve_subscribe_tags_from_patterns(copy);
+        const auto sent = ws.send(historian_demand_registration(copy, keys).dump());
+        if (sent.success) sentDemandGeneration = generation;
+        else refreshDemand.store(true);
+    };
 
     ws.setOnMessageCallback([&](const ix::WebSocketMessagePtr& msg) {
         if (!msg) return;
         if (msg->type == ix::WebSocketMessageType::Open)
         {
             std::cout << "[historian] opcbridge WS connected: " << wsUrl << "\n";
+            refreshDemand.store(true);
 
             std::string subscribeMode;
             {
@@ -2183,6 +2227,7 @@ int main(int argc, char* argv[])
     std::cout << "[historian] running; press Ctrl+C to stop\n";
     while (std::cin.good())
     {
+        updateDemand();
         std::this_thread::sleep_for(std::chrono::milliseconds(250));
     }
 

@@ -16,6 +16,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -33,6 +34,7 @@
 
 #include <nlohmann/json.hpp>
 #include "httplib.h"
+#include "consumer_demand_client.h"
 
 using json = nlohmann::json;
 
@@ -402,6 +404,9 @@ struct HistorianField {
 };
 
 struct Job {
+    bool require_fresh_read = false;
+    int fresh_max_age_ms = 0;
+    int fresh_timeout_ms = 1000;
     std::string name;
     std::string database_id;
     std::string table = "tag_log";
@@ -854,6 +859,103 @@ static bool fetch_tags_json(const DbConfig& cfg, const ServiceConfig& svc, std::
         return false;
     }
     return true;
+}
+
+// All selected inputs are verified before the caller opens a write connection.
+static bool parse_job_freshness(const json &config, Job &job, std::string &error) {
+    if (config.contains("require_fresh_read") && !config["require_fresh_read"].is_boolean()) {
+        error = "require_fresh_read must be boolean"; return false;
+    }
+    job.require_fresh_read = config.value("require_fresh_read", false);
+    auto parseMs = [&](const char *key, int fallback, int maximum, int &out) {
+        if (!config.contains(key)) { out = fallback; return true; }
+        const auto &value = config[key];
+        if (!value.is_number_integer() || value < 0 || value > maximum) {
+            error = std::string(key) + " is outside its integer range"; return false;
+        }
+        out = value.get<int>(); return true;
+    };
+    return parseMs("fresh_max_age_ms", 0, 60000, job.fresh_max_age_ms) &&
+           parseMs("fresh_timeout_ms", 1000, 5000, job.fresh_timeout_ms);
+}
+
+static bool fetch_verified_job_tags(const Job &job, const DbConfig &db, const ServiceConfig &svc,
+                                    json &samples, std::string &error) {
+    samples = json::array();
+    try {
+        std::map<std::string, std::pair<std::string, std::string>> selected;
+        for (const auto &key : job.tag_keys) {
+            const auto sep = key.find(TAG_KEY_SEP);
+            if (sep == std::string::npos || sep == 0 || sep + 1 == key.size())
+                throw std::runtime_error("Invalid exact tag reference");
+            selected[key] = {key.substr(0, sep), key.substr(sep + 1)};
+        }
+        if (job.log_all || !job.tag_name_globs_by_conn.empty()) {
+            std::string body;
+            if (!fetch_tags_json(db, svc, body, error)) return false;
+            const auto discovered = json::parse(body);
+            if (!discovered.contains("tags") || !discovered["tags"].is_array())
+                throw std::runtime_error("Discovery response has no tags array");
+            for (const auto &row : discovered["tags"]) {
+                const auto cid = row.at("connection_id").get<std::string>();
+                const auto name = row.at("name").get<std::string>();
+                if (!cid.empty() && !name.empty() && job_includes_tag(job, cid, name))
+                    selected[make_tag_key(cid, name)] = {cid, name};
+            }
+        }
+        if (selected.empty()) throw std::runtime_error("No live inputs matched the verified job");
+        const auto base = consumer_demand_base_url(db.opcbridge_base_url.empty() ? svc.opcbridge_base_url : db.opcbridge_base_url);
+        json verified = json::array();
+        auto next = selected.begin();
+        while (next != selected.end()) {
+            json refs = json::array();
+            std::set<std::string> expected;
+            for (size_t n = 0; n < 64 && next != selected.end(); ++n, ++next) {
+                refs.push_back({{"connection_id", next->second.first}, {"name", next->second.second}});
+                expected.insert(next->first);
+            }
+            const std::string payload = json{{"tags", refs}, {"max_age_ms", job.fresh_max_age_ms},
+                {"timeout_ms", job.fresh_timeout_ms}}.dump();
+            std::string body;
+            CURL *curl = curl_easy_init();
+            if (!curl) throw std::runtime_error("curl_easy_init failed");
+            const auto url = base + "/polling/fresh-read";
+            auto *headers = curl_slist_append(nullptr, "Content-Type: application/json");
+            curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payload.c_str());
+            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_write_cb);
+            curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
+            curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 1000L);
+            curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, static_cast<long>(job.fresh_timeout_ms + 1500));
+            const auto rc = curl_easy_perform(curl);
+            long status = 0; curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+            curl_slist_free_all(headers); curl_easy_cleanup(curl);
+            if (rc != CURLE_OK || status != 200)
+                throw std::runtime_error("Fresh read failed: HTTP " + std::to_string(status) + ", " + curl_easy_strerror(rc));
+            const auto response = json::parse(body);
+            if (!response.value("ok", false) || !response.contains("tags") || !response["tags"].is_array() ||
+                response["tags"].size() != expected.size())
+                throw std::runtime_error("Fresh samples unavailable for all selected inputs");
+            for (const auto &row : response["tags"]) {
+                if (!row.value("fresh", false) || !row.contains("sample"))
+                    throw std::runtime_error("Missing fresh sample verification");
+                const auto &sample = row["sample"];
+                const auto key = make_tag_key(sample.at("connection_id").get<std::string>(), sample.at("name").get<std::string>());
+                if (!expected.erase(key) || sample.value("quality", 0) != 1 ||
+                    !sample.contains("value") || sample["value"].is_null() ||
+                    !sample.contains("timestamp_ms") || !sample["timestamp_ms"].is_number_integer())
+                    throw std::runtime_error("Fresh sample identity, quality, value or timestamp is invalid");
+                verified.push_back(sample);
+            }
+            if (!expected.empty()) throw std::runtime_error("Fresh response omitted selected inputs");
+        }
+        samples = std::move(verified);
+        return true;
+    } catch (const std::exception &ex) {
+        error = std::string("Verified live inputs: ") + ex.what();
+        samples = json::array(); return false;
+    }
 }
 
 static std::string curl_escape(CURL* curl, const std::string& value) {
@@ -1509,7 +1611,7 @@ public:
             job.enabled = r.value("enabled", false);
             job.on_calendar = object_value_or_empty(r, "schedule").value("on_calendar", "");
             std::string parse_error;
-            if (!parse_job_columns(r, job, parse_error)) {
+            if (!parse_job_freshness(r, job, parse_error) || !parse_job_columns(r, job, parse_error)) {
                 error = "Log job '" + job.name + "': " + parse_error;
                 return false;
             }
@@ -1663,6 +1765,7 @@ public:
             {"state_path", state_path_},
             {"databases", dbs_.size()},
             {"jobs", jobs_.size()},
+            {"demand_observation", demand_.status()},
             {"data_checks", data_checks_.size()},
             {"sync_jobs", sync_jobs_.size()},
             {"statuses", statuses_json_locked()},
@@ -1678,12 +1781,49 @@ public:
         cv_.notify_all();
     }
 
+    ConsumerDemandClient::Scopes demand_scopes() const {
+        ConsumerDemandClient::Scopes scopes;
+        std::lock_guard<std::mutex> lock(mu_);
+        auto add = [&](const Job &job, const DbConfig &db, const ServiceConfig &svc) {
+            if (!job_has_live_tag_selection(job)) return;
+            const auto base = consumer_demand_base_url(db.opcbridge_base_url.empty() ? svc.opcbridge_base_url : db.opcbridge_base_url);
+            auto &scope = scopes[base];
+            if (scope.is_null()) scope = {{"tags", json::array()}, {"patterns", json::array()}, {"all_tags", false}};
+            if (job.log_all) scope["all_tags"] = true;
+            for (const auto &key : job.tag_keys) {
+                // Logger keys use an internal separator, not the wire protocol's colon.
+                const auto separator = key.find(TAG_KEY_SEP);
+                if (separator != std::string::npos)
+                    scope["tags"].push_back(key.substr(0, separator) + ":" + key.substr(separator + 1));
+            }
+            for (const auto &connection : job.tag_name_globs_by_conn)
+                for (const auto &pattern : connection.second)
+                    scope["patterns"].push_back({{"connection_id", connection.first}, {"name", pattern}});
+        };
+        for (const auto &entry : jobs_) {
+            const auto db = dbs_.find(entry.second.database_id);
+            if (entry.second.enabled && db != dbs_.end()) add(entry.second, db->second, svc_);
+        }
+        for (const auto &entry : demand_inflight_) add(std::get<0>(entry.second), std::get<1>(entry.second), std::get<2>(entry.second));
+        // Stable sets prevent unordered config iteration from causing needless renewals.
+        for (auto &entry : scopes) {
+            for (const auto *field : {"tags", "patterns"}) {
+                auto &values = entry.second[field];
+                std::sort(values.begin(), values.end());
+                values.erase(std::unique(values.begin(), values.end()), values.end());
+            }
+        }
+        return scopes;
+    }
+
     void start_scheduler() {
+        demand_.start("opcbridge-logger", [this] { return demand_scopes(); });
         worker_ = std::thread([this]() { scheduler_loop(); });
     }
 
     void join_scheduler() {
         if (worker_.joinable()) worker_.join();
+        demand_.stop();
     }
 
     bool run_job_async(const std::string& id, std::string& error) {
@@ -1712,6 +1852,7 @@ public:
             job = jit->second;
             db = dit->second;
             svc = svc_;
+            demand_inflight_[id] = std::make_tuple(job, db, svc);
         }
 
         std::thread([this, job, db, svc]() {
@@ -3216,6 +3357,10 @@ private:
             return result;
         }
 
+        json verifiedInputs;
+        if (job.require_fresh_read && job_has_live_tag_selection(job) &&
+            !fetch_verified_job_tags(job, db, svc, verifiedInputs, result.error)) return result;
+
         MYSQL* conn = mysql_init(nullptr);
         if (!conn) {
             result.error = "mysql_init failed";
@@ -3244,7 +3389,9 @@ private:
             return result;
         }
 
-        if (job_has_live_tag_selection(job)) {
+        if (job.require_fresh_read && job_has_live_tag_selection(job)) {
+            result.inserted += insert_tags_for_job(conn, verifiedInputs, job, result.error);
+        } else if (job_has_live_tag_selection(job)) {
             std::string body;
             if (!fetch_tags_json(db, svc, body, result.error)) {
                 mysql_close(conn);
@@ -3357,6 +3504,7 @@ private:
 
     void finish_job(const std::string& id, const RunResult& result) {
         std::lock_guard<std::mutex> lock(mu_);
+        demand_inflight_.erase(id);
         auto& st = statuses_[id];
         st.id = id;
         st.running = false;
@@ -3600,6 +3748,8 @@ private:
     ServiceConfig svc_;
     std::map<std::string, DbConfig> dbs_;
     std::map<std::string, Job> jobs_;
+    std::map<std::string, std::tuple<Job, DbConfig, ServiceConfig>> demand_inflight_;
+    ConsumerDemandClient demand_;
     std::map<std::string, JobStatus> statuses_;
     std::map<std::string, DataCheck> data_checks_;
     std::map<std::string, DataCheckStatus> data_check_statuses_;
