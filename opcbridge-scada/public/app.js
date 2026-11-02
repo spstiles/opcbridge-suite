@@ -11596,7 +11596,18 @@ function renderOverviewHealth(health, metrics = null) {
       if (typeof info?.inactive_tags === 'number' && info.inactive_tags > 0) details += ` • ${info.inactive_tags} inactive`;
       if (typeof info?.waiting_tags === 'number' && info.waiting_tags > 0) details += ` • ${info.waiting_tags} waiting`;
       if (typeof info?.active_poll_work === 'number' && typeof info?.configured_poll_work === 'number') details += ` • ${info.active_poll_work}/${info.configured_poll_work} active reads`;
-      if (info?.full_sweep_available === false) details += ' • full sweep unavailable during demand polling';
+      if (info?.full_sweep_available === false) {
+        const activeSweep = info.active_sweep_ms_avg_10s ?? info.active_sweep_ms_last;
+        if (typeof activeSweep === 'number') {
+          const averaged = typeof info.active_sweep_ms_avg_10s === 'number';
+          details += ` • active sweep ${formatMsCompact(activeSweep)} ${averaged ? 'avg10s' : 'last'}`;
+          if (!averaged && info.active_sweep_last_age_ms > 10000) details += ` (${formatMsCompact(info.active_sweep_last_age_ms)} ago)`;
+        }
+        else if (info.active_sweep_work > 0) details += ' • active sweep measuring…';
+        if (typeof info.oldest_active_sample_age_ms === 'number')
+          details += ` • oldest active ${formatMsCompact(info.oldest_active_sample_age_ms)}`;
+        if (info.active_without_sample > 0) details += ` • ${info.active_without_sample} active ${info.active_without_sample === 1 ? 'read' : 'reads'} without a GOOD sample`;
+      }
       if (info?.polling_activity !== 'idle' && age != null) details += ` • newest ${age} ms`;
       if (readMsAvg != null) details += ` • read ${formatMsCompact(readMsAvg)} avg`;
       if (sweepAvg10sMs != null) details += ` • sweep ${formatMsCompact(sweepAvg10sMs)} avg10s`;

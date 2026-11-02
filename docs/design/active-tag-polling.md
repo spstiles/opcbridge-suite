@@ -1202,3 +1202,42 @@ cadence, shared claims, tag fallback and failure reset; scheduler tests assert
 writable work suspends. Native UA quality tests cover post-write sample boundaries
 and rejection of replaced-driver invalidation/write epochs. Installed services and
 versions are unchanged by these development checks.
+
+## Active sweep and active sample age (2026-11-02)
+
+Demand-driven health and metrics now include an active sweep alongside physical
+work counts. One round requires a normal polling read attempt for every currently
+active physical source. Arrays count once; aliases/bit tags do not duplicate their
+source work. Idle communication probes do not participate. Failures remain visible
+through sample availability and health; a measured read-attempt round is not a
+claim that every value updated successfully.
+
+A connection-shared, steady-clock tracker combines all polling lanes. It primes
+one complete round, then measures elapsed time between complete read rounds, so a
+single 100-ms source reports its update cadence rather than only its network
+round-trip latency. Membership changes and driver replacement clear previous
+samples and averages. Read starts before the new boundary cannot complete the new
+round. Out-of-order lane reports use the latest completion time. Repeated reads of
+one fast source cannot stand in for an unread slow source.
+
+The API exposes last active sweep, rolling 10/60-second averages, measurement age,
+completed rounds, work count, seen count and idle/warming/measuring state. Idle
+clears timing rather than retaining a misleading old duration. Full configured
+sweep fields remain unavailable during demand-driven polling. Oldest active
+sample age uses current-driver, GOOD physical read evidence (array elements map to
+their one source). It is null while any active physical source lacks a GOOD sample,
+with `active_without_sample` reporting that count. Memory-only and derived-only
+work does not manufacture physical sample ages.
+
+Overview displays active sweep avg10s or last, labels an old last measurement with
+its age, shows measuring during warmup and displays oldest active sample age or
+missing GOOD sample counts. Ordinary full-polling sweep presentation is unchanged.
+
+`test_active_sweep.cpp` covers membership resets, incomplete rounds, stale epochs,
+in-flight reads, rolling averages and out-of-order lanes. Cache lifecycle tests
+cover array sample age and unavailable samples. `test-active-sweep.py` verifies two
+real simulator polling lanes: a 400-ms mixed workload, a reset to a 100-ms source,
+array/alias accounting, health/metrics fields, idle reset and exclusion of actual
+idle probes. All 54 SCADA/HMI tests pass, including actual Overview rendering of
+measurement, warmup, stale-last and idle states. Installed services and versions
+remain unchanged by these checks.

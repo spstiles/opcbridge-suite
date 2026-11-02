@@ -72,5 +72,19 @@ int main() {
     add_polling_activity_json(metric, activity);
     assert(metric["sweep_ms_last"].is_null() && metric["poll_progress_pct"].is_null());
     assert(metric["sweep_scope"] == "demand_driven" && !metric["full_sweep_available"].get<bool>());
+    assert(activity.active_without_sample == 1);
+    assert(metric["oldest_active_sample_age_ms"].is_null());
+    const auto measured = PollReadStamp::Clock::now() - std::chrono::milliseconds(250);
+    for (const auto &name : {"Array[0]", "Array[1]"}) {
+        auto sample = good; sample.logical_name = name; sample.quality = 1;
+        sample.polling_state = PollCacheState::Active;
+        sample.poll_read = {measured, measured, driver.freshness_epoch};
+        table[make_tag_key("PLC", name)] = sample;
+    }
+    activity = polling_activity_summary(driver, table);
+    assert(activity.active_work == 1 && activity.active_without_sample == 0);
+    assert(activity.oldest_active_ms >= 250 && activity.oldest_active_ms < 1000);
+    add_polling_activity_json(metric, activity);
+    assert(metric["oldest_active_sample_age_ms"].get<int64_t>() >= 250);
     std::cout << "Poll cache lifecycle tests passed\n";
 }

@@ -1,6 +1,7 @@
 #include "async_poll_batch.h"
 #include "poll_sweep_estimate.h"
 #include "idle_connection_probe.h"
+#include "active_sweep.h"
 // main.cpp - AB/libplctag "OPC bridge core" with:
 //   - JSON-with-comments config for connections/tags
 //   - Multi-connection EtherNet/IP via libplctag
@@ -1210,6 +1211,7 @@ struct BlockPollMetrics {
 
 struct ConnPollMetrics {
     IdleConnectionProbe idle_probe;
+    ActiveSweep active_sweep;
     std::atomic<uint64_t> reads_total{0};
     std::atomic<uint64_t> reads_ok{0};
     std::atomic<uint64_t> reads_err{0};
@@ -14425,17 +14427,23 @@ static json active_polling_connections() {
 struct PollingActivitySummary {
     size_t enabled = 0, inactive = 0, waiting = 0;
     size_t configured_work = 0, active_work = 0, inactive_work = 0;
+    int64_t oldest_active_ms = -1;
+    size_t active_without_sample = 0;
     bool idle() const { return configured_work > 0 && inactive_work == configured_work && waiting == 0; }
 };
 // Caller holds driverMutex. Use applied lifecycle states, not planned decisions.
 static PollingActivitySummary polling_activity_summary(const DriverContext &driver, const TagTable &table) {
     PollingActivitySummary result;
     std::unordered_map<std::string, bool> arrayInactive;
+    std::unordered_map<std::string, const TagSnapshot*> arraySamples;
+    std::set<std::string> arrayUnavailable;
     for (const auto &element : driver.tags) {
         if (!element.cfg.enabled || element.poll_source.empty()) continue;
         auto state = arrayInactive.emplace(element.poll_source, true).first;
         const auto sample = table.find(make_tag_key(driver.conn.id, element.cfg.logical_name));
         if (sample == table.end() || sample->second.polling_state != PollCacheState::Inactive) state->second = false;
+        if (sample == table.end() || sample->second.quality != 1) arrayUnavailable.insert(element.poll_source);
+        else arraySamples[element.poll_source] = &sample->second;
     }
     for (const auto &tag : driver.tags) {
         if (!tag.cfg.enabled) continue;
@@ -14454,6 +14462,19 @@ static PollingActivitySummary polling_activity_summary(const DriverContext &driv
             (tag.handle >= 0 || tag.handle_deferred)) {
             ++result.configured_work;
             if (inactive) ++result.inactive_work; else ++result.active_work;
+            if (!inactive) {
+                const TagSnapshot *sample = found == table.end() ? nullptr : &found->second;
+                if (arrayRoot) {
+                    const auto element = arraySamples.find(tag.cfg.logical_name);
+                    sample = arrayUnavailable.count(tag.cfg.logical_name) || element == arraySamples.end() ? nullptr : element->second;
+                }
+                const auto now = PollReadStamp::Clock::now();
+                if (sample && sample->quality == 1 && sample->poll_read.source_epoch == driver.freshness_epoch &&
+                    sample->poll_read.completed != PollReadStamp::Clock::time_point{} && sample->poll_read.completed <= now) {
+                    result.oldest_active_ms = std::max(result.oldest_active_ms,
+                        std::chrono::duration_cast<std::chrono::milliseconds>(now-sample->poll_read.completed).count());
+                } else ++result.active_without_sample;
+            }
         }
     }
     return result;
@@ -14467,6 +14488,9 @@ static void add_polling_activity_json(json &value, const PollingActivitySummary 
     value["configured_poll_work"] = activity.configured_work;
     value["active_poll_work"] = activity.active_work;
     value["inactive_poll_work"] = activity.inactive_work;
+    value["oldest_active_sample_age_ms"] = activity.active_without_sample || activity.oldest_active_ms < 0
+        ? json(nullptr) : json(activity.oldest_active_ms);
+    value["active_without_sample"] = activity.active_without_sample;
     value["sweep_scope"] = "demand_driven";
     value["full_sweep_available"] = false;
     for (const auto *key : {"expected_sweep_ms", "sweep_ms_last", "sweep_ms_avg_10s", "sweep_ms_avg_60s", "poll_progress_pct", "poll_cursor"})
@@ -23383,7 +23407,10 @@ window.addEventListener("load", startAutoRefresh);
 		                    }
 
 		                    const auto activity = activityByConnection.find(connId);
-                            if (activity != activityByConnection.end()) add_polling_activity_json(j, activity->second);
+                            if (activity != activityByConnection.end()) {
+                                add_polling_activity_json(j, activity->second);
+                                j.update(m->active_sweep.snapshot());
+                            }
                             root["connections"][connId] = std::move(j);
 		                }
 
@@ -24996,7 +25023,10 @@ window.addEventListener("load", startAutoRefresh);
 									dstatus["reason"] = runtimeIssue;
 								}
 
-								if (demandDriven) add_polling_activity_json(dstatus, activity);
+								if (demandDriven) {
+                                    add_polling_activity_json(dstatus, activity);
+                                    if (connectionMetrics) dstatus.update(connectionMetrics->active_sweep.snapshot());
+                                }
                                 conn_obj[driver.conn.id] = dstatus;
 							}
 						}
@@ -29315,6 +29345,9 @@ window.addEventListener("load", startAutoRefresh);
 	                    if (baseSpec.metrics) {
 	                        baseSpec.metrics->poll_tag_count.store(static_cast<uint64_t>(totalTags), std::memory_order_relaxed);
 	                        reset_connection_sweep_tracking(baseSpec.metrics, static_cast<uint64_t>(totalTags));
+                            std::set<std::string> activeNames;
+                            for (const auto &item : baseSpec.tags) activeNames.insert(item.cfg.logical_name);
+                            baseSpec.metrics->active_sweep.configure(std::move(activeNames), baseSpec.freshness_epoch);
 	                        reset_connection_block_metrics(baseSpec.metrics, baseSpec.tags);
 	                        size_t deferredTagCount = 0;
 	                        for (const auto &it : baseSpec.tags) {
@@ -29687,6 +29720,8 @@ window.addEventListener("load", startAutoRefresh);
                                     spec.conn.id, spec.tags[index].cfg.logical_name, spec.freshness_epoch);
                             };
                             auto transitionDemand = [&](size_t index, bool active) {
+                                if (spec.metrics) spec.metrics->active_sweep.set_active(
+                                    spec.tags[index].cfg.logical_name, active, spec.freshness_epoch);
                                 std::vector<std::pair<TagSnapshot, TagConfig>> updates;
                                 {
                                     std::lock_guard<std::mutex> lock(driverMutex);
@@ -30043,6 +30078,8 @@ window.addEventListener("load", startAutoRefresh);
 		                                }
 		                                record_connection_sweep_progress(spec.metrics, t.sweep_index, spec.total_tag_count);
 
+                                        if (spec.active_poll_test && spec.metrics)
+                                            spec.metrics->active_sweep.completed(t.cfg.logical_name, spec.freshness_epoch, t0, t1);
                                         if (status == PLCTAG_STATUS_OK && spec.metrics)
                                             spec.metrics->idle_probe.good(t.cfg.logical_name, t1);
                                         if (prefetchedLogix != logixPrefetch.end()) {

@@ -263,3 +263,28 @@ test('connection polling choice defaults on and preserves explicit all-tag setti
     assert.ok(html.includes(`id="${prefix}DevPollActiveOnly"`));
   }
 });
+
+test('Overview shows active sweep and sample age, with clear warmup and idle states', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const vm = require('node:vm');
+  const source = fs.readFileSync(path.join(__dirname, '../public/app.js'), 'utf8');
+  const target = { innerHTML: '', querySelectorAll: () => [] };
+  const context = vm.createContext({ els: { overviewHealthConnections: target },
+    displayConnectionName: cid => cid, classForStatus: () => 'status-ok', escapeHtml: value => String(value),
+    state: { overviewHealthExpanded: new Set() } });
+  vm.runInContext(source.slice(source.indexOf('function renderOverviewHealth('), source.indexOf('function badge(')), context);
+  const info = { status: 'ok', polling_activity: 'active', full_sweep_available: false,
+    active_sweep_work: 1, active_sweep_ms_avg_10s: 400, active_sweep_ms_last: 420, oldest_active_sample_age_ms: 250 };
+  const render = () => { context.renderOverviewHealth({ status: 'ok', connections: { PLC: info } }); return target.innerHTML; };
+  assert.match(render(), /active sweep 400 ms avg10s/);
+  assert.match(render(), /oldest active 250 ms/);
+  info.active_sweep_ms_avg_10s = null; info.active_sweep_ms_last = null;
+  info.oldest_active_sample_age_ms = null; info.active_without_sample = 1;
+  assert.match(render(), /active sweep measuring/);
+  assert.match(render(), /1 active read without a GOOD sample/);
+  info.active_sweep_ms_last = 400; info.active_sweep_last_age_ms = 30000;
+  assert.match(render(), /active sweep 400 ms last \(30.0 s ago\)/);
+  info.polling_activity = 'idle'; info.active_sweep_work = 0; info.active_sweep_ms_last = null; info.active_without_sample = 0;
+  assert.doesNotMatch(render(), /active sweep|oldest active|full sweep unavailable/);
+});

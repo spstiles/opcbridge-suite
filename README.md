@@ -29,7 +29,9 @@ read-demand rules; writes request a bounded readback.
 No service-environment changes are needed on a normal installation. While idle,
 one previously successful source is checked about every 30 seconds to confirm
 communication, without activating tags or publishing new tag values. Overview
-shows polling activity separately from the last successful communication check.
+shows polling activity separately from the last successful communication check. It also
+shows active sweep time and oldest active sample age; active sweep measurements
+reset when the active sources change and exclude idle communication probes.
 
 
 ## Why OPCBridge Exists
