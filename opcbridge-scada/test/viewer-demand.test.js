@@ -245,3 +245,21 @@ test('a 5123-tag Live Tags list queries and registers only the viewport plus ove
   await viewer.release();
   assert.equal(registrations.at(-1).path, '/polling/demand/release');
 });
+
+test('connection polling choice defaults on and preserves explicit all-tag settings', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const vm = require('node:vm');
+  const source = fs.readFileSync(path.join(__dirname, '../public/app.js'), 'utf8');
+  const context = vm.createContext({});
+  vm.runInContext(source.slice(source.indexOf('function normalizePollingMode('), source.indexOf('function isMqttConnectionObj(')), context);
+  assert.equal(context.applyPollingConfigToConnection({}, {}).poll_active_only, true);
+  assert.equal(context.applyPollingConfigToConnection({}, { activeOnly: false }).poll_active_only, false);
+  assert.equal(context.applyPollingConfigToConnection({ poll_active_only: false }, {}).poll_active_only, false);
+  assert.equal(context.applyPollingConfigToConnection({ poll_active_only: false }, { activeOnly: true }).poll_active_only, true);
+  for (const prefix of ['edit', 'new']) {
+    assert.ok(source.includes(`activeOnly: els.${prefix}DevPollActiveOnly?.value !== 'all'`));
+    const html = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
+    assert.ok(html.includes(`id="${prefix}DevPollActiveOnly"`));
+  }
+});

@@ -4,6 +4,19 @@
 #include <cassert>
 
 int main() {
+    assert(g_activePollTestConnections.empty());
+    DriverContext policyDriver; policyDriver.conn.id = "Default"; policyDriver.conn.driver = "ab_eip";
+    assert(active_poll_test_enabled(policyDriver, false));
+    policyDriver.conn.poll_active_only = false;
+    policyDriver.conn.poll_active_only_configured = true;
+    assert(!active_poll_test_enabled(policyDriver, false));
+    policyDriver.conn.poll_active_only = true;
+    assert(active_poll_test_enabled(policyDriver, false));
+    assert(!active_poll_test_enabled(policyDriver, true));
+    policyDriver.tags.emplace_back(); policyDriver.tags.back().cfg.writable = true;
+    assert(!active_poll_test_enabled(policyDriver, false));
+    policyDriver.tags.clear(); policyDriver.conn.driver = "modbus_tcp";
+    assert(!active_poll_test_enabled(policyDriver, false));
     UA_Server *server = UA_Server_new();
     UA_ServerConfig_setDefault(UA_Server_getConfig(server));
     UA_Server_addNamespace(server, "urn:opcbridge:quality-test");

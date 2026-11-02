@@ -797,6 +797,8 @@
   editDevPlcType: document.getElementById('editDevPlcType'),
   editDevPollingModeRow: document.getElementById('editDevPollingModeRow'),
   editDevPollingMode: document.getElementById('editDevPollingMode'),
+  editDevPollActiveOnly: document.getElementById('editDevPollActiveOnly'),
+  editDevPollActiveOnlyRow: document.getElementById('editDevPollActiveOnlyRow'),
   editDevPollingPacingRow: document.getElementById('editDevPollingPacingRow'),
   editDevPollingPacing: document.getElementById('editDevPollingPacing'),
   editDevPollBatchSizeRow: document.getElementById('editDevPollBatchSizeRow'),
@@ -978,6 +980,8 @@
   newDevPlcType: document.getElementById('newDevPlcType'),
   newDevPollingModeRow: document.getElementById('newDevPollingModeRow'),
   newDevPollingMode: document.getElementById('newDevPollingMode'),
+  newDevPollActiveOnly: document.getElementById('newDevPollActiveOnly'),
+  newDevPollActiveOnlyRow: document.getElementById('newDevPollActiveOnlyRow'),
   newDevPollingPacingRow: document.getElementById('newDevPollingPacingRow'),
   newDevPollingPacing: document.getElementById('newDevPollingPacing'),
   newDevPollBatchSizeRow: document.getElementById('newDevPollBatchSizeRow'),
@@ -12140,6 +12144,7 @@ async function downloadConnectivityCsv() {
     'plc_type_label',
     'polling_mode',
     'polling_pacing',
+    'poll_active_only',
     'poll_batch_size',
     'poll_time_budget_ms',
     'action'
@@ -12163,6 +12168,7 @@ async function downloadConnectivityCsv() {
       plc_type_label: labelForPlcType(plcType),
       polling_mode: pollingMode,
       polling_pacing: pollingPacing,
+      poll_active_only: obj?.poll_active_only !== false ? 'true' : 'false',
       poll_batch_size: Number.isFinite(pollBatchSize) && pollBatchSize > 0 ? String(Math.trunc(pollBatchSize)) : '',
       poll_time_budget_ms: Number.isFinite(pollTimeBudgetMs) && pollTimeBudgetMs > 0 ? String(Math.trunc(pollTimeBudgetMs)) : '',
       action: ''
@@ -12775,7 +12781,8 @@ async function importDevicesCsvIntoWorkspace() {
 
     const obj = applyPollingConfigToConnection(
       { ...(existingObj || {}), id: connection_id, description: connectionName, driver, gateway, path: pathVal, slot, plc_type },
-      { mode: pollingMode, pacing: pollingPacing, batchSize: pollBatchSize, timeBudgetMs: pollTimeBudgetMs }
+      { mode: pollingMode, pacing: pollingPacing, batchSize: pollBatchSize, timeBudgetMs: pollTimeBudgetMs,
+        activeOnly: parseBoolLoose(csvGet(r, 'poll_active_only'), existingObj?.poll_active_only !== false) }
     );
 
     if (!state.workspaceConnDirty) state.workspaceConnDirty = new Map();
@@ -17329,10 +17336,11 @@ function readOptionalPositiveInt(el) {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-function applyPollingConfigToConnection(obj, { mode, pacing, batchSize, timeBudgetMs, maxReadsPerSec, pollLanes }) {
+function applyPollingConfigToConnection(obj, { mode, pacing, batchSize, timeBudgetMs, maxReadsPerSec, pollLanes, activeOnly }) {
   const out = obj || {};
   out.polling_mode = normalizePollingMode(mode);
   out.polling_pacing = normalizePollingPacing(pacing);
+  out.poll_active_only = activeOnly == null ? out.poll_active_only !== false : activeOnly !== false;
   const batch = Math.trunc(Number(batchSize || 0));
   const budget = Math.trunc(Number(timeBudgetMs || 0));
   const maxReads = Math.trunc(Number(maxReadsPerSec || 0));
@@ -17632,8 +17640,8 @@ function applyDeviceDriverUi(prefix) {
   const isModbus = isModbusDriver(driver);
   const isRemoteOpcua = driver === 'opcua_client';
   const plcRows = isEdit
-    ? [els.editDevGatewayRow, els.editDevPathRow, els.editDevModbusAddressModeRow, els.editDevSlotRow, els.editDevPlcTypeRow, els.editDevPollingModeRow, els.editDevPollingPacingRow, els.editDevPollBatchSizeRow, els.editDevPollTimeBudgetMsRow, els.editDevPollMaxReadsPerSecRow, els.editDevPollLanesRow]
-    : [els.newDevGatewayRow, els.newDevPathRow, els.newDevModbusAddressModeRow, els.newDevSlotRow, els.newDevPlcTypeRow, els.newDevPollingModeRow, els.newDevPollingPacingRow, els.newDevPollBatchSizeRow, els.newDevPollTimeBudgetMsRow];
+    ? [els.editDevGatewayRow, els.editDevPathRow, els.editDevModbusAddressModeRow, els.editDevSlotRow, els.editDevPlcTypeRow, els.editDevPollingModeRow, els.editDevPollActiveOnlyRow, els.editDevPollingPacingRow, els.editDevPollBatchSizeRow, els.editDevPollTimeBudgetMsRow, els.editDevPollMaxReadsPerSecRow, els.editDevPollLanesRow]
+    : [els.newDevGatewayRow, els.newDevPathRow, els.newDevModbusAddressModeRow, els.newDevSlotRow, els.newDevPlcTypeRow, els.newDevPollingModeRow, els.newDevPollActiveOnlyRow, els.newDevPollingPacingRow, els.newDevPollBatchSizeRow, els.newDevPollTimeBudgetMsRow];
   const mqttRows = isEdit
     ? [els.editDevMqttHostRow, els.editDevMqttPortRow, els.editDevMqttClientIdRow, els.editDevMqttUsernameRow, els.editDevMqttPasswordRow, els.editDevMqttTlsRow, els.editDevMqttTlsInsecureRow, els.editDevMqttCaFileRow, els.editDevMqttClientAuthRow, els.editDevMqttTestRow]
     : [els.newDevMqttHostRow, els.newDevMqttPortRow, els.newDevMqttClientIdRow, els.newDevMqttUsernameRow, els.newDevMqttPasswordRow, els.newDevMqttTlsRow, els.newDevMqttTlsInsecureRow, els.newDevMqttCaFileRow, els.newDevMqttClientAuthRow, els.newDevMqttTestRow];
@@ -18504,6 +18512,7 @@ function showWorkspaceNewDeviceForm(channelId) {
   if (els.newDevSlot) els.newDevSlot.value = '';
   if (els.newDevPlcType) els.newDevPlcType.value = 'lgx';
   if (els.newDevPollingMode) els.newDevPollingMode.value = 'standard';
+  if (els.newDevPollActiveOnly) els.newDevPollActiveOnly.value = 'active';
   if (els.newDevPollingPacing) els.newDevPollingPacing.value = 'balanced';
   if (els.newDevPollBatchSize) els.newDevPollBatchSize.value = '';
   if (els.newDevPollTimeBudgetMs) els.newDevPollTimeBudgetMs.value = '';
@@ -19225,6 +19234,7 @@ function openWorkspaceItemModal(node) {
         if (els.editDevModbusAddressMode) els.editDevModbusAddressMode.value = modbusAddressModeFromConnection(obj);
         if (els.editDevSlot) els.editDevSlot.value = (obj?.slot == null) ? '' : String(obj.slot);
         if (els.editDevPlcType) els.editDevPlcType.value = String(obj?.plc_type || obj?.plcType || 'lgx') || 'lgx';
+        if (els.editDevPollActiveOnly) els.editDevPollActiveOnly.value = obj?.poll_active_only === false ? 'all' : 'active';
         if (els.editDevPollingMode) els.editDevPollingMode.value = normalizePollingMode(obj?.polling_mode);
         if (els.editDevPollingPacing) els.editDevPollingPacing.value = normalizePollingPacing(obj?.polling_pacing);
         if (els.editDevPollBatchSize) els.editDevPollBatchSize.value = obj?.poll_batch_size == null ? '' : String(obj.poll_batch_size);
@@ -20163,6 +20173,7 @@ async function saveEditedDeviceFromModal() {
         {
           mode: els.editDevPollingMode?.value,
           pacing: els.editDevPollingPacing?.value,
+          activeOnly: els.editDevPollActiveOnly?.value !== 'all',
           batchSize: readOptionalPositiveInt(els.editDevPollBatchSize),
           timeBudgetMs: readOptionalPositiveInt(els.editDevPollTimeBudgetMs),
           maxReadsPerSec: readOptionalPositiveInt(els.editDevPollMaxReadsPerSec),
@@ -21077,6 +21088,7 @@ async function createNewDeviceFromWorkspace() {
         {
           mode: els.newDevPollingMode?.value,
           pacing: els.newDevPollingPacing?.value,
+          activeOnly: els.newDevPollActiveOnly?.value !== 'all',
           batchSize: readOptionalPositiveInt(els.newDevPollBatchSize),
           timeBudgetMs: readOptionalPositiveInt(els.newDevPollTimeBudgetMs)
         }

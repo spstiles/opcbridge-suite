@@ -15,6 +15,19 @@ OPCBridge Suite is a complete SCADA stack for industrial automation:
 
 ![OPCBridge-SCADA landing page](docs/manual/screenshots/opcbridge-scada-landing-page.png)
 
+## Connection tag polling
+
+In SCADA Workspace, create or edit a connection and choose **Tag polling**:
+
+- **Poll active tags (default)** follows OPC UA clients, visible Live Tags rows,
+  alarms, automations and background services. Unused tags suspend after grace.
+- **Poll all enabled tags** keeps ordinary polling for that connection.
+
+Use **Save and Poll** to apply the choice without restarting the service. Active
+polling currently applies to read-only Allen-Bradley connections. Connections
+containing writable tags, other drivers and MQTT mode keep ordinary polling.
+No service-environment changes are needed on a normal installation.
+
 ## Why OPCBridge Exists
 
 I have worked with SCADA and industrial control systems for a very long time,

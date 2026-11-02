@@ -1,5 +1,8 @@
 # Active polling release checkpoint — 2026-11-02
 
+Historical opt-in checkpoint for suite 0.5.46. Subsequent per-connection UI/default
+activation work is documented in `active-tag-polling.md` and the main README.
+
 Branch: `feature/active-tag-polling`. Suite release: `0.5.46`.
 
 ## Release scope

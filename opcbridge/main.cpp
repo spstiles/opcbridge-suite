@@ -215,6 +215,8 @@ struct ConnectionConfig {
     bool enabled = true;
     std::string polling_mode = "standard"; // "standard" or "time_sliced"
     std::string polling_pacing = "balanced"; // "gentle", "balanced", "fast"
+    bool poll_active_only = true;
+    bool poll_active_only_configured = false;
     int poll_batch_size = 0; // 0 = auto
     int poll_time_budget_ms = 0; // 0 = auto
     int poll_max_reads_per_sec = 0; // 0 = unlimited
@@ -4773,6 +4775,8 @@ ConnectionConfig load_connection_config(const std::string &path) {
     if (c.polling_mode != "time_sliced") c.polling_mode = "standard";
     c.polling_pacing = to_lower_copy(trim_copy(json_get_string_loose(j, "polling_pacing", "balanced")));
     if (c.polling_pacing != "gentle" && c.polling_pacing != "fast") c.polling_pacing = "balanced";
+    c.poll_active_only_configured = j.contains("poll_active_only");
+    c.poll_active_only = j.value("poll_active_only", true);
     c.poll_batch_size = std::max(0, json_get_int_loose(j, "poll_batch_size", 0));
     c.poll_time_budget_ms = std::max(0, json_get_int_loose(j, "poll_time_budget_ms", 0));
     c.poll_max_reads_per_sec = std::max(0, json_get_int_loose(j, "poll_max_reads_per_sec", 0));
@@ -14287,9 +14291,22 @@ static void record_active_poll_test_read(const std::string &cid, const std::stri
 
 
 
+static bool connection_requests_active_polling(const ConnectionConfig &conn) {
+    // Explicit connection settings supersede the legacy trial allowlist.
+    if (conn.poll_active_only_configured || g_activePollTestConnections.empty()) return conn.poll_active_only;
+    return g_activePollTestConnections.count(conn.id) != 0;
+}
 static bool active_poll_test_enabled(const DriverContext &driver, bool mqttMode) {
-    return !mqttMode && driver.conn.driver == "ab_eip" && g_activePollTestConnections.count(driver.conn.id) &&
+    return !mqttMode && driver.conn.driver == "ab_eip" && connection_requests_active_polling(driver.conn) &&
         std::none_of(driver.tags.begin(), driver.tags.end(), [](const TagRuntime &tag) { return tag.cfg.writable; });
+}
+
+static json active_polling_connections() {
+    json ids = json::array();
+    std::lock_guard<std::mutex> lock(g_activePollTestMetricsMutex);
+    for (const auto &entry : g_activePollTestEligibility.items())
+        if (entry.value().value("enabled", false)) ids.push_back(entry.key());
+    return ids;
 }
 
 struct PollingActivitySummary {
@@ -23051,6 +23068,7 @@ window.addEventListener("load", startAutoRefresh);
                     jc["plc_type"]           = c.plc_type;
                     jc["polling_mode"]       = c.polling_mode;
                     jc["polling_pacing"]     = c.polling_pacing;
+                    jc["poll_active_only"] = c.poll_active_only;
                     jc["poll_batch_size"]    = c.poll_batch_size;
                     jc["poll_time_budget_ms"] = c.poll_time_budget_ms;
                     jc["poll_max_reads_per_sec"] = c.poll_max_reads_per_sec;
@@ -23111,14 +23129,14 @@ window.addEventListener("load", startAutoRefresh);
                 const bool includeTags = !req.has_param("include_tags") || req.get_param_value("include_tags") != "0";
                 auto root = collect_polling_demand(drivers, driverMutex, filter, includeTags);
                 root["scheduler_preview"] = g_demandSchedulerPreview.snapshot(filter, includeTags);
-                root["active_poll_test"] = {{"configured_connections", g_activePollTestConnections},
+                root["active_poll_test"] = {{"configured_connections", active_polling_connections()},
                     {"scan_selections_skipped", g_activePollTestSkips.load()}, {"experimental", true}};
                 {
                     std::lock_guard<std::mutex> lock(g_activePollTestMetricsMutex);
                     root["active_poll_test"]["poll_read_requests"] = g_activePollTestReadStarts;
                     root["active_poll_test"]["connection_eligibility"] = g_activePollTestEligibility;
                 }
-                if (!g_activePollTestConnections.empty()) {
+                if (!active_polling_connections().empty()) {
                     root["mode"] = "active_poll_test";
                     root["polling_unchanged"] = false;
                 }
@@ -23888,7 +23906,7 @@ window.addEventListener("load", startAutoRefresh);
                         std::this_thread::sleep_until(std::min(deadline,
                             PollReadStamp::Clock::now() + std::chrono::milliseconds(20)));
                     } while (true);
-                    res.set_content(json{{"ok", ready}, {"polling_unchanged", g_activePollTestConnections.empty()}, {"tags", rows}}.dump(), "application/json");
+                    res.set_content(json{{"ok", ready}, {"polling_unchanged", active_polling_connections().empty()}, {"tags", rows}}.dump(), "application/json");
                 } catch (const std::exception &ex) {
                     res.status = 400;
                     res.set_content(json{{"ok", false}, {"error", ex.what()}}.dump(), "application/json");
@@ -29104,11 +29122,11 @@ window.addEventListener("load", startAutoRefresh);
 		                    baseSpec.gen = gen;
                             baseSpec.freshness_epoch = d.freshness_epoch;
                             baseSpec.active_poll_test = active_poll_test_enabled(d, mqttMode);
-                            if (!g_activePollTestConnections.empty()) {
+                            {
                                 std::lock_guard<std::mutex> lock(g_activePollTestMetricsMutex);
                                 g_activePollTestEligibility[d.conn.id] = {{"enabled", baseSpec.active_poll_test},
                                     {"reason", baseSpec.active_poll_test ? "selected_read_only_connection" :
-                                        (!g_activePollTestConnections.count(d.conn.id) ? "not_selected" :
+                                        (!connection_requests_active_polling(d.conn) ? "disabled_for_connection" :
                                          (mqttMode ? "mqtt_active" : (d.conn.driver != "ab_eip" ? "unsupported_driver" : "writable_tags")))}};
                             }
 		                    baseSpec.stop_requested = onlyConnId.empty()
@@ -30884,7 +30902,7 @@ window.addEventListener("load", startAutoRefresh);
         while (true) {
             const auto planningNow = DemandSchedulerPreview::Clock::now();
             if (lastDemandPlanning == DemandSchedulerPreview::Clock::time_point{} ||
-                planningNow - lastDemandPlanning >= std::chrono::milliseconds(g_activePollTestConnections.empty() ? 1000 : 200)) {
+                planningNow - lastDemandPlanning >= std::chrono::milliseconds(200)) {
                 g_demandSchedulerPreview.refresh(collect_polling_demand(drivers, driverMutex));
                 lastDemandPlanning = planningNow;
             }

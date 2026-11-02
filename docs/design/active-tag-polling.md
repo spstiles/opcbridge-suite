@@ -1,6 +1,10 @@
-# Active-tag polling: observation phase
+# Active-tag polling: implementation history
 
-Branch: `feature/active-tag-polling`. Polling behavior is unchanged.
+Current behavior: active polling defaults on for eligible connections and is selectable
+in the Workspace connection editor. The dated sections below record earlier phases;
+see the final per-connection configuration section for the current policy.
+
+Branch: `feature/active-tag-polling`.
 
 ## What exists now
 
@@ -1119,3 +1123,28 @@ retains a shared tag when one leaves. Friendly UA connection labels were confirm
 after installing the naming fix. These are manual installed observations rather
 than browser automation. See `active-tag-polling-release-checkpoint.md` for the
 current validation summary and opt-in rollout boundaries.
+
+
+## Per-connection UI setting and default activation (2026-11-02)
+
+The Workspace new/edit connection forms now expose Tag polling: Poll active tags
+(default) or Poll all enabled tags. Save and Poll persists `poll_active_only` and
+applies it through the existing connection reload; no service restart is needed.
+Missing fields default true for both existing and new configurations. Explicit
+false keeps ordinary polling. CSV exports include the setting; imports without
+that column preserve an existing explicit false instead of silently resetting it.
+
+Eligibility remains restricted to read-only AB connections, with the existing
+writable/unsupported-driver/MQTT fallbacks. Explicit per-connection choices take
+precedence over the legacy trial environment allowlist. That allowlist remains
+compatible for untouched legacy trial configurations; new installations need no
+environment setting. Diagnostics now derive enabled connections from applied
+connection policy rather than requiring a nonempty environment allowlist.
+
+`test-active-settings.py` uses no allowlist and verifies default suspension,
+explicit all-tags polling, writable fallback, and switching both directions via
+connection reload. It then verifies normal consumer wake/release under the saved
+active setting. UI tests cover defaults, explicit false, preserving a choice when
+unrelated polling fields are applied, and both editor save paths. Existing native
+UA quality/folder tests also check the eligibility policy. This supersedes the
+opt-in-only release checkpoint; installed services are not modified by these tests.

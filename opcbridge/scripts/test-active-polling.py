@@ -152,7 +152,7 @@ async def main():
                         assert eligibility['PLC']['enabled']
                         if not args.health_only_idle:
                             assert eligibility['Writable']['reason'] == 'writable_tags'
-                            assert eligibility['Control']['reason'] == 'not_selected'
+                            assert eligibility['Control']['reason'] == 'disabled_for_connection'
                         print('Native UA zero-age read woke an inactive physical tag and returned a verified sample.')
 
                 print('Active polling test passed: idle reads stop, aliases wake physical roots, array fresh reads wake roots, inactive work stays out of batch prefetch, waiting precedes GOOD, health and work counts distinguish idle from failures.')
