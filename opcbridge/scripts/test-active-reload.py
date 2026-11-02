@@ -144,9 +144,9 @@ async def main():
                     value = await ua_status(client, 'Replacement')
                     assert value.StatusCode.is_good(), value
                     policy = api('/polling/demand')['active_poll_test']['connection_eligibility']['PLC']
-                    assert not policy['enabled'] and policy['reason'] == 'writable_tags', policy
-                    assert 'polling_activity' not in api('/health')['connections']['PLC']
-                    print('Removal/re-add passed: cache/UA/preview/test telemetry are retired, vector shifts preserve other polling, and writable re-add fails open.')
+                    assert policy['enabled'], policy
+                    assert 'polling_activity' in api('/health')['connections']['PLC']
+                    print('Removal/re-add passed: cache/UA/preview/test telemetry are retired, vector shifts preserve other polling, and writable re-add remains demand-driven.')
             except Exception:
                 log.flush(); log.seek(0); print(log.read()[-9000:]); raise
             finally:

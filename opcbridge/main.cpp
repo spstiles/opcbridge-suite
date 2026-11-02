@@ -1,5 +1,6 @@
 #include "async_poll_batch.h"
 #include "poll_sweep_estimate.h"
+#include "idle_connection_probe.h"
 // main.cpp - AB/libplctag "OPC bridge core" with:
 //   - JSON-with-comments config for connections/tags
 //   - Multi-connection EtherNet/IP via libplctag
@@ -592,6 +593,9 @@ struct UaUpdate {
     uint64_t driver_epoch = 0;
 };
 
+static std::mutex g_writeReadbackMutex;
+static std::deque<UaUpdate> g_writeReadbackUpdates;
+
 struct MqttPublishJob {
     TagSnapshot snap;
     TagSnapshot prev;
@@ -1062,6 +1066,9 @@ struct PlcWriteTiming {
     int64_t lock_wait_ms = 0;
 };
 
+static void request_write_readback(std::vector<DriverContext>&, const std::string&, const std::string&,
+                                   uint64_t, TagTable&, std::mutex&);
+
 // Forward declaration so MQTT callbacks can call this:
 bool write_tag_by_name(std::vector<DriverContext> &drivers,
                        const std::string &conn_id,
@@ -1070,7 +1077,8 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
                        TagTable &table,
                        std::mutex &driverMutex,
                        std::string *errorOut = nullptr,
-                       PlcWriteTiming *timingOut = nullptr);
+                       PlcWriteTiming *timingOut = nullptr,
+                       uint64_t expectedEpoch = 0);
 void mqtt_publish_raw(const std::string &topic, const std::string &payload);
 bool mqtt_publish_snapshot(const TagSnapshot &snap, const TagSnapshot *prevSnap);
 
@@ -1201,6 +1209,7 @@ struct BlockPollMetrics {
 };
 
 struct ConnPollMetrics {
+    IdleConnectionProbe idle_probe;
     std::atomic<uint64_t> reads_total{0};
     std::atomic<uint64_t> reads_ok{0};
     std::atomic<uint64_t> reads_err{0};
@@ -5613,6 +5622,9 @@ static bool accept_startup_handle(int32_t handle,
     }
 }
 
+static UA_StatusCode ua_write_snapshot(UA_Server*, const UA_NodeId&, const TagSnapshot&, UA_StatusCode);
+static UA_StatusCode ua_snapshot_status(const UaTagBinding&, const TagSnapshot&);
+
 static void opcua_onWrite(UA_Server *server,
                           const UA_NodeId *sessionId,
                           void *sessionContext,
@@ -5695,6 +5707,20 @@ static void opcua_onWrite(UA_Server *server,
         *g_mqttDriverMutex
     );
 
+    TagSnapshot cachedWriteResult;
+    bool haveCachedWriteResult = false;
+    {
+        std::lock_guard<std::mutex> lock(*g_mqttDriverMutex);
+        const auto cached = g_mqttTagTable->find(make_tag_key(binding->conn_id, binding->logical_name));
+        if (cached != g_mqttTagTable->end()) {
+            cachedWriteResult = cached->second;
+            haveCachedWriteResult = true;
+        }
+    }
+    // The UA library initially stores the client's requested value. Replace it
+    // within this callback with cache evidence (or waiting), before another read.
+    if (haveCachedWriteResult)
+        ua_write_snapshot(server, *nodeId, cachedWriteResult, ua_snapshot_status(*binding, cachedWriteResult));
     if (!ok) {
         std::cerr << "OPC UA write: write_tag_by_name failed for ["
                   << binding->conn_id << "]." << binding->logical_name << "\n";
@@ -6450,7 +6476,8 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
                        TagTable &table,
                        std::mutex &driverMutex,
                        std::string *errorOut,
-                       PlcWriteTiming *timingOut)
+                       PlcWriteTiming *timingOut,
+                       uint64_t expectedEpoch)
 {
     auto fail = [&](const std::string &message) {
         if (errorOut) *errorOut = message;
@@ -6469,6 +6496,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
     bool hadPrev = false;
     bool found = false;
     bool connectionFound = false;
+    uint64_t writeEpoch = 0;
     TagConfig parentArrayCfg;
     int32_t parentArrayHandle = PLCTAG_ERR_NOT_FOUND;
     bool parentArrayScalingLinear = false;
@@ -6493,6 +6521,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
             if (driver.conn.id != conn_id) continue;
             connectionFound = true;
             conn = driver.conn;
+            writeEpoch = driver.freshness_epoch;
             for (auto &t : driver.tags) {
                 if (t.cfg.logical_name == logical_name) {
                     cfg = t.cfg;
@@ -6626,10 +6655,39 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
         std::cerr << msg << "\n";
         return fail(msg);
     }
+    if (expectedEpoch && writeEpoch != expectedEpoch)
+        return fail("Connection configuration changed before write; retry the write.");
     if (!cfg.writable) {
         const std::string msg = "Tag '" + logical_name + "' is not marked writable in config.";
         std::cerr << msg << "\n";
         return fail(msg);
+    }
+
+    bool physicalWrite = conn.driver == "ab_eip" && !is_memory_tag(cfg);
+    if (physicalWrite && !cfg.source_tag.empty()) {
+        std::lock_guard<std::mutex> lock(driverMutex);
+        for (const auto &driver : drivers) {
+            if (driver.conn.id != conn_id) continue;
+            std::string source = cfg.source_tag;
+            std::set<std::string> seen;
+            while (seen.insert(source).second) {
+                const auto tag = std::find_if(driver.tags.begin(), driver.tags.end(), [&](const TagRuntime &t) { return t.cfg.logical_name == source; });
+                if (tag == driver.tags.end()) break;
+                if (is_memory_tag(tag->cfg)) { physicalWrite = false; break; }
+                const auto parent = tag->poll_source.empty() ? tag->cfg.source_tag : tag->poll_source;
+                if (parent.empty()) break;
+                source = parent;
+            }
+            break;
+        }
+    }
+    struct ReadbackOnExit {
+        std::function<void()> action;
+        ~ReadbackOnExit() { if (action) action(); }
+    } readback;
+    if (physicalWrite) {
+        readback.action = [&] { request_write_readback(drivers, conn_id, logical_name, writeEpoch, table, driverMutex); };
+        readback.action();
     }
 
     std::string cfgBitQualifiedSource;
@@ -6700,7 +6758,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
         }
 
         std::string sourceErr;
-        if (!write_tag_by_name(drivers, conn_id, sourceName, sourceValueText, table, driverMutex, &sourceErr)) {
+        if (!write_tag_by_name(drivers, conn_id, sourceName, sourceValueText, table, driverMutex, &sourceErr, nullptr, writeEpoch)) {
             const std::string msg = "Derived alias write-through failed for [" + conn_id + "]." + logical_name + " -> " + sourceName + (sourceErr.empty() ? "" : ": " + sourceErr);
             std::cerr << msg << "\n";
             return fail(msg);
@@ -6717,7 +6775,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
             snap.value = aliasValue;
 
             std::lock_guard<std::mutex> lock(driverMutex);
-            table[key] = snap;
+            if (!physicalWrite) table[key] = snap;
         }
 
         std::cout << "Write OK (derived alias): [" << conn.id << "] "
@@ -6745,13 +6803,13 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
 
         {
             std::lock_guard<std::mutex> lock(driverMutex);
-            table[key] = snap;
+            if (!physicalWrite) table[key] = snap;
         }
 
         std::cout << "Write OK (memory): [" << conn.id << "] "
                   << logical_name << " := " << value_str << "\n";
 
-        if (cfg.log_event_on_change) {
+        if (!physicalWrite && cfg.log_event_on_change) {
             bool valueChanged = should_log_tag_event_change(hadPrev, snap, prevSnap);
             if (valueChanged) {
                 int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -6792,7 +6850,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
 
         {
             std::lock_guard<std::mutex> lock(driverMutex);
-            table[key] = snap;
+            if (!physicalWrite) table[key] = snap;
         }
 
         mqtt_publish_topic_value(conn.id, logical_name, value_str);
@@ -6876,6 +6934,13 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
     }
     auto connectionGate = connection_plc_mutex(conn_id);
     std::unique_lock<WriterPrioritySharedMutex> plcConnectionLock(*connectionGate);
+    if (physicalWrite) {
+        std::lock_guard<std::mutex> lock(driverMutex);
+        const auto current = std::find_if(drivers.begin(), drivers.end(), [&](const DriverContext &d) {
+            return d.conn.id == conn_id && d.freshness_epoch == writeEpoch;
+        });
+        if (current == drivers.end()) return fail("Connection configuration changed before write; retry the write.");
+    }
     if (timingOut) {
         timingOut->lock_wait_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - plcLockWaitStarted
@@ -6999,7 +7064,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
 
         {
             std::lock_guard<std::mutex> lock(driverMutex);
-            table[key] = snap;
+            if (!physicalWrite) table[key] = snap;
         }
 
         std::cout << "Write OK (array element): [" << conn.id << "] "
@@ -7010,7 +7075,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
             plc_tag_destroy(writeHandle);
         }
 
-        if (cfg.log_event_on_change) {
+        if (!physicalWrite && cfg.log_event_on_change) {
             bool valueChanged = should_log_tag_event_change(hadPrev, snap, prevSnap);
             if (valueChanged) {
                 int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -7267,8 +7332,8 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
 
         {
             std::lock_guard<std::mutex> lock(driverMutex);
-            table[srcKey] = srcSnap;
-            table[key] = dSnap;
+            if (!physicalWrite) table[srcKey] = srcSnap;
+            if (!physicalWrite) table[key] = dSnap;
         }
 
         if (destroySrcHandle) plc_tag_destroy(srcHandle);
@@ -7277,7 +7342,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
                   << logical_name << " := " << value_str
                   << " (source=" << srcName << " bit=" << derivedBit << ")\n";
 
-        if (cfg.log_event_on_change) {
+        if (!physicalWrite && cfg.log_event_on_change) {
             const bool valueChanged = should_log_tag_event_change(hadPrevDerived, dSnap, prevDerived);
             if (valueChanged) {
                 int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -7297,7 +7362,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
         }
 
         // (Optional) event log for the source tag too if it is configured to log on change.
-        if (srcCfg.log_event_on_change) {
+        if (!physicalWrite && srcCfg.log_event_on_change) {
             const bool valueChanged = should_log_tag_event_change(hadPrevSrc, srcSnap, prevSrc);
             if (valueChanged) {
                 int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -7431,7 +7496,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
 
     {
         std::lock_guard<std::mutex> lock(driverMutex);
-        table[key] = snap;
+        if (!physicalWrite) table[key] = snap;
     }
 
     std::cout << "Write OK: [" << conn.id << "] "
@@ -7442,7 +7507,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
         handle = PLCTAG_ERR_NOT_FOUND;
     }
 
-    if (cfg.log_event_on_change) {
+    if (!physicalWrite && cfg.log_event_on_change) {
         bool valueChanged = should_log_tag_event_change(hadPrev, snap, prevSnap);
         if (valueChanged) {
             int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -12340,6 +12405,55 @@ static TagSnapshot transition_poll_cache(DriverContext &driver, const TagRuntime
     return snapshot;
 }
 
+// Reject pre-write samples and briefly request ordinary poller readback. Never
+// publish the requested output as a measurement, including failed write attempts.
+static void request_write_readback(std::vector<DriverContext> &drivers, const std::string &cid,
+        const std::string &name, uint64_t epoch, TagTable &table, std::mutex &mutex) {
+    std::vector<std::pair<TagSnapshot, TagConfig>> updates;
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        for (auto &driver : drivers) {
+            if (driver.conn.id != cid || driver.freshness_epoch != epoch) continue;
+            std::string root = name;
+            std::set<std::string> seen;
+            while (seen.insert(root).second) {
+                auto tag = std::find_if(driver.tags.begin(), driver.tags.end(), [&](const TagRuntime &t) { return t.cfg.logical_name == root; });
+                if (tag == driver.tags.end()) {
+                    std::string parent; int bit = -1;
+                    if (parse_bit_qualified_source_name(root, parent, bit)) { root = parent; continue; }
+                    return;
+                }
+                const auto parent = tag->poll_source.empty() ? tag->cfg.source_tag : tag->poll_source;
+                if (parent.empty()) break;
+                root = parent;
+            }
+            g_tagDemand.http_read(ua_tag_nodeid_string(cid, root));
+            std::set<std::string> affected{root};
+            bool changed = true;
+            while (changed) {
+                changed = false;
+                for (const auto &tag : driver.tags) {
+                    const auto parent = tag.poll_source.empty() ? tag.cfg.source_tag : tag.poll_source;
+                    if (!parent.empty() && affected.count(parent)) changed = affected.insert(tag.cfg.logical_name).second || changed;
+                }
+            }
+            for (const auto &tag : driver.tags) {
+                if (!affected.count(tag.cfg.logical_name) || !tag.cfg.enabled || is_memory_tag(tag.cfg)) continue;
+                if (tag.cfg.elem_count > 1 && tag.poll_source.empty()) continue;
+                updates.emplace_back(transition_poll_cache(driver, tag, table, true, true), tag.cfg);
+            }
+            break;
+        }
+    }
+    for (const auto &update : updates) {
+        ws_notify_tag_update(update.first, update.second);
+        if (g_uaServer) {
+            std::lock_guard<std::mutex> lock(g_writeReadbackMutex);
+            g_writeReadbackUpdates.push_back(UaUpdate{cid, update.first.logical_name, update.first, epoch});
+        }
+    }
+}
+
 static void seed_memory_tag_table(const std::vector<DriverContext> &drivers,
                                   TagTable &tagTable) {
     int seeded = 0;
@@ -14297,8 +14411,7 @@ static bool connection_requests_active_polling(const ConnectionConfig &conn) {
     return g_activePollTestConnections.count(conn.id) != 0;
 }
 static bool active_poll_test_enabled(const DriverContext &driver, bool mqttMode) {
-    return !mqttMode && driver.conn.driver == "ab_eip" && connection_requests_active_polling(driver.conn) &&
-        std::none_of(driver.tags.begin(), driver.tags.end(), [](const TagRuntime &tag) { return tag.cfg.writable; });
+    return !mqttMode && driver.conn.driver == "ab_eip" && connection_requests_active_polling(driver.conn);
 }
 
 static json active_polling_connections() {
@@ -24770,8 +24883,19 @@ window.addEventListener("load", startAutoRefresh);
 										++error_count;
 									} else if (intentionallyIdle) {
                                         dstatus["status"] = "ok";
-                                        dstatus["reason"] = "polling idle (no active demand; PLC availability not verified)";
-                                        ++ok_count;
+                                        dstatus["reason"] = "polling idle (no active demand)";
+                                        {
+                                            std::lock_guard<std::mutex> metricsLock(g_metricsMutex);
+                                            const auto metric = g_connPollMetrics.find(driver.conn.id);
+                                            if (metric != g_connPollMetrics.end()) {
+                                                dstatus["communication"] = metric->second->idle_probe.snapshot();
+                                                if (dstatus["communication"].value("consecutive_failures", 0u) >= 3) {
+                                                    dstatus["status"] = "error";
+                                                    dstatus["reason"] = "PLC communication checks failed; polling idle";
+                                                }
+                                            }
+                                        }
+                                        if (dstatus["status"] == "error") ++error_count; else ++ok_count;
                                     } else if (total_seen == 0) {
 										dstatus["status"] = "error";
 										dstatus["reason"] = "no tag snapshots yet";
@@ -24897,7 +25021,7 @@ window.addEventListener("load", startAutoRefresh);
 					watchdog["runtime_last_read_age_ms"] = runtime_last_read_age_ms >= 0 ? json(runtime_last_read_age_ms) : json(nullptr);
 					if (!conn_obj.empty() && static_cast<size_t>(intentionally_idle_count) == conn_obj.size()) {
                         watchdog["status"] = "ok";
-                        watchdog["reason"] = "all connections intentionally idle; PLC availability not verified";
+                        watchdog["reason"] = "all connections idle (no active demand)";
                     } else if (runtime_last_read_age_ms < 0) {
 						watchdog["status"] = "unknown";
 						watchdog["reason"] = "no runtime reads observed yet";
@@ -29125,9 +29249,9 @@ window.addEventListener("load", startAutoRefresh);
                             {
                                 std::lock_guard<std::mutex> lock(g_activePollTestMetricsMutex);
                                 g_activePollTestEligibility[d.conn.id] = {{"enabled", baseSpec.active_poll_test},
-                                    {"reason", baseSpec.active_poll_test ? "selected_read_only_connection" :
+                                    {"reason", baseSpec.active_poll_test ? "active_tags_enabled" :
                                         (!connection_requests_active_polling(d.conn) ? "disabled_for_connection" :
-                                         (mqttMode ? "mqtt_active" : (d.conn.driver != "ab_eip" ? "unsupported_driver" : "writable_tags")))}};
+                                         (mqttMode ? "mqtt_active" : "unsupported_driver"))}};
                             }
 		                    baseSpec.stop_requested = onlyConnId.empty()
 		                        ? std::make_shared<std::atomic<bool>>(false)
@@ -29687,6 +29811,17 @@ window.addEventListener("load", startAutoRefresh);
                                     t.demand_active = demanded;
                                 }
                                 if (!demanded) {
+                                    if (spec.metrics && t.handle >= 0 && spec.metrics->idle_probe.claim(t.cfg.logical_name)) {
+                                        std::shared_lock<std::shared_mutex> lifecycle;
+                                        if (g_plcMutex) lifecycle = std::shared_lock<std::shared_mutex>(*g_plcMutex);
+                                        auto gate = connection_plc_mutex(spec.conn.id);
+                                        std::shared_lock<WriterPrioritySharedMutex> connectionLock(*gate);
+                                        if (!spec.stop_requested->load() && g_configGeneration.load() == spec.gen) {
+                                            const int rc = plc_tag_read(t.handle, spec.conn.default_read_ms);
+                                            spec.metrics->idle_probe.completed(t.cfg.logical_name, rc == PLCTAG_STATUS_OK,
+                                                rc == PLCTAG_ERR_NOT_FOUND || rc == PLCTAG_ERR_BAD_PARAM);
+                                        }
+                                    }
                                     logixPrefetch.erase(top.idx);
                                     t.next_poll = nowSteady + std::chrono::milliseconds(100);
                                     heap.push(HeapItem{t.next_poll, top.idx});
@@ -29908,6 +30043,8 @@ window.addEventListener("load", startAutoRefresh);
 		                                }
 		                                record_connection_sweep_progress(spec.metrics, t.sweep_index, spec.total_tag_count);
 
+                                        if (status == PLCTAG_STATUS_OK && spec.metrics)
+                                            spec.metrics->idle_probe.good(t.cfg.logical_name, t1);
                                         if (prefetchedLogix != logixPrefetch.end()) {
                                             snap = std::move(prefetchedLogix->second.snapshot);
                                             snap.poll_read = {t0, t1, spec.freshness_epoch};
@@ -31211,10 +31348,27 @@ window.addEventListener("load", startAutoRefresh);
 	                    local.swap(uaQueue);
 	                }
 
+                    {
+                        std::lock_guard<std::mutex> lock(g_writeReadbackMutex);
+                        local.insert(local.begin(), g_writeReadbackUpdates.begin(), g_writeReadbackUpdates.end());
+                        g_writeReadbackUpdates.clear();
+                    }
                     for (const auto &u : local) {
                         {
                             std::lock_guard<std::mutex> lock(driverMutex);
                             if (!ua_publication_is_current(drivers, u)) continue;
+                            bool superseded = false;
+                            for (const auto &driver : drivers) {
+                                if (driver.conn.id != u.conn_id) continue;
+                                auto gate = driver.poll_gates.find(u.logical_name);
+                                if (u.snapshot.quality == 1 && gate != driver.poll_gates.end() &&
+                                    gate->second.quality(u.snapshot.poll_read, true) != PollReadGate::Quality::Good) superseded = true;
+                                const auto cached = tagTable.find(make_tag_key(u.conn_id, u.logical_name));
+                                if (u.snapshot.polling_state == PollCacheState::Waiting && cached != tagTable.end() &&
+                                    cached->second.quality == 1) superseded = true;
+                                break;
+                            }
+                            if (superseded) continue;
                         }
 	                    auto itb = g_uaBindingIndex.find(ua_key(u.conn_id, u.logical_name));
 	                    if (itb == g_uaBindingIndex.end()) continue;

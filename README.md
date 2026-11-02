@@ -24,9 +24,13 @@ In SCADA Workspace, create or edit a connection and choose **Tag polling**:
 - **Poll all enabled tags** keeps ordinary polling for that connection.
 
 Use **Save and Poll** to apply the choice without restarting the service. Active
-polling currently applies to read-only Allen-Bradley connections. Connections
-containing writable tags, other drivers and MQTT mode keep ordinary polling.
-No service-environment changes are needed on a normal installation.
+polling currently applies to Allen-Bradley connections. Other drivers and MQTT mode keep ordinary polling. Writable tags follow the same
+read-demand rules; writes request a bounded readback.
+No service-environment changes are needed on a normal installation. While idle,
+one previously successful source is checked about every 30 seconds to confirm
+communication, without activating tags or publishing new tag values. Overview
+shows polling activity separately from the last successful communication check.
+
 
 ## Why OPCBridge Exists
 

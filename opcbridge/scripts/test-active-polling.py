@@ -107,8 +107,8 @@ async def main():
                     await asyncio.sleep(1)
                     assert starts() == before, (before, starts())
                     if not args.health_only_idle:
-                        assert metrics('Control') > control and metrics('Writable') > writable
-                        assert rows('Writable')['Input']['quality'] == 1
+                        assert metrics('Control') > control and metrics('Writable') == writable
+                        assert rows('Writable')['Input']['polling_state'] == 'inactive'
                     registration = {'owner': 'test-consumer', 'client_id': 'test-consumer', 'tags': ['PLC:Alias']}
                     api('/polling/demand/register', registration)
                     await ws_states(socket, ['Input', 'Alias'], ['waiting', 'active'])
@@ -151,7 +151,7 @@ async def main():
                         eligibility = api('/polling/demand')['active_poll_test']['connection_eligibility']
                         assert eligibility['PLC']['enabled']
                         if not args.health_only_idle:
-                            assert eligibility['Writable']['reason'] == 'writable_tags'
+                            assert eligibility['Writable']['enabled']
                             assert eligibility['Control']['reason'] == 'disabled_for_connection'
                         print('Native UA zero-age read woke an inactive physical tag and returned a verified sample.')
 

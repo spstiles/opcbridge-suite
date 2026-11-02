@@ -1148,3 +1148,57 @@ active setting. UI tests cover defaults, explicit false, preserving a choice whe
 unrelated polling fields are applied, and both editor save paths. Existing native
 UA quality/folder tests also check the eligibility policy. This supersedes the
 opt-in-only release checkpoint; installed services are not modified by these tests.
+
+## Writable demand, readback boundaries and idle communication (2026-11-02)
+
+Writable is now a permission rather than a demand reason. Both connection-level
+and physical-work writable fallbacks are removed; the per-connection active/all
+choice, unsupported-driver fallback and MQTT-mode fallback remain. An unobserved
+writable source suspends normally. Read-modify-write operations retain their
+existing prerequisite PLC reads; no background full-connection polling is needed
+to keep a write possible.
+
+The shared AB write routine covers HTTP/SCADA/Flow, native UA, queued automation,
+MQTT and CLI entry points. It briefly leases the physical source and invalidates
+its root/dependents at entry and completion, including failed attempts. Requested
+write values are not committed as physical measurements. Ordinary poller readback
+must cross the new read boundary before restoring GOOD. Existing derived-bit
+verification stays in place. Memory writes remain immediate/authoritative, including
+aliases backed by a memory source. Physical write event logging comes from confirmed
+poller samples rather than assumed requested values.
+
+Write configuration epochs are checked before PLC I/O; alias recursion carries
+its captured epoch. Readback invalidation ignores replaced drivers. UA callback
+restores cache evidence before returning instead of retaining the library's
+optimistic client-written value. Queued physical GOOD publications are checked
+against current driver read gates; superseded waiting publications do not replace
+an already confirmed GOOD cache value. Write acknowledgement means the write
+operation succeeded, not that readback has completed or the controller retained
+that value. A bounded ordinary read lease (30 seconds plus idle grace) handles
+readback/retry without a permanent writable demand pin.
+
+Idle connections use one previously successful physical source for a communication
+probe about every 30 seconds after regular reads stop. A shared connection tracker
+coordinates lanes, remembers candidates, rotates away from tag-specific failures
+and keeps probe counters separate from normal polling. The probe holds lifecycle
+and connection I/O locks and checks the running generation. It never creates tag
+demand or publishes a tag snapshot, so tags remain inactive. No known successful
+source means communication cannot yet be confirmed; no successful measurement is
+invented. The check confirms read communication, not controller RUN state or process
+health.
+
+Health separates `polling idle (no active demand)` from `communication` state,
+last-success age, check count and consecutive failures. A failed probe is visible;
+three consecutive communication failures make idle connection health an error.
+A tag-specific failure alone does not declare the PLC unavailable. A successful
+probe clears failures. Overview shows recent communication evidence rather than
+old poll sample ages while idle, and removes the alarming availability disclaimer.
+
+`test-idle-writes-health.py` uses actual simulator/core/UA services to check writable
+suspension, an idle heartbeat without tag activation, scalar/alias/bit/array writes,
+unrelated writable suspension, native UA and queued automation outputs, failed
+writes and idle communication loss/recovery. Clock-controlled probe tests cover
+cadence, shared claims, tag fallback and failure reset; scheduler tests assert
+writable work suspends. Native UA quality tests cover post-write sample boundaries
+and rejection of replaced-driver invalidation/write epochs. Installed services and
+versions are unchanged by these development checks.

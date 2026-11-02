@@ -57,11 +57,11 @@ def main():
                 wait(lambda: len(rows()) == 3 and all(r['quality'] == 1 for r in rows().values()))
                 wait(lambda: rows()['Default']['polling_state'] == 'inactive', timeout=40)
                 assert rows()['All']['polling_state'] == 'active'
-                assert rows()['Writable']['polling_state'] == 'active'
+                wait(lambda: rows()['Writable']['polling_state'] == 'inactive')
                 eligibility = api('polling/demand?include_tags=0')['active_poll_test']['connection_eligibility']
                 assert eligibility['Default']['enabled'] and not eligibility['All']['enabled']
-                assert eligibility['Writable']['reason'] == 'writable_tags'
-                print('No environment setup: default read-only connection idles, explicit all-tags and writable connections keep polling.', flush=True)
+                assert eligibility['Writable']['enabled']
+                print('No environment setup: default and writable connections idle; explicit all-tags keeps polling.', flush=True)
                 save('Default', False); reload()
                 wait(lambda: rows()['Default']['quality'] == 1)
                 time.sleep(32)

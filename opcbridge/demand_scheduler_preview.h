@@ -33,7 +33,6 @@ public:
             bool poll = true;
             std::string reason;
             if (tag.value("driver", std::string{}) != "ab_eip") reason = "unsupported_driver";
-            else if (tag.value("writable", false)) reason = "writable_tag";
             else if (observed) reason = entry.would_poll ? "observed_demand" : "wake_requested";
             else if (now - entry.started < startup_) reason = "startup_grace";
             else if (now - entry.last_demand < idle_) reason = "idle_grace";

@@ -14,9 +14,36 @@ int main() {
     assert(active_poll_test_enabled(policyDriver, false));
     assert(!active_poll_test_enabled(policyDriver, true));
     policyDriver.tags.emplace_back(); policyDriver.tags.back().cfg.writable = true;
-    assert(!active_poll_test_enabled(policyDriver, false));
+    assert(active_poll_test_enabled(policyDriver, false));
     policyDriver.tags.clear(); policyDriver.conn.driver = "modbus_tcp";
     assert(!active_poll_test_enabled(policyDriver, false));
+    {
+        std::vector<DriverContext> writeDrivers(1);
+        auto &owner = writeDrivers.front(); owner.conn.id = "WriteTest"; owner.conn.driver = "ab_eip";
+        TagRuntime output; output.cfg.logical_name = "Output"; output.cfg.datatype = "int32"; output.cfg.writable = true;
+        TagRuntime alias; alias.cfg.logical_name = "Alias"; alias.cfg.source_tag = "Output"; alias.cfg.datatype = "int32";
+        owner.tags.push_back(output); owner.tags.push_back(alias);
+        TagTable cache; std::mutex mutex;
+        const auto old = PollReadStamp::Clock::now();
+        TagSnapshot sample; sample.connection_id = owner.conn.id; sample.logical_name = "Output";
+        sample.quality = 1; sample.value = int32_t(7); sample.poll_read = {old, old, owner.freshness_epoch};
+        cache[make_tag_key(owner.conn.id, "Output")] = sample;
+        request_write_readback(writeDrivers, owner.conn.id, "Alias", owner.freshness_epoch, cache, mutex);
+        assert(cache.at(make_tag_key(owner.conn.id, "Output")).quality == 0);
+        assert(cache.at(make_tag_key(owner.conn.id, "Alias")).polling_state == PollCacheState::Waiting);
+        assert(owner.poll_gates.at("Output").quality(sample.poll_read, true) == PollReadGate::Quality::Waiting);
+        const auto after = PollReadStamp::Clock::now();
+        sample.poll_read = {after, after, owner.freshness_epoch};
+        assert(owner.poll_gates.at("Output").quality(sample.poll_read, true) == PollReadGate::Quality::Good);
+        cache[make_tag_key(owner.conn.id, "Output")] = sample;
+        request_write_readback(writeDrivers, owner.conn.id, "Output", owner.freshness_epoch + 1, cache, mutex);
+        assert(cache.at(make_tag_key(owner.conn.id, "Output")).quality == 1);
+        std::string writeError;
+        assert(!write_tag_by_name(writeDrivers, owner.conn.id, "Output", "9", cache, mutex,
+                                 &writeError, nullptr, owner.freshness_epoch + 1));
+        assert(writeError.find("configuration changed") != std::string::npos);
+        assert(cache.at(make_tag_key(owner.conn.id, "Output")).quality == 1);
+    }
     UA_Server *server = UA_Server_new();
     UA_ServerConfig_setDefault(UA_Server_getConfig(server));
     UA_Server_addNamespace(server, "urn:opcbridge:quality-test");

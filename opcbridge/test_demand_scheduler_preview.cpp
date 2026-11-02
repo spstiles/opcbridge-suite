@@ -26,8 +26,8 @@ int main() {
     assert(preview.should_poll("PLC", "Idle", 2, start + P::Ms(100)));
     assert(preview.should_poll("PLC", "Missing", 1, start + P::Ms(100)));
     assert(preview.should_poll("PLC", "Idle", 1, start + P::Ms(126)));
-    assert(idle["connections"]["PLC"]["would_idle"] == 1);
-    assert(idle["tags"][2]["reason"] == "writable_tag");
+    assert(idle["connections"]["PLC"]["would_idle"] == 2);
+    assert(idle["tags"][2]["reason"] == "no_observed_demand");
     assert(idle["tags"][3]["reason"] == "unsupported_driver");
     demand["tags"][0]["observed_demand"] = true;
     assert(at(110)["tags"][0]["reason"] == "wake_requested");

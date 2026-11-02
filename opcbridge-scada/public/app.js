@@ -11587,19 +11587,25 @@ function renderOverviewHealth(health, metrics = null) {
       let details = '';
       if (info?.polling_activity === 'idle') details += ' • polling idle';
       else if (seen != null && good != null) details += ` • ${good}/${seen} good recent`;
+      const communication = info?.communication;
+      if (communication?.state === 'available') {
+        const seconds = Math.max(0, Math.floor(Number(communication.last_success_age_ms || 0) / 1000));
+        details += ` • PLC communication OK (${seconds}s ago)`;
+      } else if (communication?.state === 'check_failed') details += ' • PLC communication check failed';
+      else if (communication?.state === 'tag_check_failed') details += ' • health tag unavailable; checking another source';
       if (typeof info?.inactive_tags === 'number' && info.inactive_tags > 0) details += ` • ${info.inactive_tags} inactive`;
       if (typeof info?.waiting_tags === 'number' && info.waiting_tags > 0) details += ` • ${info.waiting_tags} waiting`;
       if (typeof info?.active_poll_work === 'number' && typeof info?.configured_poll_work === 'number') details += ` • ${info.active_poll_work}/${info.configured_poll_work} active reads`;
       if (info?.full_sweep_available === false) details += ' • full sweep unavailable during demand polling';
-      if (age != null) details += ` • newest ${age} ms`;
+      if (info?.polling_activity !== 'idle' && age != null) details += ` • newest ${age} ms`;
       if (readMsAvg != null) details += ` • read ${formatMsCompact(readMsAvg)} avg`;
       if (sweepAvg10sMs != null) details += ` • sweep ${formatMsCompact(sweepAvg10sMs)} avg10s`;
       else if (sweepLastMs != null) details += ` • sweep ${formatMsCompact(sweepLastMs)} last`;
       if (sweepMs != null) details += ` • est ${formatMsCompact(sweepMs)}`;
       if (sweepAvg60sMs != null && sweepAvg10sMs != null) details += ` • avg60s ${formatMsCompact(sweepAvg60sMs)}`;
       if (lanes != null) details += ` • lanes ${lanes}`;
-      if (typeof info?.last_read_age_ms === 'number' && info.last_read_age_ms >= 0) details += ` • last read ${formatMsCompact(info.last_read_age_ms)} ago`;
-      if (lastOkAgeMs != null) details += ` • last ok ${formatMsCompact(lastOkAgeMs)} ago`;
+      if (info?.polling_activity !== 'idle' && typeof info?.last_read_age_ms === 'number' && info.last_read_age_ms >= 0) details += ` • last read ${formatMsCompact(info.last_read_age_ms)} ago`;
+      if (info?.polling_activity !== 'idle' && lastOkAgeMs != null) details += ` • last ok ${formatMsCompact(lastOkAgeMs)} ago`;
       if (info?.stalled === true) details += ` • stalled`;
       if (info?.transport) details += ` • ${String(info.transport)}`;
       if (info?.security_profile) details += ` • security profile ${String(info.security_profile)}`;
