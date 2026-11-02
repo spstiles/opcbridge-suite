@@ -797,6 +797,8 @@
   editDevPlcType: document.getElementById('editDevPlcType'),
   editDevPollingModeRow: document.getElementById('editDevPollingModeRow'),
   editDevPollingMode: document.getElementById('editDevPollingMode'),
+  editDevPollActiveOnly: document.getElementById('editDevPollActiveOnly'),
+  editDevPollActiveOnlyRow: document.getElementById('editDevPollActiveOnlyRow'),
   editDevPollingPacingRow: document.getElementById('editDevPollingPacingRow'),
   editDevPollingPacing: document.getElementById('editDevPollingPacing'),
   editDevPollBatchSizeRow: document.getElementById('editDevPollBatchSizeRow'),
@@ -978,6 +980,8 @@
   newDevPlcType: document.getElementById('newDevPlcType'),
   newDevPollingModeRow: document.getElementById('newDevPollingModeRow'),
   newDevPollingMode: document.getElementById('newDevPollingMode'),
+  newDevPollActiveOnly: document.getElementById('newDevPollActiveOnly'),
+  newDevPollActiveOnlyRow: document.getElementById('newDevPollActiveOnlyRow'),
   newDevPollingPacingRow: document.getElementById('newDevPollingPacingRow'),
   newDevPollingPacing: document.getElementById('newDevPollingPacing'),
   newDevPollBatchSizeRow: document.getElementById('newDevPollBatchSizeRow'),
@@ -11581,16 +11585,38 @@ function renderOverviewHealth(health, metrics = null) {
       const lastOkAgeMs = (typeof info?.last_ok_age_ms === 'number' && info.last_ok_age_ms >= 0) ? info.last_ok_age_ms : null;
 
       let details = '';
-      if (seen != null && good != null) details += ` • ${good}/${seen} good recent`;
-      if (age != null) details += ` • newest ${age} ms`;
+      if (info?.polling_activity === 'idle') details += ' • polling idle';
+      else if (seen != null && good != null) details += ` • ${good}/${seen} good recent`;
+      const communication = info?.communication;
+      if (communication?.state === 'available') {
+        const seconds = Math.max(0, Math.floor(Number(communication.last_success_age_ms || 0) / 1000));
+        details += ` • PLC communication OK (${seconds}s ago)`;
+      } else if (communication?.state === 'check_failed') details += ' • PLC communication check failed';
+      else if (communication?.state === 'tag_check_failed') details += ' • health tag unavailable; checking another source';
+      if (typeof info?.inactive_tags === 'number' && info.inactive_tags > 0) details += ` • ${info.inactive_tags} inactive`;
+      if (typeof info?.waiting_tags === 'number' && info.waiting_tags > 0) details += ` • ${info.waiting_tags} waiting`;
+      if (typeof info?.active_poll_work === 'number' && typeof info?.configured_poll_work === 'number') details += ` • ${info.active_poll_work}/${info.configured_poll_work} active reads`;
+      if (info?.full_sweep_available === false) {
+        const activeSweep = info.active_sweep_ms_avg_10s ?? info.active_sweep_ms_last;
+        if (typeof activeSweep === 'number') {
+          const averaged = typeof info.active_sweep_ms_avg_10s === 'number';
+          details += ` • active sweep ${formatMsCompact(activeSweep)} ${averaged ? 'avg10s' : 'last'}`;
+          if (!averaged && info.active_sweep_last_age_ms > 10000) details += ` (${formatMsCompact(info.active_sweep_last_age_ms)} ago)`;
+        }
+        else if (info.active_sweep_work > 0) details += ' • active sweep measuring…';
+        if (typeof info.oldest_active_sample_age_ms === 'number')
+          details += ` • oldest active ${formatMsCompact(info.oldest_active_sample_age_ms)}`;
+        if (info.active_without_sample > 0) details += ` • ${info.active_without_sample} active ${info.active_without_sample === 1 ? 'read' : 'reads'} without a GOOD sample`;
+      }
+      if (info?.polling_activity !== 'idle' && age != null) details += ` • newest ${age} ms`;
       if (readMsAvg != null) details += ` • read ${formatMsCompact(readMsAvg)} avg`;
       if (sweepAvg10sMs != null) details += ` • sweep ${formatMsCompact(sweepAvg10sMs)} avg10s`;
       else if (sweepLastMs != null) details += ` • sweep ${formatMsCompact(sweepLastMs)} last`;
       if (sweepMs != null) details += ` • est ${formatMsCompact(sweepMs)}`;
       if (sweepAvg60sMs != null && sweepAvg10sMs != null) details += ` • avg60s ${formatMsCompact(sweepAvg60sMs)}`;
       if (lanes != null) details += ` • lanes ${lanes}`;
-      if (typeof info?.last_read_age_ms === 'number' && info.last_read_age_ms >= 0) details += ` • last read ${formatMsCompact(info.last_read_age_ms)} ago`;
-      if (lastOkAgeMs != null) details += ` • last ok ${formatMsCompact(lastOkAgeMs)} ago`;
+      if (info?.polling_activity !== 'idle' && typeof info?.last_read_age_ms === 'number' && info.last_read_age_ms >= 0) details += ` • last read ${formatMsCompact(info.last_read_age_ms)} ago`;
+      if (info?.polling_activity !== 'idle' && lastOkAgeMs != null) details += ` • last ok ${formatMsCompact(lastOkAgeMs)} ago`;
       if (info?.stalled === true) details += ` • stalled`;
       if (info?.transport) details += ` • ${String(info.transport)}`;
       if (info?.security_profile) details += ` • security profile ${String(info.security_profile)}`;
@@ -12135,6 +12161,7 @@ async function downloadConnectivityCsv() {
     'plc_type_label',
     'polling_mode',
     'polling_pacing',
+    'poll_active_only',
     'poll_batch_size',
     'poll_time_budget_ms',
     'action'
@@ -12158,6 +12185,7 @@ async function downloadConnectivityCsv() {
       plc_type_label: labelForPlcType(plcType),
       polling_mode: pollingMode,
       polling_pacing: pollingPacing,
+      poll_active_only: obj?.poll_active_only !== false ? 'true' : 'false',
       poll_batch_size: Number.isFinite(pollBatchSize) && pollBatchSize > 0 ? String(Math.trunc(pollBatchSize)) : '',
       poll_time_budget_ms: Number.isFinite(pollTimeBudgetMs) && pollTimeBudgetMs > 0 ? String(Math.trunc(pollTimeBudgetMs)) : '',
       action: ''
@@ -12770,7 +12798,8 @@ async function importDevicesCsvIntoWorkspace() {
 
     const obj = applyPollingConfigToConnection(
       { ...(existingObj || {}), id: connection_id, description: connectionName, driver, gateway, path: pathVal, slot, plc_type },
-      { mode: pollingMode, pacing: pollingPacing, batchSize: pollBatchSize, timeBudgetMs: pollTimeBudgetMs }
+      { mode: pollingMode, pacing: pollingPacing, batchSize: pollBatchSize, timeBudgetMs: pollTimeBudgetMs,
+        activeOnly: parseBoolLoose(csvGet(r, 'poll_active_only'), existingObj?.poll_active_only !== false) }
     );
 
     if (!state.workspaceConnDirty) state.workspaceConnDirty = new Map();
@@ -16800,6 +16829,10 @@ function connectOpcuaTrustEvents(settings = null) {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const socket = new WebSocket(`${protocol}//${window.location.hostname}:${opcuaTrustEventsPort}`);
   opcuaTrustEventsSocket = socket;
+  socket.onopen = () => {
+    // This socket receives trust notifications; Live Tags uses viewport HTTP reads.
+    socket.send(JSON.stringify({ type: 'subscribe', tags: [] }));
+  };
   socket.onmessage = (event) => {
     let message;
     try { message = JSON.parse(event.data); } catch { return; }
@@ -17320,10 +17353,11 @@ function readOptionalPositiveInt(el) {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-function applyPollingConfigToConnection(obj, { mode, pacing, batchSize, timeBudgetMs, maxReadsPerSec, pollLanes }) {
+function applyPollingConfigToConnection(obj, { mode, pacing, batchSize, timeBudgetMs, maxReadsPerSec, pollLanes, activeOnly }) {
   const out = obj || {};
   out.polling_mode = normalizePollingMode(mode);
   out.polling_pacing = normalizePollingPacing(pacing);
+  out.poll_active_only = activeOnly == null ? out.poll_active_only !== false : activeOnly !== false;
   const batch = Math.trunc(Number(batchSize || 0));
   const budget = Math.trunc(Number(timeBudgetMs || 0));
   const maxReads = Math.trunc(Number(maxReadsPerSec || 0));
@@ -17623,8 +17657,8 @@ function applyDeviceDriverUi(prefix) {
   const isModbus = isModbusDriver(driver);
   const isRemoteOpcua = driver === 'opcua_client';
   const plcRows = isEdit
-    ? [els.editDevGatewayRow, els.editDevPathRow, els.editDevModbusAddressModeRow, els.editDevSlotRow, els.editDevPlcTypeRow, els.editDevPollingModeRow, els.editDevPollingPacingRow, els.editDevPollBatchSizeRow, els.editDevPollTimeBudgetMsRow, els.editDevPollMaxReadsPerSecRow, els.editDevPollLanesRow]
-    : [els.newDevGatewayRow, els.newDevPathRow, els.newDevModbusAddressModeRow, els.newDevSlotRow, els.newDevPlcTypeRow, els.newDevPollingModeRow, els.newDevPollingPacingRow, els.newDevPollBatchSizeRow, els.newDevPollTimeBudgetMsRow];
+    ? [els.editDevGatewayRow, els.editDevPathRow, els.editDevModbusAddressModeRow, els.editDevSlotRow, els.editDevPlcTypeRow, els.editDevPollingModeRow, els.editDevPollActiveOnlyRow, els.editDevPollingPacingRow, els.editDevPollBatchSizeRow, els.editDevPollTimeBudgetMsRow, els.editDevPollMaxReadsPerSecRow, els.editDevPollLanesRow]
+    : [els.newDevGatewayRow, els.newDevPathRow, els.newDevModbusAddressModeRow, els.newDevSlotRow, els.newDevPlcTypeRow, els.newDevPollingModeRow, els.newDevPollActiveOnlyRow, els.newDevPollingPacingRow, els.newDevPollBatchSizeRow, els.newDevPollTimeBudgetMsRow];
   const mqttRows = isEdit
     ? [els.editDevMqttHostRow, els.editDevMqttPortRow, els.editDevMqttClientIdRow, els.editDevMqttUsernameRow, els.editDevMqttPasswordRow, els.editDevMqttTlsRow, els.editDevMqttTlsInsecureRow, els.editDevMqttCaFileRow, els.editDevMqttClientAuthRow, els.editDevMqttTestRow]
     : [els.newDevMqttHostRow, els.newDevMqttPortRow, els.newDevMqttClientIdRow, els.newDevMqttUsernameRow, els.newDevMqttPasswordRow, els.newDevMqttTlsRow, els.newDevMqttTlsInsecureRow, els.newDevMqttCaFileRow, els.newDevMqttClientAuthRow, els.newDevMqttTestRow];
@@ -18495,6 +18529,7 @@ function showWorkspaceNewDeviceForm(channelId) {
   if (els.newDevSlot) els.newDevSlot.value = '';
   if (els.newDevPlcType) els.newDevPlcType.value = 'lgx';
   if (els.newDevPollingMode) els.newDevPollingMode.value = 'standard';
+  if (els.newDevPollActiveOnly) els.newDevPollActiveOnly.value = 'active';
   if (els.newDevPollingPacing) els.newDevPollingPacing.value = 'balanced';
   if (els.newDevPollBatchSize) els.newDevPollBatchSize.value = '';
   if (els.newDevPollTimeBudgetMs) els.newDevPollTimeBudgetMs.value = '';
@@ -19216,6 +19251,7 @@ function openWorkspaceItemModal(node) {
         if (els.editDevModbusAddressMode) els.editDevModbusAddressMode.value = modbusAddressModeFromConnection(obj);
         if (els.editDevSlot) els.editDevSlot.value = (obj?.slot == null) ? '' : String(obj.slot);
         if (els.editDevPlcType) els.editDevPlcType.value = String(obj?.plc_type || obj?.plcType || 'lgx') || 'lgx';
+        if (els.editDevPollActiveOnly) els.editDevPollActiveOnly.value = obj?.poll_active_only === false ? 'all' : 'active';
         if (els.editDevPollingMode) els.editDevPollingMode.value = normalizePollingMode(obj?.polling_mode);
         if (els.editDevPollingPacing) els.editDevPollingPacing.value = normalizePollingPacing(obj?.polling_pacing);
         if (els.editDevPollBatchSize) els.editDevPollBatchSize.value = obj?.poll_batch_size == null ? '' : String(obj.poll_batch_size);
@@ -20154,6 +20190,7 @@ async function saveEditedDeviceFromModal() {
         {
           mode: els.editDevPollingMode?.value,
           pacing: els.editDevPollingPacing?.value,
+          activeOnly: els.editDevPollActiveOnly?.value !== 'all',
           batchSize: readOptionalPositiveInt(els.editDevPollBatchSize),
           timeBudgetMs: readOptionalPositiveInt(els.editDevPollTimeBudgetMs),
           maxReadsPerSec: readOptionalPositiveInt(els.editDevPollMaxReadsPerSec),
@@ -21068,6 +21105,7 @@ async function createNewDeviceFromWorkspace() {
         {
           mode: els.newDevPollingMode?.value,
           pacing: els.newDevPollingPacing?.value,
+          activeOnly: els.newDevPollActiveOnly?.value !== 'all',
           batchSize: readOptionalPositiveInt(els.newDevPollBatchSize),
           timeBudgetMs: readOptionalPositiveInt(els.newDevPollTimeBudgetMs)
         }
@@ -27441,11 +27479,36 @@ function mergeConfiguredMqttLiveTags(tags) {
 
 // ---------------- Live + alarms ----------------
 
+// Each tab owns its viewport scope; expiry handles abrupt close/network loss.
+const scadaViewerDemand = new ViewerDemand({
+  clientId: globalThis.crypto?.randomUUID?.() || `scada-${Date.now()}-${Math.random()}`,
+  visible: () => document.visibilityState !== 'hidden' && isPanelActive('tab-workspace'),
+  post: async (path, body, keepalive) => {
+    const response = await fetchWithTimeout(`/api/opcbridge${path}`, {
+      method: 'POST', keepalive,
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    }, 5000);
+    if (!response.ok) throw new Error(`Demand HTTP ${response.status}`);
+  }
+});
+window.setInterval(() => scadaViewerDemand.tick(), 1000);
+document.addEventListener('visibilitychange', () => {
+  scadaViewerDemand.tick(true);
+  if (document.visibilityState !== 'hidden' && isPanelActive('tab-workspace')) refreshVisible().catch(() => {});
+});
+window.addEventListener('pagehide', () => scadaViewerDemand.release());
+window.addEventListener('pageshow', () => {
+  scadaViewerDemand.setTags(state.liveTagsLast?.tags || []);
+});
+
+
+
 function computeTagStatus(t) {
   const hasSnap = (t?.has_snapshot !== false);
   const handleOk = (t?.handle_ok !== false);
   const isArrayRoot = (t?.is_array_root === true);
   const reason = String(t?.reason || '').trim().toLowerCase();
+  const pollingState = String(t?.polling_state || '').trim().toLowerCase();
 
   let status = 'BAD';
   let cls = 'status-error';
@@ -27455,6 +27518,12 @@ function computeTagStatus(t) {
     cls = 'status-warn';
   } else if (!handleOk) {
     status = 'BAD_HANDLE';
+  } else if (pollingState === 'inactive') {
+    status = 'INACTIVE';
+    cls = 'status-warn';
+  } else if (pollingState === 'waiting') {
+    status = 'WAITING';
+    cls = 'status-warn';
   } else if (!hasSnap && reason === 'mqtt_disabled') {
     status = 'MQTT_DISABLED';
     cls = 'status-warn';
@@ -27512,6 +27581,7 @@ function renderLiveTagsInto(tbody, tags) {
 
 function renderLiveTags(tagsResp) {
   state.liveTagsLast = tagsResp;
+  scadaViewerDemand.setTags(Array.isArray(tagsResp?.tags) ? tagsResp.tags : []);
   const tags = Array.isArray(tagsResp?.tags) ? tagsResp.tags : [];
   const total = Number(tagsResp?.total ?? tags.length) || tags.length;
   let displayTotal = total;
@@ -27538,6 +27608,8 @@ function renderLiveTags(tagsResp) {
 }
 
 function resetLiveTagsViewport() {
+  scadaViewerDemand.release();
+  state.liveTagsPaging.requestGeneration = (state.liveTagsPaging.requestGeneration || 0) + 1;
   state.liveTagsPaging.offset = 0;
   state.liveTagsPaging.index = [];
   state.liveTagsPaging.valueByKey = new Map();
@@ -27648,13 +27720,18 @@ function sessionSystemRowsForLiveParams(params) {
 }
 
 async function loadVisibleLiveTags() {
+  if (document.visibilityState === 'hidden') return liveTagsBuildVisibleResponse();
   const page = state.liveTagsPaging || { offset: 0, limit: 250, search: '', scopeKey: '', index: [], valueByKey: new Map() };
   state.liveTagsPaging = page;
   const { params } = liveTagsQueryParamsForCurrentScope();
+  const generation = page.requestGeneration = (page.requestGeneration || 0) + 1;
+  const isCurrent = () => state.liveTagsPaging === page && page.requestGeneration === generation
+    && document.visibilityState !== 'hidden';
 
   if (!page.indexLoaded) {
     params.set('limit', '0');
     const indexResp = await apiGet(`/api/opcbridge/tags?${params.toString()}`, { timeoutMs: 30000 });
+    if (!isCurrent()) return liveTagsBuildVisibleResponse();
     const indexByKey = new Map();
     [...(Array.isArray(indexResp?.tags) ? indexResp.tags : []), ...sessionSystemRowsForLiveParams(params)].forEach((row) => {
       const key = liveTagKey(row);
@@ -27689,6 +27766,7 @@ async function loadVisibleLiveTags() {
     .filter((row) => row.connection_id && row.name);
   if (queryTags.length) {
     const liveResp = await apiPostJson('/api/opcbridge/tags/query', { tags: queryTags }, { timeoutMs: 15000 });
+    if (!isCurrent()) return liveTagsBuildVisibleResponse();
     const valueByKey = page.valueByKey instanceof Map ? page.valueByKey : new Map();
     (Array.isArray(liveResp?.tags) ? liveResp.tags : []).forEach((row) => {
       const key = liveTagKey(row);
@@ -28208,7 +28286,7 @@ async function refreshVisible() {
     if (isPanelActive('tab-overview')) refreshComponentVersions().catch(() => {});
     setAlarmRuntimeWarningUi(computeAlarmRuntimeWarning(alarmsStatus));
 
-    const wantLiveTags = isPanelActive('tab-workspace');
+    const wantLiveTags = document.visibilityState !== 'hidden' && isPanelActive('tab-workspace');
     if (wantLiveTags) {
       const tags = await loadVisibleLiveTags();
       renderLiveTags(tags);

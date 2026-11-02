@@ -9026,6 +9026,10 @@ static void ws_client_loop(std::atomic<bool> &stop,
         json sub;
         sub["type"] = "subscribe";
         sub["tags"] = engine.subscription_keys();
+        // Registration is independent of stream delivery and remains until replaced
+        // or this connection closes. Older cores safely ignore the new message.
+        ws.send(json{{"type", "register_demand"}, {"owner", "opcbridge-alarms"},
+                     {"tags", sub["tags"]}}.dump());
         ws.send(sub.dump());
         std::cout << "[alarms] Sent opcbridge subscribe (" << sub["tags"].size() << " tag(s))\n";
     };

@@ -16,6 +16,9 @@ bool ws_init(uint16_t port);
 void ws_shutdown();
 bool ws_is_enabled();
 
+// Snapshot live WebSocket interest without changing subscriptions.
+json ws_demand_snapshot();
+
 // Low-level: send JSON to all connected WS clients
 void ws_send_json(const json &msg);
 

@@ -1,5 +1,7 @@
 #include "async_poll_batch.h"
 #include "poll_sweep_estimate.h"
+#include "idle_connection_probe.h"
+#include "active_sweep.h"
 // main.cpp - AB/libplctag "OPC bridge core" with:
 //   - JSON-with-comments config for connections/tags
 //   - Multi-connection EtherNet/IP via libplctag
@@ -66,6 +68,14 @@
 #include <libplctag.h>      // IMPORTANT: libplctag header
 #include <nlohmann/json.hpp>
 #include "connection_tag_cleanup.h"
+#include "tag_demand.h"
+#include "consumer_demand_leases.h"
+#include "automation_demand.h"
+#include "execution_demand.h"
+#include "read_freshness.h"
+#include "poll_read_gate.h"
+#include "demand_scheduler_preview.h"
+#include <set>
 #ifndef CPPHTTPLIB_LISTEN_BACKLOG
 #define CPPHTTPLIB_LISTEN_BACKLOG 128
 #endif
@@ -207,6 +217,8 @@ struct ConnectionConfig {
     bool enabled = true;
     std::string polling_mode = "standard"; // "standard" or "time_sliced"
     std::string polling_pacing = "balanced"; // "gentle", "balanced", "fast"
+    bool poll_active_only = true;
+    bool poll_active_only_configured = false;
     int poll_batch_size = 0; // 0 = auto
     int poll_time_budget_ms = 0; // 0 = auto
     int poll_max_reads_per_sec = 0; // 0 = unlimited
@@ -282,6 +294,7 @@ struct ConnectionConfig {
 };
 
 struct TagRuntime {
+    std::string poll_source; // Generated array elements are served by this root handle.
     TagConfig cfg;
     int32_t handle = PLCTAG_ERR_NOT_FOUND;
     bool handle_deferred = false;
@@ -306,7 +319,10 @@ struct TagFile {
     std::vector<TagConfig> tags;
 };
 
+static std::atomic<uint64_t> g_driverFreshnessEpoch{0};
 struct DriverContext {
+    uint64_t freshness_epoch = g_driverFreshnessEpoch.fetch_add(1, std::memory_order_relaxed) + 1;
+    std::unordered_map<std::string, PollReadGate> poll_gates;
     ConnectionConfig conn;
     std::vector<TagRuntime> tags;
 };
@@ -314,14 +330,24 @@ struct DriverContext {
 // Tag table structures
 using TagValue = std::variant<bool, int16_t, int32_t, uint16_t, uint32_t, float, double, std::string>;
 
+enum class PollCacheState { Active, Waiting, Inactive };
+
 struct TagSnapshot {
     std::string connection_id;
     std::string logical_name;
     std::string datatype;
     TagValue value;
     std::chrono::system_clock::time_point timestamp;
-    int quality; // 0=bad, 1=good
+    int quality = 0; // 0=bad, 1=good
+    PollReadStamp poll_read{}; // Physical poll evidence, independent of cache timestamps.
+    PollCacheState polling_state = PollCacheState::Active;
 };
+
+static const char *snapshot_polling_state(const TagSnapshot &snapshot) {
+    if (snapshot.polling_state == PollCacheState::Waiting) return "waiting";
+    if (snapshot.polling_state == PollCacheState::Inactive) return "inactive";
+    return snapshot.quality == 1 ? "active" : "error";
+}
 
 static bool snapshot_from_opcua_variant(TagSnapshot &snap,
                                         const ConnectionConfig &conn,
@@ -448,6 +474,7 @@ static std::vector<RemoteUaChild> remote_ua_browse_children(UA_Client *client, c
 
 // Forward declaration so write_single_tag can use it
 bool snapshot_values_equal(const TagSnapshot &a, const TagSnapshot &b);
+bool snapshot_updates_equal(const TagSnapshot &a, const TagSnapshot &b);
 bool should_log_tag_event_change(bool hadPrev, const TagSnapshot &snap, const TagSnapshot &prevSnap);
 
 // Forward declaration so we can call this from the poll loop
@@ -563,8 +590,12 @@ struct MqttConnState {
 struct UaUpdate {
     std::string conn_id;
     std::string logical_name;
-    TagValue value;
+    TagSnapshot snapshot;
+    uint64_t driver_epoch = 0;
 };
+
+static std::mutex g_writeReadbackMutex;
+static std::deque<UaUpdate> g_writeReadbackUpdates;
 
 struct MqttPublishJob {
     TagSnapshot snap;
@@ -653,6 +684,9 @@ struct LogicScriptConfig {
     std::string kind = "script"; // script | block
     bool enabled = false;
     int interval_ms = 0;
+    bool require_fresh_read = false;
+    int fresh_max_age_ms = 0;
+    int fresh_timeout_ms = 1000;
     std::string engine = "javascript";
     std::string source;
     std::string setup_source;
@@ -676,6 +710,7 @@ struct LogicScriptConfig {
 };
 
 struct LogicRuntimeState {
+    uint64_t revision = 0; // Protected by g_logicMutex; changes on every replacement.
     bool config_loaded = false;
     bool last_load_ok = true;
     bool validation_only = true;
@@ -690,6 +725,7 @@ struct LogicRuntimeState {
 };
 
 static std::mutex g_logicMutex;
+static ExecutionDemand<LogicScriptConfig> g_logicExecutionDemand;
 static LogicRuntimeState g_logicState;
 
 static std::function<bool(const std::string &,
@@ -707,6 +743,8 @@ struct UaTagBinding {
 //    std::chrono::steady_clock::time_point next_poll;
     bool writable;    // NEW: whether UA writes should go to PLC
     bool retired = false;
+    bool physical_read_gate = false;
+    PollReadGate read_gate;
 };
 
 struct UaSystemBinding {
@@ -757,12 +795,97 @@ static std::string ua_tag_nodeid_string(const std::string &connId,
     return "Tags/" + ua_nodeid_escape_segment(connId) + "/" + ua_nodeid_escape_segment(logicalName);
 }
 
+static TagDemandObservations g_tagDemand;
+static ConsumerDemandLeases g_consumerDemandLeases;
+
+// Observation callbacks run under the UA service lock: only touch the registry.
+static std::string observed_ua_tag_key(const UA_NodeId *nodeId) {
+    if (!nodeId || nodeId->namespaceIndex != 1 || nodeId->identifierType != UA_NODEIDTYPE_STRING) return {};
+    const auto &id = nodeId->identifier.string;
+    const std::string key(reinterpret_cast<const char *>(id.data), id.length);
+    return key.rfind("Tags/", 0) == 0 ? key : std::string{};
+}
+
+static void observe_ua_monitored_item(UA_Server *, UA_UInt32 subscription, UA_UInt32 item,
+    const UA_NodeId *nodeId, UA_UInt32 attribute, UA_MonitoringMode mode,
+    UA_Double interval, UA_Boolean removed) {
+    if (attribute != UA_ATTRIBUTEID_VALUE) return;
+    const auto key = observed_ua_tag_key(nodeId);
+    if (!key.empty()) g_tagDemand.monitored(key, subscription, item, static_cast<unsigned>(mode), interval, removed);
+}
+
+static void observe_ua_read(UA_Server *, const UA_NodeId *nodeId, UA_Double maxAge) {
+    const auto key = observed_ua_tag_key(nodeId);
+    if (!key.empty()) g_tagDemand.ua_read(key, maxAge == 0);
+}
+
+static const bool g_nativeVerifiedReads = [] {
+    const char *value = std::getenv("OPCBRIDGE_UA_VERIFY_READS");
+    return value && std::string(value) == "1";
+}();
+struct NativePendingRead {
+    UA_Server *server = nullptr;
+    UA_DataValue *output = nullptr; // Opaque identity; never dereferenced here.
+    UA_UInt64 token = 0;
+    std::string cid, name;
+    double max_age = 0;
+    UA_TimestampsToReturn timestamps = UA_TIMESTAMPSTORETURN_BOTH;
+    PollReadStamp::Clock::time_point requested, deadline;
+};
+static std::mutex g_nativeReadMutex;
+static std::unordered_map<const void *, NativePendingRead> g_nativeReads;
+static UA_UInt64 g_nativeReadToken = 0;
+static void cancel_native_read(UA_Server *, const void *output) {
+    std::lock_guard<std::mutex> lock(g_nativeReadMutex);
+    g_nativeReads.erase(output);
+}
+static UA_UInt64 defer_native_read(UA_Server *server, const UA_ReadValueId *item,
+        UA_Double maxAge, UA_TimestampsToReturn timestamps, UA_DataValue *output) {
+    const auto key = observed_ua_tag_key(&item->nodeId);
+    if (key.empty()) return 0; // System and non-tag nodes retain their native source.
+    auto reject = [&](UA_StatusCode status) -> UA_UInt64 {
+        UA_DataValue_clear(output); output->hasStatus = true; output->status = status; return 0;
+    };
+    if (!std::isfinite(maxAge) || maxAge < 0) return reject(UA_STATUSCODE_BADMAXAGEINVALID);
+    if (item->indexRange.length || item->dataEncoding.name.length)
+        return reject(UA_STATUSCODE_BADNOTSUPPORTED);
+    const auto slash = key.find('/', 5);
+    if (slash == std::string::npos) return reject(UA_STATUSCODE_BADNODEIDINVALID);
+    auto decode = [](const std::string &value) {
+        std::string result;
+        for (size_t i = 0; i < value.size(); ++i) {
+            if (value[i] == '%') {
+                if (i + 2 >= value.size()) throw std::runtime_error("Invalid escaped node identifier");
+                size_t consumed = 0;
+                const int byte = std::stoi(value.substr(i + 1, 2), &consumed, 16);
+                if (consumed != 2) throw std::runtime_error("Invalid escaped node identifier");
+                result.push_back(static_cast<char>(byte)); i += 2;
+            } else result.push_back(value[i]);
+        }
+        return result;
+    };
+    NativePendingRead request;
+    try { request.cid = decode(key.substr(5, slash - 5)); request.name = decode(key.substr(slash + 1)); }
+    catch (const std::exception &) { return reject(UA_STATUSCODE_BADNODEIDINVALID); }
+    request.server = server; request.output = output; request.max_age = maxAge; request.timestamps = timestamps;
+    request.requested = PollReadStamp::Clock::now();
+    request.deadline = request.requested + std::chrono::seconds(1);
+    std::lock_guard<std::mutex> lock(g_nativeReadMutex);
+    if (g_nativeReads.size() >= 128) return reject(UA_STATUSCODE_BADTOOMANYOPERATIONS);
+    request.token = ++g_nativeReadToken;
+    if (!request.token) request.token = ++g_nativeReadToken;
+    g_nativeReads[output] = request;
+    return request.token;
+}
+
+
 static std::string ua_connection_nodeid_string(const std::string &connId) {
     return "Connections/" + ua_nodeid_escape_segment(connId);
 }
 
-static std::string display_connection_name(const std::string &connId) {
-    return connId == "_memory" ? std::string("Memory") : connId;
+static std::string display_connection_name(const ConnectionConfig &conn) {
+    if (conn.id == "_memory") return "Memory";
+    return conn.name.empty() ? conn.id : conn.name;
 }
 
 static std::string system_connection_path_segment(const ConnectionConfig &conn) {
@@ -944,6 +1067,9 @@ struct PlcWriteTiming {
     int64_t lock_wait_ms = 0;
 };
 
+static void request_write_readback(std::vector<DriverContext>&, const std::string&, const std::string&,
+                                   uint64_t, TagTable&, std::mutex&);
+
 // Forward declaration so MQTT callbacks can call this:
 bool write_tag_by_name(std::vector<DriverContext> &drivers,
                        const std::string &conn_id,
@@ -952,7 +1078,8 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
                        TagTable &table,
                        std::mutex &driverMutex,
                        std::string *errorOut = nullptr,
-                       PlcWriteTiming *timingOut = nullptr);
+                       PlcWriteTiming *timingOut = nullptr,
+                       uint64_t expectedEpoch = 0);
 void mqtt_publish_raw(const std::string &topic, const std::string &payload);
 bool mqtt_publish_snapshot(const TagSnapshot &snap, const TagSnapshot *prevSnap);
 
@@ -1083,6 +1210,8 @@ struct BlockPollMetrics {
 };
 
 struct ConnPollMetrics {
+    IdleConnectionProbe idle_probe;
+    ActiveSweep active_sweep;
     std::atomic<uint64_t> reads_total{0};
     std::atomic<uint64_t> reads_ok{0};
     std::atomic<uint64_t> reads_err{0};
@@ -4032,6 +4161,21 @@ bool validate_mqtt_inputs_json(const std::string &content, std::string &errMsg) 
     }
 }
 
+static void parse_logic_freshness(const json &js, LogicScriptConfig &script) {
+    if (js.contains("require_fresh_read") && !js["require_fresh_read"].is_boolean())
+        throw std::runtime_error("Logic '" + script.id + "': require_fresh_read must be boolean.");
+    script.require_fresh_read = js.value("require_fresh_read", false);
+    auto freshnessBound = [&](const char *key, int fallback, int maximum) {
+        if (!js.contains(key)) return fallback;
+        const auto &value = js[key];
+        if (!value.is_number_integer() || value < 0 || value > maximum)
+            throw std::runtime_error("Logic '" + script.id + "': invalid " + key + ".");
+        return value.get<int>();
+    };
+    script.fresh_max_age_ms = freshnessBound("fresh_max_age_ms", 0, 60000);
+    script.fresh_timeout_ms = freshnessBound("fresh_timeout_ms", 1000, 5000);
+}
+
 bool validate_logic_json(const std::string &content, std::string &errMsg) {
     try {
         std::string stripped = strip_json_comments(content);
@@ -4048,6 +4192,13 @@ bool validate_logic_json(const std::string &content, std::string &errMsg) {
         if (!j.contains("blocks") || !j["blocks"].is_array()) {
             errMsg = "logic.json must contain a 'blocks' array.";
             return false;
+        }
+        for (const auto *items : {&j["scripts"], &j["blocks"]}) {
+            for (const auto &item : *items) {
+                if (!item.is_object()) continue;
+                LogicScriptConfig config;
+                parse_logic_freshness(item, config);
+            }
         }
         return true;
     } catch (const std::exception &ex) {
@@ -4635,6 +4786,8 @@ ConnectionConfig load_connection_config(const std::string &path) {
     if (c.polling_mode != "time_sliced") c.polling_mode = "standard";
     c.polling_pacing = to_lower_copy(trim_copy(json_get_string_loose(j, "polling_pacing", "balanced")));
     if (c.polling_pacing != "gentle" && c.polling_pacing != "fast") c.polling_pacing = "balanced";
+    c.poll_active_only_configured = j.contains("poll_active_only");
+    c.poll_active_only = j.value("poll_active_only", true);
     c.poll_batch_size = std::max(0, json_get_int_loose(j, "poll_batch_size", 0));
     c.poll_time_budget_ms = std::max(0, json_get_int_loose(j, "poll_time_budget_ms", 0));
     c.poll_max_reads_per_sec = std::max(0, json_get_int_loose(j, "poll_max_reads_per_sec", 0));
@@ -5157,6 +5310,61 @@ static bool is_memory_connection_id(const std::string &connId) {
     return trim_copy(connId) == "_memory";
 }
 
+using TagRuntimeIndex = std::unordered_map<std::string, std::pair<size_t, size_t>>;
+struct FreshReadCheck {
+    std::string reason = "waiting", datatype, connection_name;
+    bool writable = false;
+    TagSnapshot sample;
+};
+// Caller holds driverMutex; no UA calls or waits occur here.
+static FreshReadCheck check_fresh_input(const std::vector<DriverContext> &drivers, const TagTable &table,
+        const TagRuntimeIndex &index, const std::string &cid, const std::string &name,
+        PollReadStamp::Clock::time_point requested, double maxAge, bool nativeMemory = false) {
+    FreshReadCheck result;
+    const auto found = index.find(make_tag_key(cid, name));
+    if (found == index.end() || found->second.first >= drivers.size() ||
+        found->second.second >= drivers[found->second.first].tags.size()) { result.reason = "not_found"; return result; }
+    const auto &driver = drivers[found->second.first];
+    const auto &tag = driver.tags[found->second.second];
+    result.datatype = tag.out_datatype.empty() ? tag.cfg.datatype : tag.out_datatype;
+    result.writable = tag.cfg.writable; result.connection_name = driver.conn.name;
+    if (!tag.cfg.enabled) { result.reason = "disabled"; return result; }
+    const bool authoritativeMemory = nativeMemory && is_memory_tag(tag.cfg);
+    std::vector<std::string> dependencies;
+    std::unordered_set<std::string> visited;
+    const TagRuntime *source = &tag;
+    bool throughElement = false;
+    while (!authoritativeMemory) {
+        if (!source->cfg.enabled) { result.reason = "source_unavailable"; return result; }
+        if (!visited.insert(source->cfg.logical_name).second) { result.reason = "source_cycle"; return result; }
+        if (visited.size() > 64) { result.reason = "dependency_too_deep"; return result; }
+        dependencies.push_back(source->cfg.logical_name);
+        if (driver.conn.driver != "ab_eip" || is_memory_connection_id(driver.conn.id) || is_memory_tag(source->cfg)) {
+            result.reason = "unsupported_source"; return result;
+        }
+        const auto parentName = source->poll_source.empty() ? source->cfg.source_tag : source->poll_source;
+        if (parentName.empty()) {
+            if (source->cfg.elem_count > 1 && !throughElement) { result.reason = "unsupported_source"; return result; }
+            break;
+        }
+        if (!source->poll_source.empty()) throughElement = true;
+        const auto parent = index.find(make_tag_key(cid, parentName));
+        if (parent == index.end() || parent->second.first != found->second.first || parent->second.second >= driver.tags.size()) {
+            result.reason = "source_unavailable"; return result;
+        }
+        source = &driver.tags[parent->second.second];
+    }
+    for (const auto &dep : dependencies) g_tagDemand.http_read(ua_tag_nodeid_string(cid, dep));
+    const auto cached = table.find(make_tag_key(cid, name));
+    if (cached != table.end() && cached->second.quality == 1 && (authoritativeMemory ||
+        cached->second.poll_read.satisfies_age(requested, maxAge, true, PollReadStamp::Clock::now(), driver.freshness_epoch))) {
+        result.reason = "fresh"; result.sample = cached->second;
+    }
+    return result;
+}
+
+
+
 	static bool is_numeric_datatype(const std::string &dt) {
     return (
         dt == "int16" || dt == "uint16" ||
@@ -5416,6 +5624,9 @@ static bool accept_startup_handle(int32_t handle,
     }
 }
 
+static UA_StatusCode ua_write_snapshot(UA_Server*, const UA_NodeId&, const TagSnapshot&, UA_StatusCode);
+static UA_StatusCode ua_snapshot_status(const UaTagBinding&, const TagSnapshot&);
+
 static void opcua_onWrite(UA_Server *server,
                           const UA_NodeId *sessionId,
                           void *sessionContext,
@@ -5498,6 +5709,20 @@ static void opcua_onWrite(UA_Server *server,
         *g_mqttDriverMutex
     );
 
+    TagSnapshot cachedWriteResult;
+    bool haveCachedWriteResult = false;
+    {
+        std::lock_guard<std::mutex> lock(*g_mqttDriverMutex);
+        const auto cached = g_mqttTagTable->find(make_tag_key(binding->conn_id, binding->logical_name));
+        if (cached != g_mqttTagTable->end()) {
+            cachedWriteResult = cached->second;
+            haveCachedWriteResult = true;
+        }
+    }
+    // The UA library initially stores the client's requested value. Replace it
+    // within this callback with cache evidence (or waiting), before another read.
+    if (haveCachedWriteResult)
+        ua_write_snapshot(server, *nodeId, cachedWriteResult, ua_snapshot_status(*binding, cachedWriteResult));
     if (!ok) {
         std::cerr << "OPC UA write: write_tag_by_name failed for ["
                   << binding->conn_id << "]." << binding->logical_name << "\n";
@@ -5799,15 +6024,17 @@ void ws_notify_tag_update(const TagSnapshot &snap,
 	    j["key"]           = snap.connection_id + ":" + snap.logical_name;
 	    j["datatype"]      = snap.datatype;
 	    j["quality"]       = snap.quality;
+    j["polling_state"] = snapshot_polling_state(snap);
+    if (snap.polling_state != PollCacheState::Active) j["reason"] = snapshot_polling_state(snap);
 
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         snap.timestamp.time_since_epoch()
     ).count();
 	    j["timestamp_ms"] = ms;
 
-	    std::visit([&j](auto &&arg) {
-	        j["value"] = arg;
-	    }, snap.value);
+	    if (snap.quality == 1) {
+        std::visit([&j](auto &&arg) { j["value"] = arg; }, snap.value);
+    } else j["value"] = nullptr;
 
 	    j["enabled"]               = cfg.enabled;
 	    j["writable"]              = cfg.writable;
@@ -6251,7 +6478,8 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
                        TagTable &table,
                        std::mutex &driverMutex,
                        std::string *errorOut,
-                       PlcWriteTiming *timingOut)
+                       PlcWriteTiming *timingOut,
+                       uint64_t expectedEpoch)
 {
     auto fail = [&](const std::string &message) {
         if (errorOut) *errorOut = message;
@@ -6270,6 +6498,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
     bool hadPrev = false;
     bool found = false;
     bool connectionFound = false;
+    uint64_t writeEpoch = 0;
     TagConfig parentArrayCfg;
     int32_t parentArrayHandle = PLCTAG_ERR_NOT_FOUND;
     bool parentArrayScalingLinear = false;
@@ -6294,6 +6523,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
             if (driver.conn.id != conn_id) continue;
             connectionFound = true;
             conn = driver.conn;
+            writeEpoch = driver.freshness_epoch;
             for (auto &t : driver.tags) {
                 if (t.cfg.logical_name == logical_name) {
                     cfg = t.cfg;
@@ -6427,10 +6657,39 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
         std::cerr << msg << "\n";
         return fail(msg);
     }
+    if (expectedEpoch && writeEpoch != expectedEpoch)
+        return fail("Connection configuration changed before write; retry the write.");
     if (!cfg.writable) {
         const std::string msg = "Tag '" + logical_name + "' is not marked writable in config.";
         std::cerr << msg << "\n";
         return fail(msg);
+    }
+
+    bool physicalWrite = conn.driver == "ab_eip" && !is_memory_tag(cfg);
+    if (physicalWrite && !cfg.source_tag.empty()) {
+        std::lock_guard<std::mutex> lock(driverMutex);
+        for (const auto &driver : drivers) {
+            if (driver.conn.id != conn_id) continue;
+            std::string source = cfg.source_tag;
+            std::set<std::string> seen;
+            while (seen.insert(source).second) {
+                const auto tag = std::find_if(driver.tags.begin(), driver.tags.end(), [&](const TagRuntime &t) { return t.cfg.logical_name == source; });
+                if (tag == driver.tags.end()) break;
+                if (is_memory_tag(tag->cfg)) { physicalWrite = false; break; }
+                const auto parent = tag->poll_source.empty() ? tag->cfg.source_tag : tag->poll_source;
+                if (parent.empty()) break;
+                source = parent;
+            }
+            break;
+        }
+    }
+    struct ReadbackOnExit {
+        std::function<void()> action;
+        ~ReadbackOnExit() { if (action) action(); }
+    } readback;
+    if (physicalWrite) {
+        readback.action = [&] { request_write_readback(drivers, conn_id, logical_name, writeEpoch, table, driverMutex); };
+        readback.action();
     }
 
     std::string cfgBitQualifiedSource;
@@ -6501,7 +6760,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
         }
 
         std::string sourceErr;
-        if (!write_tag_by_name(drivers, conn_id, sourceName, sourceValueText, table, driverMutex, &sourceErr)) {
+        if (!write_tag_by_name(drivers, conn_id, sourceName, sourceValueText, table, driverMutex, &sourceErr, nullptr, writeEpoch)) {
             const std::string msg = "Derived alias write-through failed for [" + conn_id + "]." + logical_name + " -> " + sourceName + (sourceErr.empty() ? "" : ": " + sourceErr);
             std::cerr << msg << "\n";
             return fail(msg);
@@ -6518,7 +6777,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
             snap.value = aliasValue;
 
             std::lock_guard<std::mutex> lock(driverMutex);
-            table[key] = snap;
+            if (!physicalWrite) table[key] = snap;
         }
 
         std::cout << "Write OK (derived alias): [" << conn.id << "] "
@@ -6546,13 +6805,13 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
 
         {
             std::lock_guard<std::mutex> lock(driverMutex);
-            table[key] = snap;
+            if (!physicalWrite) table[key] = snap;
         }
 
         std::cout << "Write OK (memory): [" << conn.id << "] "
                   << logical_name << " := " << value_str << "\n";
 
-        if (cfg.log_event_on_change) {
+        if (!physicalWrite && cfg.log_event_on_change) {
             bool valueChanged = should_log_tag_event_change(hadPrev, snap, prevSnap);
             if (valueChanged) {
                 int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -6593,7 +6852,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
 
         {
             std::lock_guard<std::mutex> lock(driverMutex);
-            table[key] = snap;
+            if (!physicalWrite) table[key] = snap;
         }
 
         mqtt_publish_topic_value(conn.id, logical_name, value_str);
@@ -6677,6 +6936,13 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
     }
     auto connectionGate = connection_plc_mutex(conn_id);
     std::unique_lock<WriterPrioritySharedMutex> plcConnectionLock(*connectionGate);
+    if (physicalWrite) {
+        std::lock_guard<std::mutex> lock(driverMutex);
+        const auto current = std::find_if(drivers.begin(), drivers.end(), [&](const DriverContext &d) {
+            return d.conn.id == conn_id && d.freshness_epoch == writeEpoch;
+        });
+        if (current == drivers.end()) return fail("Connection configuration changed before write; retry the write.");
+    }
     if (timingOut) {
         timingOut->lock_wait_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - plcLockWaitStarted
@@ -6800,7 +7066,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
 
         {
             std::lock_guard<std::mutex> lock(driverMutex);
-            table[key] = snap;
+            if (!physicalWrite) table[key] = snap;
         }
 
         std::cout << "Write OK (array element): [" << conn.id << "] "
@@ -6811,7 +7077,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
             plc_tag_destroy(writeHandle);
         }
 
-        if (cfg.log_event_on_change) {
+        if (!physicalWrite && cfg.log_event_on_change) {
             bool valueChanged = should_log_tag_event_change(hadPrev, snap, prevSnap);
             if (valueChanged) {
                 int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -7068,8 +7334,8 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
 
         {
             std::lock_guard<std::mutex> lock(driverMutex);
-            table[srcKey] = srcSnap;
-            table[key] = dSnap;
+            if (!physicalWrite) table[srcKey] = srcSnap;
+            if (!physicalWrite) table[key] = dSnap;
         }
 
         if (destroySrcHandle) plc_tag_destroy(srcHandle);
@@ -7078,7 +7344,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
                   << logical_name << " := " << value_str
                   << " (source=" << srcName << " bit=" << derivedBit << ")\n";
 
-        if (cfg.log_event_on_change) {
+        if (!physicalWrite && cfg.log_event_on_change) {
             const bool valueChanged = should_log_tag_event_change(hadPrevDerived, dSnap, prevDerived);
             if (valueChanged) {
                 int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -7098,7 +7364,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
         }
 
         // (Optional) event log for the source tag too if it is configured to log on change.
-        if (srcCfg.log_event_on_change) {
+        if (!physicalWrite && srcCfg.log_event_on_change) {
             const bool valueChanged = should_log_tag_event_change(hadPrevSrc, srcSnap, prevSrc);
             if (valueChanged) {
                 int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -7232,7 +7498,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
 
     {
         std::lock_guard<std::mutex> lock(driverMutex);
-        table[key] = snap;
+        if (!physicalWrite) table[key] = snap;
     }
 
     std::cout << "Write OK: [" << conn.id << "] "
@@ -7243,7 +7509,7 @@ bool write_tag_by_name(std::vector<DriverContext> &drivers,
         handle = PLCTAG_ERR_NOT_FOUND;
     }
 
-    if (cfg.log_event_on_change) {
+    if (!physicalWrite && cfg.log_event_on_change) {
         bool valueChanged = should_log_tag_event_change(hadPrev, snap, prevSnap);
         if (valueChanged) {
             int64_t ts_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -7539,6 +7805,7 @@ static bool build_driver_context_for_connection(const ConnectionConfig &conn_cfg
                     e.cfg.source_tag.clear();
                     e.cfg.bit = -1;
                     e.cfg.logical_name = tc.logical_name + "[" + std::to_string(i) + "]";
+                    e.poll_source = tc.logical_name;
                     e.cfg.plc_tag_name = build_array_element_plc_tag_name(conn_cfg, tc, i);
                     e.handle = PLCTAG_ERR_NOT_FOUND;
                     e.handle_deferred = false;
@@ -7579,6 +7846,7 @@ static bool build_driver_context_for_connection(const ConnectionConfig &conn_cfg
                 e.cfg.source_tag.clear();
                 e.cfg.bit = -1;
                 e.cfg.logical_name = tc.logical_name + "[" + std::to_string(i) + "]";
+                e.poll_source = tc.logical_name;
                 e.cfg.plc_tag_name = build_array_element_plc_tag_name(conn_cfg, tc, i);
                 e.handle = PLCTAG_ERR_NOT_FOUND;
                 const std::string elName = e.cfg.logical_name;
@@ -7630,7 +7898,8 @@ static bool load_single_driver_for_connection(DriverContext &out,
                                               bool &hasDriver,
                                               const std::string &configDir,
                                               const std::string &connId,
-                                              std::string &err)
+                                              std::string &err,
+                                              bool allowRemoved = false)
 {
     hasDriver = false;
     err.clear();
@@ -7676,6 +7945,7 @@ static bool load_single_driver_for_connection(DriverContext &out,
     }
 
     bool foundConn = false;
+    bool parseFailed = false;
     ConnectionConfig conn_cfg;
     if (!fs::exists(connDir)) {
         err = "Connections directory does not exist.";
@@ -7692,11 +7962,13 @@ static bool load_single_driver_for_connection(DriverContext &out,
                 break;
             }
         } catch (const std::exception &ex) {
+            parseFailed = true;
             std::cerr << "[reload] Error reading connection file " << entry.path().string()
                       << ": " << ex.what() << "\n";
         }
     }
     if (!foundConn) {
+        if (allowRemoved && !parseFailed) return true;
         err = "Connection '" + connId + "' not found.";
         return false;
     }
@@ -8215,6 +8487,7 @@ bool load_logic_config(const std::string &configDir, bool force = false) {
             next.last_load_duration_ms = steady_elapsed_ms(started);
             {
                 std::lock_guard<std::mutex> lock(g_logicMutex);
+                next.revision = g_logicState.revision + 1;
                 g_logicState = std::move(next);
             }
             std::cout << "[logic] logic.json not found; logic runtime scaffold loaded with 0 scripts.\n";
@@ -8263,6 +8536,7 @@ bool load_logic_config(const std::string &configDir, bool force = false) {
             if (script.name.empty()) script.name = script.id;
             script.enabled = json_get_bool_loose(js, "enabled", false);
             script.interval_ms = std::max(0, json_get_int_loose(js, "interval_ms", 0));
+            parse_logic_freshness(js, script);
             script.engine = trim_copy(json_get_string_loose(js, "engine", std::string("javascript")));
             if (script.engine.empty()) script.engine = "javascript";
             if (kind == "block") {
@@ -8317,6 +8591,7 @@ bool load_logic_config(const std::string &configDir, bool force = false) {
         const size_t scriptCount = next.scripts.size();
         {
             std::lock_guard<std::mutex> lock(g_logicMutex);
+            next.revision = g_logicState.revision + 1;
             g_logicState = std::move(next);
         }
         std::cout << "[logic] Loaded " << scriptCount
@@ -8330,6 +8605,7 @@ bool load_logic_config(const std::string &configDir, bool force = false) {
         next.last_load_duration_ms = steady_elapsed_ms(started);
         {
             std::lock_guard<std::mutex> lock(g_logicMutex);
+            next.revision = g_logicState.revision + 1;
             g_logicState = std::move(next);
         }
         std::cerr << "[logic] Error loading logic.json: " << ex.what() << "\n";
@@ -9943,8 +10219,10 @@ static LogicReferenceValidation apply_logic_memory_writes(
         }
 
         TagSnapshot snap;
+        uint64_t publicationEpoch = 0;
         {
             std::lock_guard<std::mutex> lock(driverMutex);
+            for (const auto &driver : drivers) if (driver.conn.id == conn) { publicationEpoch = driver.freshness_epoch; break; }
             auto it = tagTable.find(key);
             if (it == tagTable.end()) {
                 if (errors.size() < 5) errors.push_back("Write succeeded but tag snapshot missing: " + conn + ":" + name);
@@ -9953,13 +10231,13 @@ static LogicReferenceValidation apply_logic_memory_writes(
             snap = it->second;
         }
 
-        if (ws_is_enabled() && (!hadPrev || !snapshot_values_equal(snap, prev))) {
+        if (ws_is_enabled() && (!hadPrev || !snapshot_updates_equal(snap, prev))) {
             ws_notify_tag_update(snap, cfg);
         }
         evaluate_tag_alarms(conn, name, snap);
         if (g_uaServer) {
             std::lock_guard<std::mutex> lock(uaQueueMutex);
-            uaQueue.push_back(UaUpdate{conn, name, snap.value});
+            uaQueue.push_back(UaUpdate{conn, name, snap, publicationEpoch});
         }
         if (g_mqtt && g_mqttCfg.enabled && is_memory_tag(cfg) && g_mqttCfg.publish_memory_tags) {
             MqttPublishJob j;
@@ -10198,9 +10476,54 @@ static void logic_merge_result(LogicReferenceValidation &dst,
     if (dst.error.empty() && !src.error.empty()) dst.error = src.error;
 }
 
+// The execution demand pin must already be held. Each pass copies all verified
+// inputs under one driver lock; no partially verified set escapes on failure.
+static bool logic_acquire_fresh_inputs(const LogicScriptConfig &script, uint64_t revision,
+        std::vector<DriverContext> &drivers, TagTable &table, std::mutex &driverMutex,
+        std::unordered_map<std::string, TagSnapshot> &samples, std::string &error) {
+    samples.clear();
+    auto deps = automation_read_dependencies(script.kind == "block" ? script.setup_source : script.source);
+    if (script.kind == "block") {
+        const auto loop = automation_read_dependencies(script.loop_source);
+        deps.reads.insert(loop.reads.begin(), loop.reads.end());
+        if (!loop.complete) deps.uncertain(loop.reason);
+    }
+    if (!deps.complete) { error = "Fresh inputs require complete literal dependencies: " + deps.reason; return false; }
+    const auto requested = PollReadStamp::Clock::now();
+    const auto deadline = requested + std::chrono::milliseconds(script.fresh_timeout_ms);
+    for (;;) {
+        {
+            std::lock_guard<std::mutex> lock(g_logicMutex);
+            if (g_logicState.revision != revision) { error = "Logic configuration replaced during input acquisition."; return false; }
+        }
+        bool waiting = false;
+        std::string waitingTag;
+        std::unordered_map<std::string, TagSnapshot> candidate;
+        {
+            std::lock_guard<std::mutex> lock(driverMutex);
+            TagRuntimeIndex index;
+            for (size_t d = 0; d < drivers.size(); ++d)
+                for (size_t t = 0; t < drivers[d].tags.size(); ++t)
+                    index.emplace(make_tag_key(drivers[d].conn.id, drivers[d].tags[t].cfg.logical_name), std::make_pair(d, t));
+            for (const auto &ref : deps.reads) {
+                // System values are authoritative process state supplied separately.
+                if (ref.first == "_system") continue;
+                const auto check = check_fresh_input(drivers, table, index, ref.first, ref.second,
+                                                    requested, script.fresh_max_age_ms, true);
+                if (check.reason == "fresh") candidate.emplace(make_tag_key(ref.first, ref.second), check.sample);
+                else if (check.reason == "waiting") { waiting = true; waitingTag = ref.first + ":" + ref.second; }
+                else { error = "Fresh input " + ref.first + ":" + ref.second + ": " + check.reason; return false; }
+            }
+        }
+        if (!waiting) { samples = std::move(candidate); return true; }
+        if (PollReadStamp::Clock::now() >= deadline) { error = "Fresh input " + waitingTag + ": timeout"; return false; }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+}
+
 static void logic_run_validation_cycle(const std::set<std::string> &tagKeys,
                                        const std::set<std::string> &systemTagNames,
-                                       const std::unordered_map<std::string, TagSnapshot> &tagSnapshots,
+                                       const std::unordered_map<std::string, TagSnapshot> &cachedTagSnapshots,
                                        const std::unordered_map<std::string, SystemTagDef> &systemSnapshots,
                                        std::vector<DriverContext> *drivers,
                                        TagTable *tagTable,
@@ -10210,8 +10533,10 @@ static void logic_run_validation_cycle(const std::set<std::string> &tagKeys,
                                        std::deque<MqttPublishJob> *mqttQueue,
                                        std::mutex *mqttQueueMutex) {
     std::vector<size_t> due;
+    uint64_t revision = 0;
     {
         std::lock_guard<std::mutex> lock(g_logicMutex);
+        revision = g_logicState.revision;
         const int64_t nowMs = system_wall_now_ms();
         for (size_t i = 0; i < g_logicState.scripts.size(); ++i) {
             auto &script = g_logicState.scripts[i];
@@ -10236,9 +10561,14 @@ static void logic_run_validation_cycle(const std::set<std::string> &tagKeys,
         std::string loopSource;
         bool setupInitialized = false;
         std::unordered_map<std::string, std::string> retainedVars;
+        std::shared_ptr<const LogicScriptConfig> executionDemand;
         {
             std::lock_guard<std::mutex> lock(g_logicMutex);
-            if (idx >= g_logicState.scripts.size()) continue;
+            if (g_logicState.revision != revision) break;
+            if (idx >= g_logicState.scripts.size() || !g_logicState.scripts[idx].enabled) continue;
+            // Capture before releasing the config lock: reload cannot remove demand
+            // between copying the executable source and pinning its dependencies.
+            executionDemand = g_logicExecutionDemand.retain(g_logicState.scripts[idx]);
             engine = to_lower_copy(trim_copy(g_logicState.scripts[idx].engine));
             kind = trim_copy(g_logicState.scripts[idx].kind);
             source = g_logicState.scripts[idx].source;
@@ -10252,7 +10582,22 @@ static void logic_run_validation_cycle(const std::set<std::string> &tagKeys,
         std::string err;
         LogicReferenceValidation refs;
         std::unordered_map<std::string, std::string> variables;
-        if (engine != "javascript") {
+        std::unordered_map<std::string, TagSnapshot> freshTagSnapshots;
+        const auto &tagSnapshots = executionDemand->require_fresh_read ? freshTagSnapshots : cachedTagSnapshots;
+        if (executionDemand->require_fresh_read) {
+            if (!drivers || !tagTable || !driverMutex) {
+                ok = false; err = "Fresh input acquisition unavailable.";
+            } else {
+                ok = logic_acquire_fresh_inputs(*executionDemand, revision, *drivers, *tagTable,
+                                               *driverMutex, freshTagSnapshots, err);
+            }
+            // A replaced run must not evaluate outputs after waiting for its inputs.
+            std::lock_guard<std::mutex> lock(g_logicMutex);
+            if (g_logicState.revision != revision) break;
+        }
+        if (!ok) {
+            // Acquisition failure records an error without evaluating setup, loop or outputs.
+        } else if (engine != "javascript") {
             ok = false;
             err = "Unsupported logic engine '" + engine + "'.";
         } else {
@@ -10389,6 +10734,9 @@ static void logic_run_validation_cycle(const std::set<std::string> &tagKeys,
         }
         {
             std::lock_guard<std::mutex> lock(g_logicMutex);
+            // A reload may reorder, edit or disable this slot while evaluation runs.
+            // Its statistics and retained variables belong only to the captured revision.
+            if (g_logicState.revision != revision) break;
             if (idx >= g_logicState.scripts.size()) continue;
             auto &script = g_logicState.scripts[idx];
             script.last_run_ms = nowMs;
@@ -11856,7 +12204,7 @@ static TagSnapshot make_initial_snapshot_for_opcua(const ConnectionConfig &conn,
 
 static UA_NodeId ua_ensure_connection_object(UA_Server *server,
                                              UA_NodeId bridgeId,
-                                             const std::string &connId);
+                                             const ConnectionConfig &conn);
 
 static bool ua_add_tag_variable_node(UA_Server *server,
                                      UA_NodeId parent,
@@ -11939,6 +12287,58 @@ static TagValue default_tag_value_for_datatype(const std::string &dt) {
     return std::string{};
 }
 
+static bool ua_publication_is_current(const std::vector<DriverContext> &drivers, const UaUpdate &update) {
+    if (!update.driver_epoch) return false;
+    for (const auto &driver : drivers)
+        if (driver.conn.id == update.conn_id) return driver.freshness_epoch == update.driver_epoch;
+    return false;
+}
+
+static UA_StatusCode ua_snapshot_status(const UaTagBinding &binding, const TagSnapshot &snapshot) {
+    if (snapshot.polling_state == PollCacheState::Inactive) return UA_STATUSCODE_BADOUTOFSERVICE;
+    if (snapshot.polling_state == PollCacheState::Waiting) return UA_STATUSCODE_BADWAITINGFORINITIALDATA;
+    if (!binding.physical_read_gate) return snapshot.quality == 1 ? UA_STATUSCODE_GOOD : UA_STATUSCODE_BADNOCOMMUNICATION;
+    switch (binding.read_gate.quality(snapshot.poll_read, snapshot.quality == 1)) {
+        case PollReadGate::Quality::Good: return UA_STATUSCODE_GOOD;
+        case PollReadGate::Quality::Bad: return UA_STATUSCODE_BADNOCOMMUNICATION;
+        case PollReadGate::Quality::Inactive: return UA_STATUSCODE_BADOUTOFSERVICE;
+        default: return UA_STATUSCODE_BADWAITINGFORINITIALDATA;
+    }
+}
+
+static UA_StatusCode ua_write_snapshot(UA_Server *server, const UA_NodeId &node,
+        const TagSnapshot &snapshot, UA_StatusCode status) {
+    UA_DataValue value;
+    UA_DataValue_init(&value);
+    value.hasStatus = true; value.status = status;
+    value.hasServerTimestamp = true; value.serverTimestamp = UA_DateTime_now();
+    if (status == UA_STATUSCODE_GOOD) {
+        UA_VariableAttributes attr = UA_VariableAttributes_default;
+        if (!ua_set_variable_attr_from_snapshot(attr, snapshot)) return UA_STATUSCODE_BADTYPEMISMATCH;
+        value.value = attr.value; UA_Variant_init(&attr.value);
+        UA_VariableAttributes_clear(&attr);
+        value.hasValue = true;
+        value.hasSourceTimestamp = true;
+        const auto micros = std::chrono::duration_cast<std::chrono::microseconds>(snapshot.timestamp.time_since_epoch()).count();
+        value.sourceTimestamp = UA_DATETIME_UNIX_EPOCH + micros * UA_DATETIME_USEC;
+    }
+    const bool previousSuppression = g_suppressOpcUaWriteCallback;
+    g_suppressOpcUaWriteCallback = true;
+    const auto result = UA_Server_writeDataValue(server, node, value);
+    g_suppressOpcUaWriteCallback = previousSuppression;
+    UA_DataValue_clear(&value);
+    return result;
+}
+
+static void ua_restart_read_gate(UA_Server *server, UaTagBinding &binding,
+        const DriverContext &driver, const TagRuntime &tag) {
+    binding.physical_read_gate = driver.conn.driver == "ab_eip" && !is_memory_tag(tag.cfg);
+    binding.read_gate.restart(driver.freshness_epoch);
+    const auto seed = make_initial_snapshot_for_opcua(driver.conn, tag);
+    ua_write_snapshot(server, binding.nodeId, seed, !tag.cfg.enabled ? UA_STATUSCODE_BADOUTOFSERVICE :
+        (is_memory_tag(tag.cfg) ? UA_STATUSCODE_GOOD : UA_STATUSCODE_BADWAITINGFORINITIALDATA));
+}
+
 static TagSnapshot make_initial_snapshot_for_tag(const ConnectionConfig &conn,
                                                  const TagRuntime &tag,
                                                  int quality) {
@@ -11976,6 +12376,86 @@ static TagSnapshot make_initial_snapshot_for_opcua(const ConnectionConfig &conn,
     return make_initial_snapshot_for_tag(conn, tag, is_memory_tag(tag.cfg) ? 1 : 0);
 }
 
+// Caller holds driverMutex. Only the current driver's gate may restore GOOD.
+static void apply_poll_cache_gate(DriverContext &driver, TagSnapshot &snapshot) {
+    const auto found = driver.poll_gates.find(snapshot.logical_name);
+    if (found == driver.poll_gates.end()) return;
+    if (!snapshot.quality && snapshot.polling_state == PollCacheState::Waiting && found->second.is_active()) return;
+    switch (found->second.quality(snapshot.poll_read, snapshot.quality == 1)) {
+        case PollReadGate::Quality::Good: snapshot.polling_state = PollCacheState::Active; break;
+        case PollReadGate::Quality::Bad: snapshot.polling_state = PollCacheState::Active; break;
+        case PollReadGate::Quality::Inactive:
+            snapshot.polling_state = PollCacheState::Inactive; snapshot.quality = 0; break;
+        default: snapshot.polling_state = PollCacheState::Waiting; snapshot.quality = 0; break;
+    }
+}
+
+// Common startup/resume/suspend transition. It invalidates quality without
+// inventing a new measurement timestamp. Scheduler suspension is not enabled yet.
+static TagSnapshot transition_poll_cache(DriverContext &driver, const TagRuntime &tag,
+        TagTable &table, bool active, bool restart = false) {
+    auto &gate = driver.poll_gates[tag.cfg.logical_name];
+    const auto key = make_tag_key(driver.conn.id, tag.cfg.logical_name);
+    auto found = table.find(key);
+    if (!restart && gate.is_active() == active && found != table.end()) return found->second;
+    if (restart) gate.restart(driver.freshness_epoch);
+    if (active) gate.resume(); else gate.suspend();
+    auto snapshot = found == table.end() ? make_initial_snapshot_for_opcua(driver.conn, tag) : found->second;
+    snapshot.quality = 0;
+    snapshot.polling_state = active ? PollCacheState::Waiting : PollCacheState::Inactive;
+    table[key] = snapshot;
+    return snapshot;
+}
+
+// Reject pre-write samples and briefly request ordinary poller readback. Never
+// publish the requested output as a measurement, including failed write attempts.
+static void request_write_readback(std::vector<DriverContext> &drivers, const std::string &cid,
+        const std::string &name, uint64_t epoch, TagTable &table, std::mutex &mutex) {
+    std::vector<std::pair<TagSnapshot, TagConfig>> updates;
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        for (auto &driver : drivers) {
+            if (driver.conn.id != cid || driver.freshness_epoch != epoch) continue;
+            std::string root = name;
+            std::set<std::string> seen;
+            while (seen.insert(root).second) {
+                auto tag = std::find_if(driver.tags.begin(), driver.tags.end(), [&](const TagRuntime &t) { return t.cfg.logical_name == root; });
+                if (tag == driver.tags.end()) {
+                    std::string parent; int bit = -1;
+                    if (parse_bit_qualified_source_name(root, parent, bit)) { root = parent; continue; }
+                    return;
+                }
+                const auto parent = tag->poll_source.empty() ? tag->cfg.source_tag : tag->poll_source;
+                if (parent.empty()) break;
+                root = parent;
+            }
+            g_tagDemand.http_read(ua_tag_nodeid_string(cid, root));
+            std::set<std::string> affected{root};
+            bool changed = true;
+            while (changed) {
+                changed = false;
+                for (const auto &tag : driver.tags) {
+                    const auto parent = tag.poll_source.empty() ? tag.cfg.source_tag : tag.poll_source;
+                    if (!parent.empty() && affected.count(parent)) changed = affected.insert(tag.cfg.logical_name).second || changed;
+                }
+            }
+            for (const auto &tag : driver.tags) {
+                if (!affected.count(tag.cfg.logical_name) || !tag.cfg.enabled || is_memory_tag(tag.cfg)) continue;
+                if (tag.cfg.elem_count > 1 && tag.poll_source.empty()) continue;
+                updates.emplace_back(transition_poll_cache(driver, tag, table, true, true), tag.cfg);
+            }
+            break;
+        }
+    }
+    for (const auto &update : updates) {
+        ws_notify_tag_update(update.first, update.second);
+        if (g_uaServer) {
+            std::lock_guard<std::mutex> lock(g_writeReadbackMutex);
+            g_writeReadbackUpdates.push_back(UaUpdate{cid, update.first.logical_name, update.first, epoch});
+        }
+    }
+}
+
 static void seed_memory_tag_table(const std::vector<DriverContext> &drivers,
                                   TagTable &tagTable) {
     int seeded = 0;
@@ -11996,9 +12476,10 @@ static void seed_memory_tag_table(const std::vector<DriverContext> &drivers,
 
 static UA_NodeId ua_ensure_connection_object(UA_Server *server,
                                              UA_NodeId bridgeId,
-                                             const std::string &connId) {
+                                             const ConnectionConfig &conn) {
+    const std::string &connId = conn.id;
     const std::string stableConnNodeId = ua_connection_nodeid_string(connId);
-    const std::string displayName = display_connection_name(connId);
+    const std::string displayName = display_connection_name(conn);
     UA_NodeId requestedConnId = UA_NODEID_STRING(1, const_cast<char*>(stableConnNodeId.c_str()));
 
     UA_ObjectAttributes cAttr = UA_ObjectAttributes_default;
@@ -12019,6 +12500,12 @@ static UA_NodeId ua_ensure_connection_object(UA_Server *server,
     UA_ObjectAttributes_clear(&cAttr);
     if (st == UA_STATUSCODE_GOOD) return connNodeId;
     if (st == UA_STATUSCODE_BADNODEIDEXISTS) {
+        // BrowseName is immutable in the bundled server; DisplayName follows renames.
+        UA_LocalizedText label = UA_LOCALIZEDTEXT_ALLOC("en-US", displayName.c_str());
+        const UA_StatusCode labelStatus = UA_Server_writeDisplayName(server, requestedConnId, label);
+        UA_LocalizedText_clear(&label);
+        if (labelStatus != UA_STATUSCODE_GOOD)
+            std::cerr << "OPC UA: Failed to refresh connection label for '" << connId << "'\n";
         return UA_NODEID_STRING_ALLOC(1, stableConnNodeId.c_str());
     }
     std::cerr << "OPC UA: Failed to ensure connection object '"
@@ -12035,7 +12522,7 @@ static bool ua_add_tag_variable_node(UA_Server *server,
     const TagConfig &cfg = tag.cfg;
     err.clear();
     if (tag.handle < 0 && !tag.handle_deferred && !is_memory_tag(tag.cfg) &&
-        tag.cfg.source_tag.empty() && !is_opcua_client_driver_name(conn.driver)) {
+        tag.cfg.source_tag.empty() && tag.poll_source.empty() && !is_opcua_client_driver_name(conn.driver)) {
         err = "invalid handle";
         return false;
     }
@@ -12140,7 +12627,7 @@ static bool sync_opcua_connection_nodes(DriverContext &driver,
         return false;
     }
 
-    UA_NodeId connNodeId = ua_ensure_connection_object(g_uaServer, g_uaBridgeNodeId, driver.conn.id);
+    UA_NodeId connNodeId = ua_ensure_connection_object(g_uaServer, g_uaBridgeNodeId, driver.conn);
     if (UA_NodeId_isNull(&connNodeId)) {
         err = "failed to ensure OPC UA connection object";
         sync.ok = false;
@@ -12151,7 +12638,7 @@ static bool sync_opcua_connection_nodes(DriverContext &driver,
     std::unordered_set<std::string> liveKeys;
     for (auto &tag : driver.tags) {
         const std::string key = ua_key(driver.conn.id, tag.cfg.logical_name);
-        if (tag.handle < 0 && !tag.handle_deferred && !is_memory_tag(tag.cfg)) continue;
+        if (tag.handle < 0 && !tag.handle_deferred && !is_memory_tag(tag.cfg) && tag.poll_source.empty()) continue;
 
         TagSnapshot seed = make_initial_snapshot_for_opcua(driver.conn, tag);
         UA_VariableAttributes tmpAttr = UA_VariableAttributes_default;
@@ -12164,6 +12651,9 @@ static bool sync_opcua_connection_nodes(DriverContext &driver,
         if (it != g_uaBindingIndex.end()) {
             UaTagBinding &binding = g_uaBindings[it->second];
             if (binding.datatype != seed.datatype) {
+                // The old typed node cannot represent the replacement's value.
+                // Keep its identity for clients, but never leave old data GOOD.
+                ua_retire_tag_binding(binding);
                 sync.datatype_conflicts++;
                 sync.full_rebuild_required = true;
                 std::cerr << "OPC UA sync: datatype changed for ["
@@ -12178,6 +12668,7 @@ static bool sync_opcua_connection_nodes(DriverContext &driver,
             binding.logical_name = tag.cfg.logical_name;
             binding.writable = tag.cfg.writable;
             binding.retired = false;
+            ua_restart_read_gate(g_uaServer, binding, driver, tag);
             const UA_Byte access = tag.cfg.writable
                 ? (UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE)
                 : UA_ACCESSLEVELMASK_READ;
@@ -12200,6 +12691,7 @@ static bool sync_opcua_connection_nodes(DriverContext &driver,
                       << ": " << addErr << "\n";
             continue;
         }
+        ua_restart_read_gate(g_uaServer, g_uaBindings.back(), driver, tag);
         g_uaBindingIndex[key] = g_uaBindings.size() - 1;
         sync.added++;
         std::cout << "OPC UA sync: added node for ["
@@ -12394,6 +12886,14 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers,
         UA_Server_delete(server);
         return false;
     }
+
+    config->opcbridgeMonitoredItemObserver = observe_ua_monitored_item;
+    config->opcbridgeReadObserver = observe_ua_read;
+    if (g_nativeVerifiedReads) {
+        config->opcbridgeReadVerifier = defer_native_read;
+        config->asyncOperationCancelCallback = cancel_native_read;
+    }
+
 
     if (secureIdentityReady) {
         // Endpoint descriptions copy the server application description, so
@@ -12734,39 +13234,14 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers,
     for (auto &driver : drivers) {
         ConnectionConfig &conn = driver.conn;
 
-        UA_NodeId connNodeId;
-        {
-            const std::string displayName = display_connection_name(conn.id);
-            UA_ObjectAttributes cAttr = UA_ObjectAttributes_default;
-            cAttr.displayName = UA_LOCALIZEDTEXT_ALLOC(
-                const_cast<char*>("en-US"),
-                const_cast<char*>(displayName.c_str())
-            );
-
-            const std::string stableConnNodeId = ua_connection_nodeid_string(conn.id);
-            UA_NodeId requestedConnId = UA_NODEID_STRING(1, const_cast<char*>(stableConnNodeId.c_str()));
-            UA_StatusCode st = UA_Server_addObjectNode(
-                server,
-                requestedConnId,
-                bridgeId,
-                UA_NODEID_NUMERIC(0, UA_NS0ID_HASCOMPONENT),
-                UA_QUALIFIEDNAME(1, const_cast<char*>(displayName.c_str())),
-                UA_NODEID_NUMERIC(0, UA_NS0ID_BASEOBJECTTYPE),
-                cAttr, nullptr, &connNodeId
-            );
-            UA_ObjectAttributes_clear(&cAttr);
-            if (st != UA_STATUSCODE_GOOD) {
-                std::cerr << "OPC UA: Failed to add connection object '"
-                          << conn.id << "': " << UA_StatusCode_name(st) << "\n";
-                continue;
-            }
-        }
+        UA_NodeId connNodeId = ua_ensure_connection_object(server, bridgeId, conn);
+        if (UA_NodeId_isNull(&connNodeId)) continue;
 
         for (auto &tag : driver.tags) {
             const TagConfig &cfg = tag.cfg;
 
             if (tag.handle < 0 && !tag.handle_deferred && !is_memory_tag(tag.cfg) &&
-                tag.cfg.source_tag.empty() && !is_opcua_client_driver_name(conn.driver)) {
+                tag.cfg.source_tag.empty() && tag.poll_source.empty() && !is_opcua_client_driver_name(conn.driver)) {
                 std::cerr << "OPC UA: skipping tag '" << cfg.logical_name
                           << "' on connection '" << conn.id
                           << "' (invalid handle)\n";
@@ -12871,6 +13346,7 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers,
 
             bindings.push_back(std::move(b));
             UaTagBinding *bindingPtr = &bindings.back();
+            ua_restart_read_gate(server, *bindingPtr, driver, tag);
 
             if (bindingPtr->writable) {
                 UA_Server_setNodeContext(server, varId, bindingPtr);
@@ -12927,6 +13403,9 @@ void shutdown_opcua_server() {
     if (g_uaServer) {
         UA_Server_run_shutdown(g_uaServer);
         UA_Server_delete(g_uaServer);
+        g_tagDemand.clear_monitored();
+        { std::lock_guard<std::mutex> lock(g_nativeReadMutex); g_nativeReads.clear(); }
+
         g_uaServer = nullptr;
         UA_NodeId_clear(&g_uaBridgeNodeId);
         g_uaBridgeNodeId = UA_NODEID_NULL;
@@ -12950,6 +13429,10 @@ bool snapshot_values_equal(const TagSnapshot &a, const TagSnapshot &b) {
     if (a.value.index() != b.value.index())
         return false;
     return a.value == b.value; // std::variant supports operator==
+}
+
+bool snapshot_updates_equal(const TagSnapshot &a, const TagSnapshot &b) {
+    return a.quality == b.quality && a.polling_state == b.polling_state && snapshot_values_equal(a, b);
 }
 
 bool should_log_tag_event_change(bool hadPrev, const TagSnapshot &snap, const TagSnapshot &prevSnap) {
@@ -13895,6 +14378,256 @@ static bool apply_config_bundle_json(const std::string &configDir,
 // main()
 // -----------------------------
 
+static DemandSchedulerPreview g_demandSchedulerPreview;
+// Experimental, exact connection IDs encoded as a JSON array. Invalid input fails
+// open (no selected connections). No installed configuration enables this.
+static const std::set<std::string> g_activePollTestConnections = [] {
+    std::set<std::string> result;
+    const char *value = std::getenv("OPCBRIDGE_ACTIVE_POLL_TEST_CONNECTIONS");
+    if (!value || !*value) return result;
+    try {
+        const auto ids = json::parse(value);
+        if (!ids.is_array()) return result;
+        for (const auto &id : ids) {
+            if (!id.is_string() || id.get<std::string>().empty()) return std::set<std::string>{};
+            result.insert(id.get<std::string>());
+        }
+    } catch (...) { result.clear(); }
+    return result;
+}();
+static std::atomic<uint64_t> g_activePollTestSkips{0};
+static std::mutex g_activePollTestMetricsMutex;
+static json g_activePollTestReadStarts = json::object();
+static json g_activePollTestEligibility = json::object();
+static void record_active_poll_test_read(const std::string &cid, const std::string &name) {
+    std::lock_guard<std::mutex> lock(g_activePollTestMetricsMutex);
+    auto &count = g_activePollTestReadStarts[cid][name];
+    count = count.is_number_unsigned() ? count.get<uint64_t>() + 1 : uint64_t(1);
+}
+
+
+
+static bool connection_requests_active_polling(const ConnectionConfig &conn) {
+    // Explicit connection settings supersede the legacy trial allowlist.
+    if (conn.poll_active_only_configured || g_activePollTestConnections.empty()) return conn.poll_active_only;
+    return g_activePollTestConnections.count(conn.id) != 0;
+}
+static bool active_poll_test_enabled(const DriverContext &driver, bool mqttMode) {
+    return !mqttMode && driver.conn.driver == "ab_eip" && connection_requests_active_polling(driver.conn);
+}
+
+static json active_polling_connections() {
+    json ids = json::array();
+    std::lock_guard<std::mutex> lock(g_activePollTestMetricsMutex);
+    for (const auto &entry : g_activePollTestEligibility.items())
+        if (entry.value().value("enabled", false)) ids.push_back(entry.key());
+    return ids;
+}
+
+struct PollingActivitySummary {
+    size_t enabled = 0, inactive = 0, waiting = 0;
+    size_t configured_work = 0, active_work = 0, inactive_work = 0;
+    int64_t oldest_active_ms = -1;
+    size_t active_without_sample = 0;
+    bool idle() const { return configured_work > 0 && inactive_work == configured_work && waiting == 0; }
+};
+// Caller holds driverMutex. Use applied lifecycle states, not planned decisions.
+static PollingActivitySummary polling_activity_summary(const DriverContext &driver, const TagTable &table) {
+    PollingActivitySummary result;
+    std::unordered_map<std::string, bool> arrayInactive;
+    std::unordered_map<std::string, const TagSnapshot*> arraySamples;
+    std::set<std::string> arrayUnavailable;
+    for (const auto &element : driver.tags) {
+        if (!element.cfg.enabled || element.poll_source.empty()) continue;
+        auto state = arrayInactive.emplace(element.poll_source, true).first;
+        const auto sample = table.find(make_tag_key(driver.conn.id, element.cfg.logical_name));
+        if (sample == table.end() || sample->second.polling_state != PollCacheState::Inactive) state->second = false;
+        if (sample == table.end() || sample->second.quality != 1) arrayUnavailable.insert(element.poll_source);
+        else arraySamples[element.poll_source] = &sample->second;
+    }
+    for (const auto &tag : driver.tags) {
+        if (!tag.cfg.enabled) continue;
+        const bool arrayRoot = tag.cfg.elem_count > 1 && tag.cfg.source_tag.empty() && tag.poll_source.empty();
+        const auto found = table.find(make_tag_key(driver.conn.id, tag.cfg.logical_name));
+        bool inactive = found != table.end() && found->second.polling_state == PollCacheState::Inactive;
+        if (!arrayRoot) {
+            ++result.enabled;
+            if (inactive) ++result.inactive;
+            if (found != table.end() && found->second.polling_state == PollCacheState::Waiting) ++result.waiting;
+        } else {
+            const auto state = arrayInactive.find(tag.cfg.logical_name);
+            inactive = state != arrayInactive.end() && state->second; // Missing elements fail open.
+        }
+        if (!is_memory_tag(tag.cfg) && tag.cfg.source_tag.empty() && tag.poll_source.empty() &&
+            (tag.handle >= 0 || tag.handle_deferred)) {
+            ++result.configured_work;
+            if (inactive) ++result.inactive_work; else ++result.active_work;
+            if (!inactive) {
+                const TagSnapshot *sample = found == table.end() ? nullptr : &found->second;
+                if (arrayRoot) {
+                    const auto element = arraySamples.find(tag.cfg.logical_name);
+                    sample = arrayUnavailable.count(tag.cfg.logical_name) || element == arraySamples.end() ? nullptr : element->second;
+                }
+                const auto now = PollReadStamp::Clock::now();
+                if (sample && sample->quality == 1 && sample->poll_read.source_epoch == driver.freshness_epoch &&
+                    sample->poll_read.completed != PollReadStamp::Clock::time_point{} && sample->poll_read.completed <= now) {
+                    result.oldest_active_ms = std::max(result.oldest_active_ms,
+                        std::chrono::duration_cast<std::chrono::milliseconds>(now-sample->poll_read.completed).count());
+                } else ++result.active_without_sample;
+            }
+        }
+    }
+    return result;
+}
+
+static void add_polling_activity_json(json &value, const PollingActivitySummary &activity) {
+    value["polling_activity"] = activity.idle() ? "idle" : (activity.waiting ? "waiting" : "active");
+    value["enabled_logical_tags"] = activity.enabled;
+    value["inactive_tags"] = activity.inactive;
+    value["waiting_tags"] = activity.waiting;
+    value["configured_poll_work"] = activity.configured_work;
+    value["active_poll_work"] = activity.active_work;
+    value["inactive_poll_work"] = activity.inactive_work;
+    value["oldest_active_sample_age_ms"] = activity.active_without_sample || activity.oldest_active_ms < 0
+        ? json(nullptr) : json(activity.oldest_active_ms);
+    value["active_without_sample"] = activity.active_without_sample;
+    value["sweep_scope"] = "demand_driven";
+    value["full_sweep_available"] = false;
+    for (const auto *key : {"expected_sweep_ms", "sweep_ms_last", "sweep_ms_avg_10s", "sweep_ms_avg_60s", "poll_progress_pct", "poll_cursor"})
+        value[key] = nullptr;
+}
+
+// Shared demand collection for diagnostics and runtime planning. Observation
+// locks are released before driverMutex; no UA calls or network waits occur here.
+static json collect_polling_demand(const std::vector<DriverContext> &drivers,
+        std::mutex &driverMutex, const std::string &filter = "", bool includeTags = true) {
+    const auto now = TagDemandObservations::Clock::now();
+    const auto observations = g_tagDemand.snapshot(now);
+    json ws = ws_demand_snapshot();
+    g_consumerDemandLeases.append(ws["owners"]);
+    std::vector<LogicScriptConfig> automationScripts, executingScripts;
+    {
+        std::lock_guard<std::mutex> logicLock(g_logicMutex);
+        automationScripts = g_logicState.scripts;
+        executingScripts = g_logicExecutionDemand.snapshot();
+    }
+    const json automation = automation_demand_snapshot(automationScripts, executingScripts);
+    if (automation["all_tags_required"].get<bool>() || !automation["tags"].empty()) {
+        ConsumerDemand::Scope scope;
+        scope.all_tags = automation["all_tags_required"].get<bool>();
+        for (const auto &tag : automation["tags"]) scope.tags.insert(tag.get<std::string>());
+        merge_consumer_scope(ws["owners"], "opcbridge-automation", scope);
+    }
+    const size_t allClients = ws.value("all_tags_clients", size_t{0});
+    json root = {{"ok", true}, {"mode", "observe_only"},
+        {"polling_unchanged", true}, {"coverage_complete", false},
+        {"safe_to_suspend_unobserved", false}, {"http_lease_ms", 30000},
+        {"websocket_all_tags_clients", allClients},
+        {"consumer_registrations", ws["owners"]},
+        {"automation", automation},
+        {"limitations", {"Native UA freshness verification is opt-in; unsupported sources and in-flight lifecycle validation remain pending",
+            "HTTP readers are anonymous and leases cannot represent long-interval background jobs",
+            "Broad HTTP readers and viewer/MQTT lifecycle coverage still require validation"}},
+        {"connections", json::object()}, {"tags", json::array()}};
+    struct ObservedTag {
+        std::string cid, name, source;
+        bool enabled;
+        size_t ua, ws;
+        size_t uaActive = 0, uaInherited = 0;
+        double uaInterval = -1;
+        std::set<std::string> reasons;
+        bool arrayElement = false;
+        bool pollWork = false, writable = false;
+        std::string driver;
+        uint64_t epoch = 0;
+    };
+    std::vector<ObservedTag> tags;
+    std::unordered_map<std::string, size_t> byKey;
+    // Callback paths only take their own observation lock. Never call UA here.
+    std::lock_guard<std::mutex> lock(driverMutex);
+    for (const auto &driver : drivers) {
+        for (const auto &tag : driver.tags) {
+            const std::string key = make_tag_key(driver.conn.id, tag.cfg.logical_name);
+            const auto found = observations.find(ua_tag_nodeid_string(driver.conn.id, tag.cfg.logical_name));
+            ObservedTag row{};
+            row.cid = driver.conn.id;
+            row.name = tag.cfg.logical_name;
+            row.source = tag.poll_source.empty() ? tag.cfg.source_tag : tag.poll_source;
+            row.enabled = tag.cfg.enabled;
+            row.ws = allClients;
+            row.arrayElement = !tag.poll_source.empty();
+            row.pollWork = tag.cfg.source_tag.empty() && tag.poll_source.empty() &&
+                !is_memory_tag(tag.cfg) && (tag.handle >= 0 || tag.handle_deferred);
+            row.writable = tag.cfg.writable;
+            row.driver = driver.conn.driver;
+            row.epoch = driver.freshness_epoch;
+            if (found != observations.end()) {
+                row.ua = found->second.monitored_items;
+                row.uaActive = found->second.active_monitored_items;
+                row.uaInherited = found->second.inherited_sampling_items;
+                row.uaInterval = found->second.min_sampling_interval_ms;
+                if (row.uaActive) row.reasons.insert("opcua_active_monitored_item");
+                if (found->second.ua_read_until > now) row.reasons.insert("opcua_recent_read");
+                if (found->second.ua_fresh_until > now) row.reasons.insert("opcua_fresh_read_requested");
+                if (found->second.http_until > now) row.reasons.insert("http_recent_read");
+            }
+            row.ws += ws["tags"].value(key, size_t{0});
+            if (allClients) row.reasons.insert("websocket_all_tags");
+            if (row.ws > allClients) row.reasons.insert("websocket_explicit_subscription");
+            for (const auto &owner : ws["owners"].items()) {
+                if (consumer_demand_matches(owner.value(), driver.conn.id, tag.cfg.logical_name))
+                    row.reasons.insert("consumer:" + owner.key());
+            }
+            if (tag.cfg.log_event_on_change) row.reasons.insert("event_logging");
+            if (tag.periodic_enabled || tag.cfg.log_periodic) row.reasons.insert("periodic_logging");
+            byKey[key] = tags.size();
+            tags.push_back(std::move(row));
+        }
+    }
+    for (const auto &alarm : g_alarms) {
+        if (!alarm.cfg.enabled) continue;
+        const auto found = byKey.find(make_tag_key(alarm.cfg.connection_id, alarm.cfg.tag_name));
+        if (found != byKey.end()) tags[found->second].reasons.insert("internal_alarm");
+    }
+    // Follow demanded derived tags to their sources, including chains and cycles.
+    std::vector<size_t> pending;
+    std::unordered_set<size_t> visited;
+    for (size_t i = 0; i < tags.size(); ++i)
+        if (tags[i].enabled && !tags[i].reasons.empty()) pending.push_back(i);
+    while (!pending.empty()) {
+        const size_t i = pending.back(); pending.pop_back();
+        if (!visited.insert(i).second || tags[i].source.empty()) continue;
+        const auto source = byKey.find(make_tag_key(tags[i].cid, tags[i].source));
+        if (source == byKey.end()) continue;
+        auto &row = tags[source->second];
+        row.reasons.insert(std::string(tags[i].arrayElement ? "array_source:" : "derived_source:") + tags[i].name);
+        if (row.enabled) pending.push_back(source->second);
+    }
+    for (const auto &tag : tags) {
+        if (!filter.empty() && tag.cid != filter) continue;
+        auto &summary = root["connections"][tag.cid];
+        if (summary.is_null()) summary = {{"configured_tags", 0}, {"enabled_tags", 0},
+            {"enabled_with_observed_demand", 0}, {"enabled_without_observed_demand", 0}};
+        summary["configured_tags"] = summary["configured_tags"].get<size_t>() + 1;
+        if (tag.enabled) {
+            summary["enabled_tags"] = summary["enabled_tags"].get<size_t>() + 1;
+            const auto count = tag.reasons.empty() ? "enabled_without_observed_demand" : "enabled_with_observed_demand";
+            summary[count] = summary[count].get<size_t>() + 1;
+        }
+        if (includeTags) root["tags"].push_back({{"connection_id", tag.cid}, {"name", tag.name},
+            {"enabled", tag.enabled}, {"observed_demand", !tag.reasons.empty()},
+            {"reasons", tag.reasons}, {"opcua_registered_monitored_items", tag.ua},
+            {"opcua_active_monitored_items", tag.uaActive},
+            {"opcua_inherited_sampling_items", tag.uaInherited},
+            {"opcua_min_explicit_sampling_interval_ms", tag.uaInterval < 0 ? json(nullptr) : json(tag.uaInterval)},
+            {"websocket_subscribers", tag.ws},
+            {"poll_source", tag.arrayElement ? json(tag.source) : json(nullptr)},
+            {"poll_work", tag.pollWork}, {"writable", tag.writable},
+            {"driver", tag.driver}, {"driver_epoch", tag.epoch}});
+    }
+    return root;
+}
+
 	int main(int argc, char **argv) {
 	    try {
 	        auto processStartTime = std::chrono::system_clock::now();
@@ -14113,7 +14846,7 @@ static bool apply_config_bundle_json(const std::string &configDir,
 		        // Stable vector coordinates are rebuilt whenever driver configuration
 		        // changes. REST lookups can then fetch requested tags directly instead
 		        // of scanning every configured tag on each SCADA refresh.
-		        std::unordered_map<std::string, std::pair<size_t, size_t>> tagRuntimeIndex;
+		        TagRuntimeIndex tagRuntimeIndex;
 		        auto rebuildTagRuntimeIndex = [&]() {
 		            tagRuntimeIndex.clear();
 		            size_t tagCount = 0;
@@ -22472,6 +23205,7 @@ window.addEventListener("load", startAutoRefresh);
                     jc["plc_type"]           = c.plc_type;
                     jc["polling_mode"]       = c.polling_mode;
                     jc["polling_pacing"]     = c.polling_pacing;
+                    jc["poll_active_only"] = c.poll_active_only;
                     jc["poll_batch_size"]    = c.poll_batch_size;
                     jc["poll_time_budget_ms"] = c.poll_time_budget_ms;
                     jc["poll_max_reads_per_sec"] = c.poll_max_reads_per_sec;
@@ -22508,9 +23242,54 @@ window.addEventListener("load", startAutoRefresh);
 		                res.set_content(root.dump(2), "application/json");
 		            });
 
+            auto registerConsumerDemand = [](const httplib::Request &req, httplib::Response &res, bool release) {
+                try {
+                    const json body = json::parse(req.body);
+                    const bool ok = g_consumerDemandLeases.apply(body, release);
+                    res.status = ok ? 200 : 400;
+                    res.set_content(json{{"ok", ok}, {"mode", "observe_only"}, {"lease_ms", 60000}}.dump(), "application/json");
+                } catch (const std::exception &) {
+                    res.status = 400;
+                    res.set_content(json{{"ok", false}, {"error", "Invalid demand registration"}}.dump(), "application/json");
+                }
+            };
+            svr.Post("/polling/demand/register", [registerConsumerDemand](const httplib::Request &req, httplib::Response &res) {
+                registerConsumerDemand(req, res, false);
+            });
+            svr.Post("/polling/demand/release", [registerConsumerDemand](const httplib::Request &req, httplib::Response &res) {
+                registerConsumerDemand(req, res, true);
+            });
+
+            // Observation only: this endpoint never changes polling or creates demand.
+            svr.Get("/polling/demand", [&](const httplib::Request &req, httplib::Response &res) {
+                const std::string filter = req.has_param("connection_id") ? req.get_param_value("connection_id") : "";
+                const bool includeTags = !req.has_param("include_tags") || req.get_param_value("include_tags") != "0";
+                auto root = collect_polling_demand(drivers, driverMutex, filter, includeTags);
+                root["scheduler_preview"] = g_demandSchedulerPreview.snapshot(filter, includeTags);
+                root["active_poll_test"] = {{"configured_connections", active_polling_connections()},
+                    {"scan_selections_skipped", g_activePollTestSkips.load()}, {"experimental", true}};
+                {
+                    std::lock_guard<std::mutex> lock(g_activePollTestMetricsMutex);
+                    root["active_poll_test"]["poll_read_requests"] = g_activePollTestReadStarts;
+                    root["active_poll_test"]["connection_eligibility"] = g_activePollTestEligibility;
+                }
+                if (!active_polling_connections().empty()) {
+                    root["mode"] = "active_poll_test";
+                    root["polling_unchanged"] = false;
+                }
+                res.set_content(root.dump(), "application/json");
+            });
+
 		            // /metrics (poll performance counters)
 		            svr.Get("/metrics", [&](const httplib::Request &req, httplib::Response &res) {
 		                json root;
+                    std::unordered_map<std::string, PollingActivitySummary> activityByConnection;
+                    {
+                        std::lock_guard<std::mutex> lock(driverMutex);
+                        for (const auto &driver : drivers)
+                            if (active_poll_test_enabled(driver, mqttMode))
+                                activityByConnection.emplace(driver.conn.id, polling_activity_summary(driver, tagTable));
+                    }
 		                const bool includeBlocks = !(req.has_param("include_blocks") &&
 		                    (req.get_param_value("include_blocks") == "0" || req.get_param_value("include_blocks") == "false"));
 		                auto now_sys = std::chrono::system_clock::now();
@@ -22627,7 +23406,12 @@ window.addEventListener("load", startAutoRefresh);
 		                        j["blocks_omitted"] = true;
 		                    }
 
-		                    root["connections"][connId] = std::move(j);
+		                    const auto activity = activityByConnection.find(connId);
+                            if (activity != activityByConnection.end()) {
+                                add_polling_activity_json(j, activity->second);
+                                j.update(m->active_sweep.snapshot());
+                            }
+                            root["connections"][connId] = std::move(j);
 		                }
 
 		                res.set_content(root.dump(2), "application/json");
@@ -22686,6 +23470,9 @@ window.addEventListener("load", startAutoRefresh);
 		                if (r.has_snapshot) {
 		                    const TagSnapshot &snap = r.snap;
 		                    jt["quality"] = snap.quality;
+                            jt["polling_state"] = snapshot_polling_state(snap);
+                            if (r.enabled && snap.polling_state != PollCacheState::Active)
+                                jt["reason"] = snapshot_polling_state(snap);
 
 		                    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
 		                        snap.timestamp.time_since_epoch()
@@ -23195,11 +23982,76 @@ window.addEventListener("load", startAutoRefresh);
 							? std::min(rows.size(), begin + static_cast<size_t>(limit))
 							: rows.size();
 						for (size_t i = begin; i < end; ++i) {
+                            if (!filterConn.empty() && !filterTag.empty() && !rows[i].system)
+                                g_tagDemand.http_read(ua_tag_nodeid_string(rows[i].connection_id, rows[i].name));
 							root["tags"].push_back(tag_row_to_json(rows[i]));
 						}
 
 		                res.set_content(root.dump(), "application/json");
 		            });
+
+            // Opt-in verification only; normal reads and polling schedules are unchanged.
+            svr.Post("/polling/fresh-read", [&, tag_row_to_json](const httplib::Request &req, httplib::Response &res) {
+                const auto requestedAt = PollReadStamp::Clock::now();
+                try {
+                    const json body = json::parse(req.body);
+                    if (!body.contains("tags") || !body["tags"].is_array() ||
+                        body["tags"].empty() || body["tags"].size() > 64)
+                        throw std::runtime_error("tags must contain 1 to 64 exact tag references");
+                    auto boundedMs = [&](const char *key, int fallback, int maximum) {
+                        if (!body.contains(key)) return fallback;
+                        const auto &value = body[key];
+                        if (!value.is_number_integer() || value < 0 || value > maximum)
+                            throw std::runtime_error(std::string(key) + " is outside its integer range");
+                        return value.get<int>();
+                    };
+                    const int maxAge = boundedMs("max_age_ms", 0, 60000);
+                    const int waitMs = boundedMs("timeout_ms", 1000, 5000);
+                    std::vector<std::pair<std::string, std::string>> refs;
+                    for (const auto &item : body["tags"]) {
+                        const auto cid = item.at("connection_id").get<std::string>();
+                        const auto name = item.at("name").get<std::string>();
+                        if (cid.empty() || name.empty()) throw std::runtime_error("empty tag reference");
+                        refs.emplace_back(cid, name);
+                    }
+                    const auto deadline = requestedAt + std::chrono::milliseconds(waitMs);
+                    json rows;
+                    bool ready = false;
+                    do {
+                        rows = json::array();
+                        ready = true;
+                        bool pending = false;
+                        {
+                            std::lock_guard<std::mutex> lock(driverMutex);
+                            for (const auto &ref : refs) {
+                                json row = {{"connection_id", ref.first}, {"name", ref.second}, {"fresh", false}};
+                                const auto check = check_fresh_input(drivers, tagTable, tagRuntimeIndex,
+                                    ref.first, ref.second, requestedAt, maxAge);
+                                const bool fresh = check.reason == "fresh";
+                                row["fresh"] = fresh;
+                                row["reason"] = check.reason == "waiting" ? "timeout" : check.reason;
+                                if (fresh) {
+                                    TagRow value;
+                                    value.connection_id = ref.first; value.name = ref.second;
+                                    value.datatype = check.datatype; value.enabled = true;
+                                    value.handle_ok = true; value.has_snapshot = true;
+                                    value.connection_name = check.connection_name; value.writable = check.writable;
+                                    value.snap = check.sample; row["sample"] = tag_row_to_json(value);
+                                } else if (check.reason == "waiting") pending = true;
+                                if (!row["fresh"].get<bool>()) ready = false;
+                                rows.push_back(std::move(row));
+                            }
+                        }
+                        if (ready || !pending || PollReadStamp::Clock::now() >= deadline) break;
+                        std::this_thread::sleep_until(std::min(deadline,
+                            PollReadStamp::Clock::now() + std::chrono::milliseconds(20)));
+                    } while (true);
+                    res.set_content(json{{"ok", ready}, {"polling_unchanged", active_polling_connections().empty()}, {"tags", rows}}.dump(), "application/json");
+                } catch (const std::exception &ex) {
+                    res.status = 400;
+                    res.set_content(json{{"ok", false}, {"error", ex.what()}}.dump(), "application/json");
+                }
+            });
 
 		            // /tags/query
 		            // Body: { "tags": [ { "connection_id": "...", "name": "..." }, ... ] }
@@ -23359,6 +24211,7 @@ window.addEventListener("load", startAutoRefresh);
 		                            row.connection_name = driver.conn.name;
 		                            row.name = t.cfg.logical_name;
 		                            row.datatype = t.out_datatype.empty() ? t.cfg.datatype : t.out_datatype;
+                            g_tagDemand.http_read(ua_tag_nodeid_string(driver.conn.id, t.cfg.logical_name));
 		                            row.enabled = t.cfg.enabled;
 		                            row.writable = t.cfg.writable;
 		                            row.has_snapshot = (snapshot != tagTable.end());
@@ -23456,6 +24309,8 @@ window.addEventListener("load", startAutoRefresh);
 	                    res.set_content(err.dump(2), "application/json");
 	                    return;
 	                }
+
+                    g_tagDemand.http_read(ua_tag_nodeid_string(conn_id, tag_name));
 
 	                if (handle < 0) {
 	                    res.status = 503;
@@ -23845,6 +24700,7 @@ window.addEventListener("load", startAutoRefresh);
 	                resp["capabilities"]["opcua_encryption"] = true;
 	                resp["capabilities"]["opcua_encryption_backend"] = "openssl";
 	                resp["capabilities"]["opcua_allow_unsecured_clients"] = opcuaAllowUnsecuredClients;
+                    resp["capabilities"]["opcua_verified_reads"] = g_nativeVerifiedReads;
 	                resp["capabilities"]["opcua_require_login"] = opcuaRequireLogin;
 
 					auto now = std::chrono::system_clock::now();
@@ -23856,6 +24712,7 @@ window.addEventListener("load", startAutoRefresh);
 						int degraded_count = 0;
 						int error_count = 0;
 						int stalled_connection_count = 0;
+                        int intentionally_idle_count = 0;
 						int64_t runtime_last_read_age_ms = -1;
 						json conn_obj = json::object();
 
@@ -23879,6 +24736,10 @@ window.addEventListener("load", startAutoRefresh);
 									continue;
 								}
 								json dstatus;
+                                const bool demandDriven = active_poll_test_enabled(driver, mqttMode);
+                                const auto activity = demandDriven ? polling_activity_summary(driver, tagTable) : PollingActivitySummary{};
+                                const bool intentionallyIdle = demandDriven && activity.idle();
+                                if (intentionallyIdle) ++intentionally_idle_count;
 
 								if (driver.tags.empty()) {
 									dstatus["status"] = "error";
@@ -23960,7 +24821,7 @@ window.addEventListener("load", startAutoRefresh);
 								runtimeIssue = connection_runtime_issue(connectionMetrics);
 
 								large_time_sliced = (driver.conn.polling_mode == "time_sliced" || driver.tags.size() >= 500);
-								if (large_time_sliced) {
+								if (large_time_sliced && !demandDriven) {
                                     const uint64_t effective_tag_count = poll_tag_count > 0
                                         ? poll_tag_count
                                         : static_cast<uint64_t>(driver.tags.size());
@@ -23985,6 +24846,7 @@ window.addEventListener("load", startAutoRefresh);
 									continue; // no snapshot yet
 								}
 
+                                if (demandDriven && it->second.polling_state == PollCacheState::Inactive) continue;
 								++total_seen;
 								const TagSnapshot &snap = it->second;
 
@@ -24026,14 +24888,14 @@ window.addEventListener("load", startAutoRefresh);
 								const int64_t last_read_age_ms = (metric_last_read_ts_ms >= 0)
 									? (now_epoch_ms - metric_last_read_ts_ms)
 									: -1;
-								if (last_read_age_ms >= 0 && (runtime_last_read_age_ms < 0 || last_read_age_ms < runtime_last_read_age_ms)) {
+								if (!intentionallyIdle && last_read_age_ms >= 0 && (runtime_last_read_age_ms < 0 || last_read_age_ms < runtime_last_read_age_ms)) {
 									runtime_last_read_age_ms = last_read_age_ms;
 								}
 								const int64_t stall_budget_ms = std::max<int64_t>(
 									60000,
 									expected_sweep_ms > 0 ? expected_sweep_ms * 3 : freshness_budget_ms
 								);
-								const bool connection_stalled = (last_read_age_ms >= 0 && last_read_age_ms > stall_budget_ms);
+								const bool connection_stalled = !intentionallyIdle && (last_read_age_ms >= 0 && last_read_age_ms > stall_budget_ms);
 								if (connection_stalled) stalled_connection_count++;
 								const bool transient_full_bad_snapshot =
 									(good_recent == 0 &&
@@ -24046,7 +24908,22 @@ window.addEventListener("load", startAutoRefresh);
 										dstatus["status"] = "error";
 										dstatus["reason"] = "no valid tag handles";
 										++error_count;
-									} else if (total_seen == 0) {
+									} else if (intentionallyIdle) {
+                                        dstatus["status"] = "ok";
+                                        dstatus["reason"] = "polling idle (no active demand)";
+                                        {
+                                            std::lock_guard<std::mutex> metricsLock(g_metricsMutex);
+                                            const auto metric = g_connPollMetrics.find(driver.conn.id);
+                                            if (metric != g_connPollMetrics.end()) {
+                                                dstatus["communication"] = metric->second->idle_probe.snapshot();
+                                                if (dstatus["communication"].value("consecutive_failures", 0u) >= 3) {
+                                                    dstatus["status"] = "error";
+                                                    dstatus["reason"] = "PLC communication checks failed; polling idle";
+                                                }
+                                            }
+                                        }
+                                        if (dstatus["status"] == "error") ++error_count; else ++ok_count;
+                                    } else if (total_seen == 0) {
 										dstatus["status"] = "error";
 										dstatus["reason"] = "no tag snapshots yet";
 										++error_count;
@@ -24146,7 +25023,11 @@ window.addEventListener("load", startAutoRefresh);
 									dstatus["reason"] = runtimeIssue;
 								}
 
-								conn_obj[driver.conn.id] = dstatus;
+								if (demandDriven) {
+                                    add_polling_activity_json(dstatus, activity);
+                                    if (connectionMetrics) dstatus.update(connectionMetrics->active_sweep.snapshot());
+                                }
+                                conn_obj[driver.conn.id] = dstatus;
 							}
 						}
 
@@ -24168,7 +25049,10 @@ window.addEventListener("load", startAutoRefresh);
 					watchdog["ws_enabled"] = ws_is_enabled();
 					watchdog["connections_stalled"] = stalled_connection_count;
 					watchdog["runtime_last_read_age_ms"] = runtime_last_read_age_ms >= 0 ? json(runtime_last_read_age_ms) : json(nullptr);
-					if (runtime_last_read_age_ms < 0) {
+					if (!conn_obj.empty() && static_cast<size_t>(intentionally_idle_count) == conn_obj.size()) {
+                        watchdog["status"] = "ok";
+                        watchdog["reason"] = "all connections idle (no active demand)";
+                    } else if (runtime_last_read_age_ms < 0) {
 						watchdog["status"] = "unknown";
 						watchdog["reason"] = "no runtime reads observed yet";
 					} else if (runtime_last_read_age_ms <= 15000) {
@@ -28297,6 +29181,7 @@ window.addEventListener("load", startAutoRefresh);
 	            bool poller_owns_handle = false;
 	            size_t sweep_index = 0;
 	            bool handle_pending_observed = false;
+                bool demand_active = true;
                 ModbusReadRecovery modbus_recovery;
 	            std::chrono::steady_clock::time_point next_poll;
 	            std::chrono::steady_clock::time_point handle_pending_since{};
@@ -28323,6 +29208,8 @@ window.addEventListener("load", startAutoRefresh);
 	        };
 
 	            struct PollerSpec {
+                uint64_t freshness_epoch = 0;
+                bool active_poll_test = false;
 	            uint64_t gen = 0;
 	            std::shared_ptr<std::atomic<bool>> stop_requested;
 	            ConnectionConfig conn;
@@ -28360,6 +29247,8 @@ window.addEventListener("load", startAutoRefresh);
 
 	        auto startPollers = [&](uint64_t gen, const std::string &onlyConnId = std::string{}) {
 	            std::vector<PollerSpec> specs;
+                std::vector<std::pair<TagSnapshot, TagConfig>> lifecycleUpdates;
+                std::unordered_map<std::string, uint64_t> lifecycleEpochs;
 	            std::shared_ptr<std::atomic<bool>> targetStop;
 
 	            if (!onlyConnId.empty()) {
@@ -28371,10 +29260,29 @@ window.addEventListener("load", startAutoRefresh);
 
 	            {
 	                std::lock_guard<std::mutex> lock(driverMutex);
-		                for (const auto &d : drivers) {
+		                for (auto &d : drivers) {
 		                    if (!onlyConnId.empty() && d.conn.id != onlyConnId) continue;
+                        if (d.conn.driver == "ab_eip" && !is_memory_connection_id(d.conn.id)) {
+                            for (const auto &tag : d.tags) {
+                                // Array roots are transport/metadata nodes, not scalar cache rows.
+                                if (is_memory_tag(tag.cfg) || (tag.cfg.elem_count > 1 &&
+                                    tag.cfg.source_tag.empty() && tag.poll_source.empty())) continue;
+                                lifecycleEpochs[d.conn.id] = d.freshness_epoch;
+                                lifecycleUpdates.emplace_back(transition_poll_cache(d, tag, tagTable,
+                                    tag.cfg.enabled, true), tag.cfg);
+                            }
+                        }
 		                    PollerSpec baseSpec;
 		                    baseSpec.gen = gen;
+                            baseSpec.freshness_epoch = d.freshness_epoch;
+                            baseSpec.active_poll_test = active_poll_test_enabled(d, mqttMode);
+                            {
+                                std::lock_guard<std::mutex> lock(g_activePollTestMetricsMutex);
+                                g_activePollTestEligibility[d.conn.id] = {{"enabled", baseSpec.active_poll_test},
+                                    {"reason", baseSpec.active_poll_test ? "active_tags_enabled" :
+                                        (!connection_requests_active_polling(d.conn) ? "disabled_for_connection" :
+                                         (mqttMode ? "mqtt_active" : "unsupported_driver"))}};
+                            }
 		                    baseSpec.stop_requested = onlyConnId.empty()
 		                        ? std::make_shared<std::atomic<bool>>(false)
 		                        : targetStop;
@@ -28437,6 +29345,9 @@ window.addEventListener("load", startAutoRefresh);
 	                    if (baseSpec.metrics) {
 	                        baseSpec.metrics->poll_tag_count.store(static_cast<uint64_t>(totalTags), std::memory_order_relaxed);
 	                        reset_connection_sweep_tracking(baseSpec.metrics, static_cast<uint64_t>(totalTags));
+                            std::set<std::string> activeNames;
+                            for (const auto &item : baseSpec.tags) activeNames.insert(item.cfg.logical_name);
+                            baseSpec.metrics->active_sweep.configure(std::move(activeNames), baseSpec.freshness_epoch);
 	                        reset_connection_block_metrics(baseSpec.metrics, baseSpec.tags);
 	                        size_t deferredTagCount = 0;
 	                        for (const auto &it : baseSpec.tags) {
@@ -28452,6 +29363,8 @@ window.addEventListener("load", startAutoRefresh);
 		                    for (int lane = 0; lane < laneCount; ++lane) {
 	                        PollerSpec laneSpec;
 	                        laneSpec.gen = baseSpec.gen;
+                            laneSpec.freshness_epoch = baseSpec.freshness_epoch;
+                            laneSpec.active_poll_test = baseSpec.active_poll_test;
 	                        laneSpec.stop_requested = baseSpec.stop_requested;
 	                        laneSpec.conn = baseSpec.conn;
 	                        laneSpec.conn.poll_lanes = laneCount;
@@ -28481,7 +29394,14 @@ window.addEventListener("load", startAutoRefresh);
 
 	            const bool doConsolePrint = (!httpMode && !opcuaMode && !mqttMode);
 
-		            for (auto &spec : specs) {
+	                for (const auto &update : lifecycleUpdates) {
+                    ws_notify_tag_update(update.first, update.second);
+                    if (g_uaServer) {
+                        std::lock_guard<std::mutex> lock(uaQueueMutex);
+                        uaQueue.push_back(UaUpdate{update.first.connection_id, update.first.logical_name, update.first, lifecycleEpochs.at(update.first.connection_id)});
+                    }
+                }
+	            for (auto &spec : specs) {
 		                if (spec.tags.empty()) {
 		                    continue;
 		                }
@@ -28795,20 +29715,64 @@ window.addEventListener("load", startAutoRefresh);
                                  logixCpu == "clgx" || logixCpu == "compactlogix");
                             // Called only with lifecycle and connection gates held. Cache values,
                             // not handles: a writer can change a handle before publication.
+                            auto demandAllows = [&](size_t index) {
+                                return !spec.active_poll_test || g_demandSchedulerPreview.should_poll(
+                                    spec.conn.id, spec.tags[index].cfg.logical_name, spec.freshness_epoch);
+                            };
+                            auto transitionDemand = [&](size_t index, bool active) {
+                                if (spec.metrics) spec.metrics->active_sweep.set_active(
+                                    spec.tags[index].cfg.logical_name, active, spec.freshness_epoch);
+                                std::vector<std::pair<TagSnapshot, TagConfig>> updates;
+                                {
+                                    std::lock_guard<std::mutex> lock(driverMutex);
+                                    if (spec.stop_requested->load() || g_configGeneration.load() != spec.gen) return;
+                                    for (auto &driver : drivers) {
+                                        if (driver.conn.id != spec.conn.id || driver.freshness_epoch != spec.freshness_epoch) continue;
+                                        std::set<std::string> affected{spec.tags[index].cfg.logical_name};
+                                        bool changed = true;
+                                        while (changed) {
+                                            changed = false;
+                                            for (const auto &tag : driver.tags) {
+                                                const auto &parent = tag.poll_source.empty() ? tag.cfg.source_tag : tag.poll_source;
+                                                if (!parent.empty() && affected.count(parent))
+                                                    changed = affected.insert(tag.cfg.logical_name).second || changed;
+                                            }
+                                        }
+                                        for (const auto &tag : driver.tags) {
+                                            if (!affected.count(tag.cfg.logical_name) || !tag.cfg.enabled || is_memory_tag(tag.cfg)) continue;
+                                            if (tag.cfg.elem_count > 1 && tag.poll_source.empty() && tag.cfg.source_tag.empty()) continue;
+                                            updates.emplace_back(transition_poll_cache(driver, tag, tagTable, active), tag.cfg);
+                                        }
+                                        break;
+                                    }
+                                }
+                                // Discard completions prefetched before a suspend/wake boundary.
+                                logixPrefetch.erase(index);
+                                for (const auto &update : updates) {
+                                    ws_notify_tag_update(update.first, update.second);
+                                    if (g_uaServer) {
+                                        std::lock_guard<std::mutex> lock(uaQueueMutex);
+                                        uaQueue.push_back(UaUpdate{update.first.connection_id, update.first.logical_name, update.first, spec.freshness_epoch});
+                                    }
+                                }
+                            };
                             auto prefetchLogixDue = [&](size_t requested, auto dueNow) {
-                                if (!batchLogix || logixPrefetch.count(requested)) return;
+                                if (!batchLogix || !demandAllows(requested) || logixPrefetch.count(requested)) return;
                                 std::vector<size_t> indices;
                                 indices.push_back(requested);
                                 for (size_t i = 0; i < spec.tags.size() && indices.size() < static_cast<size_t>(batchSize); ++i) {
                                     const auto &candidate = spec.tags[i];
-                                    if (i != requested && candidate.next_poll <= dueNow &&
+                                    if (i != requested && candidate.demand_active && demandAllows(i) && candidate.next_poll <= dueNow &&
                                         !logixPrefetch.count(i) && candidate.handle >= 0 &&
                                         !candidate.handle_deferred && plc_tag_status(candidate.handle) == PLCTAG_STATUS_OK)
                                         indices.push_back(i);
                                 }
                                 async_poll_batch(indices, spec.conn.default_read_ms,
                                     PLCTAG_STATUS_PENDING, PLCTAG_ERR_TIMEOUT,
-                                    [&](size_t i) { return plc_tag_read(spec.tags[i].handle, 0); },
+                                    [&](size_t i) {
+                                        if (spec.active_poll_test) record_active_poll_test_read(spec.conn.id, spec.tags[i].cfg.logical_name);
+                                        return plc_tag_read(spec.tags[i].handle, 0);
+                                    },
                                     [&](size_t i) { return plc_tag_status(spec.tags[i].handle); },
                                     [&](size_t i) { plc_tag_abort(spec.tags[i].handle); },
                                     [&](size_t i, int rc, auto began) {
@@ -28875,6 +29839,30 @@ window.addEventListener("load", startAutoRefresh);
 
 								heap.pop();
 								auto &t = spec.tags[top.idx];
+
+                                const bool demanded = demandAllows(top.idx);
+                                if (demanded != t.demand_active) {
+                                    transitionDemand(top.idx, demanded);
+                                    t.demand_active = demanded;
+                                }
+                                if (!demanded) {
+                                    if (spec.metrics && t.handle >= 0 && spec.metrics->idle_probe.claim(t.cfg.logical_name)) {
+                                        std::shared_lock<std::shared_mutex> lifecycle;
+                                        if (g_plcMutex) lifecycle = std::shared_lock<std::shared_mutex>(*g_plcMutex);
+                                        auto gate = connection_plc_mutex(spec.conn.id);
+                                        std::shared_lock<WriterPrioritySharedMutex> connectionLock(*gate);
+                                        if (!spec.stop_requested->load() && g_configGeneration.load() == spec.gen) {
+                                            const int rc = plc_tag_read(t.handle, spec.conn.default_read_ms);
+                                            spec.metrics->idle_probe.completed(t.cfg.logical_name, rc == PLCTAG_STATUS_OK,
+                                                rc == PLCTAG_ERR_NOT_FOUND || rc == PLCTAG_ERR_BAD_PARAM);
+                                        }
+                                    }
+                                    logixPrefetch.erase(top.idx);
+                                    t.next_poll = nowSteady + std::chrono::milliseconds(100);
+                                    heap.push(HeapItem{t.next_poll, top.idx});
+                                    g_activePollTestSkips.fetch_add(1, std::memory_order_relaxed);
+                                    continue;
+                                }
 
 								int scan_ms = t.cfg.scan_ms;
 								if (scan_ms <= 0) scan_ms = 1000;
@@ -29055,9 +30043,11 @@ window.addEventListener("load", startAutoRefresh);
                                             t0 = prefetchedLogix->second.started;
                                             t1 = prefetchedLogix->second.finished;
                                         } else {
+                                            if (spec.active_poll_test) record_active_poll_test_read(spec.conn.id, t.cfg.logical_name);
                                             status = plc_tag_read(t.handle, spec.conn.default_read_ms);
                                             t1 = std::chrono::steady_clock::now();
                                         }
+                                        snap.poll_read = {t0, t1, spec.freshness_epoch};
                                                 if (modbusRecovery) {
                                                     t.modbus_recovery.completed(status == PLCTAG_STATUS_OK, t1);
                                                     if (status == PLCTAG_STATUS_OK) publishReadyDeferredHandle(t);
@@ -29088,8 +30078,13 @@ window.addEventListener("load", startAutoRefresh);
 		                                }
 		                                record_connection_sweep_progress(spec.metrics, t.sweep_index, spec.total_tag_count);
 
+                                        if (spec.active_poll_test && spec.metrics)
+                                            spec.metrics->active_sweep.completed(t.cfg.logical_name, spec.freshness_epoch, t0, t1);
+                                        if (status == PLCTAG_STATUS_OK && spec.metrics)
+                                            spec.metrics->idle_probe.good(t.cfg.logical_name, t1);
                                         if (prefetchedLogix != logixPrefetch.end()) {
                                             snap = std::move(prefetchedLogix->second.snapshot);
+                                            snap.poll_read = {t0, t1, spec.freshness_epoch};
                                             elemSnaps = std::move(prefetchedLogix->second.elements);
                                             logixPrefetch.erase(prefetchedLogix);
                                         } else if (status == PLCTAG_STATUS_OK) {
@@ -29165,6 +30160,11 @@ window.addEventListener("load", startAutoRefresh);
 		                                    continue;
 	                                }
 
+                                    auto applyLifecycle = [&](TagSnapshot &sample) {
+                                        for (auto &driver : drivers) {
+                                            if (driver.conn.id == spec.conn.id) { apply_poll_cache_gate(driver, sample); break; }
+                                        }
+                                    };
 	                                auto itPrev = tagTable.find(key);
 	                                if (itPrev != tagTable.end()) {
 	                                    prevSnap = itPrev->second;
@@ -29186,13 +30186,16 @@ window.addEventListener("load", startAutoRefresh);
 	                                        s.datatype      = t.out_datatype.empty() ? t.cfg.datatype : t.out_datatype;
 	                                        s.timestamp     = std::chrono::system_clock::now();
 	                                        s.quality       = 0;
-	                                        snap = s;
+	                                        s.polling_state = PollCacheState::Active;
+                                            applyLifecycle(s);
+                                            snap = s;
 	                                    } else {
-	                                        tagTable[key] = snap;
+	                                        applyLifecycle(snap);
+                                            tagTable[key] = snap;
 	                                    }
 
 	                                    if (ws_is_enabled()) {
-	                                        doWsTagUpdate = !hadPrev || !snapshot_values_equal(snap, prevSnap);
+	                                        doWsTagUpdate = !hadPrev || !snapshot_updates_equal(snap, prevSnap);
 	                                    }
 
 		                                    if (!g_alarms.empty()) {
@@ -29220,6 +30223,8 @@ window.addEventListener("load", startAutoRefresh);
 		                                            dsnap.datatype = "bool";
 		                                            dsnap.timestamp = snap.timestamp;
 		                                            dsnap.quality = snap.quality;
+                                                dsnap.polling_state = snap.polling_state;
+                                                dsnap.poll_read = snap.poll_read;
 		                                            bool bitVal = false;
 		                                            if (!extract_bit_from_snapshot(snap, dcfg.bit, bitVal)) {
 		                                                dsnap.quality = 0;
@@ -29230,11 +30235,12 @@ window.addEventListener("load", startAutoRefresh);
 		                                            }
 		                                            dsnap.value = bitVal;
 
-		                                            tagTable[dkey] = dsnap;
+		                                            applyLifecycle(dsnap);
+                                                tagTable[dkey] = dsnap;
 		                                            a.snap = dsnap;
 
 		                                            if (ws_is_enabled()) {
-		                                                a.doWsTagUpdate = !a.hadPrev || !snapshot_values_equal(a.snap, a.prev);
+		                                                a.doWsTagUpdate = !a.hadPrev || !snapshot_updates_equal(a.snap, a.prev);
 		                                            }
 
 		                                            if (!g_alarms.empty()) {
@@ -29262,7 +30268,7 @@ window.addEventListener("load", startAutoRefresh);
 		                                                }
 		                                            }
 
-		                                            if (g_uaServer && dsnap.quality == 1) {
+		                                            if (g_uaServer) {
 		                                                a.doUaUpdate = true;
 		                                            }
 
@@ -29290,6 +30296,8 @@ window.addEventListener("load", startAutoRefresh);
 		                                            dsnap.logical_name = acfg.cfg.logical_name;
 		                                            dsnap.timestamp = snap.timestamp;
 		                                            dsnap.quality = snap.quality;
+                                                dsnap.polling_state = snap.polling_state;
+                                                dsnap.poll_read = snap.poll_read;
 
 		                                            const std::string outDt = acfg.out_datatype.empty() ? acfg.cfg.datatype : acfg.out_datatype;
 		                                            dsnap.datatype = outDt;
@@ -29349,11 +30357,12 @@ window.addEventListener("load", startAutoRefresh);
 		                                                }
 		                                            }
 
-		                                            tagTable[dkey] = dsnap;
+		                                            applyLifecycle(dsnap);
+                                                tagTable[dkey] = dsnap;
 		                                            a.snap = dsnap;
 
 		                                            if (ws_is_enabled()) {
-		                                                a.doWsTagUpdate = !a.hadPrev || !snapshot_values_equal(a.snap, a.prev);
+		                                                a.doWsTagUpdate = !a.hadPrev || !snapshot_updates_equal(a.snap, a.prev);
 		                                            }
 
 		                                            if (!g_alarms.empty()) {
@@ -29381,7 +30390,7 @@ window.addEventListener("load", startAutoRefresh);
 		                                                }
 		                                            }
 
-		                                            if (g_uaServer && dsnap.quality == 1) {
+		                                            if (g_uaServer) {
 		                                                a.doUaUpdate = true;
 		                                            }
 
@@ -29413,14 +30422,19 @@ window.addEventListener("load", startAutoRefresh);
 	                                            s.datatype = t.out_datatype.empty() ? t.cfg.datatype : t.out_datatype;
 	                                            s.timestamp = ts;
 	                                            s.quality = 0;
-	                                            a.snap = s;
+	                                            s.polling_state = PollCacheState::Active;
+                                            applyLifecycle(s);
+                                            a.snap = s;
 	                                        } else {
-	                                            tagTable[ekey] = elemSnaps[static_cast<size_t>(i)];
+	                                            // Every element carries evidence from the one root read.
+                                            elemSnaps[static_cast<size_t>(i)].poll_read = snap.poll_read;
+                                            applyLifecycle(elemSnaps[static_cast<size_t>(i)]);
+                                            tagTable[ekey] = elemSnaps[static_cast<size_t>(i)];
 	                                            a.snap = elemSnaps[static_cast<size_t>(i)];
 	                                        }
 
 	                                        if (ws_is_enabled()) {
-	                                            a.doWsTagUpdate = !a.hadPrev || !snapshot_values_equal(a.snap, a.prev);
+	                                            a.doWsTagUpdate = !a.hadPrev || !snapshot_updates_equal(a.snap, a.prev);
 	                                        }
 
 	                                        if (!g_alarms.empty()) {
@@ -29447,7 +30461,7 @@ window.addEventListener("load", startAutoRefresh);
 	                                            }
 	                                        }
 
-	                                        if (g_uaServer && a.snap.quality == 1) {
+	                                        if (g_uaServer) {
 	                                            a.doUaUpdate = true;
 	                                        }
 
@@ -29472,6 +30486,8 @@ window.addEventListener("load", startAutoRefresh);
 	                                                dsnap.datatype = "bool";
 	                                                dsnap.timestamp = a.snap.timestamp;
 	                                                dsnap.quality = a.snap.quality;
+                                                dsnap.polling_state = a.snap.polling_state;
+                                                dsnap.poll_read = a.snap.poll_read;
 	                                                bool bitVal = false;
 	                                                if (!extract_bit_from_snapshot(a.snap, dcfg.bit, bitVal)) {
 	                                                    dsnap.quality = 0;
@@ -29482,11 +30498,12 @@ window.addEventListener("load", startAutoRefresh);
 	                                                }
 	                                                dsnap.value = bitVal;
 
-	                                                tagTable[dkey] = dsnap;
+	                                                applyLifecycle(dsnap);
+                                                tagTable[dkey] = dsnap;
 	                                                da.snap = dsnap;
 
 	                                                if (ws_is_enabled()) {
-	                                                    da.doWsTagUpdate = !da.hadPrev || !snapshot_values_equal(da.snap, da.prev);
+	                                                    da.doWsTagUpdate = !da.hadPrev || !snapshot_updates_equal(da.snap, da.prev);
 	                                                }
 
 	                                                if (!g_alarms.empty()) {
@@ -29513,7 +30530,7 @@ window.addEventListener("load", startAutoRefresh);
 	                                                    }
 	                                                }
 
-	                                                if (g_uaServer && dsnap.quality == 1) {
+	                                                if (g_uaServer) {
 	                                                    da.doUaUpdate = true;
 	                                                }
 
@@ -29541,6 +30558,8 @@ window.addEventListener("load", startAutoRefresh);
 	                                                dsnap.logical_name = acfg.cfg.logical_name;
 	                                                dsnap.timestamp = a.snap.timestamp;
 	                                                dsnap.quality = a.snap.quality;
+                                                dsnap.polling_state = a.snap.polling_state;
+                                                dsnap.poll_read = a.snap.poll_read;
 
 	                                                const std::string outDt = acfg.out_datatype.empty() ? acfg.cfg.datatype : acfg.out_datatype;
 	                                                dsnap.datatype = outDt;
@@ -29600,11 +30619,12 @@ window.addEventListener("load", startAutoRefresh);
 	                                                    }
 	                                                }
 
-	                                                tagTable[dkey] = dsnap;
+	                                                applyLifecycle(dsnap);
+                                                tagTable[dkey] = dsnap;
 	                                                da.snap = dsnap;
 
 	                                                if (ws_is_enabled()) {
-	                                                    da.doWsTagUpdate = !da.hadPrev || !snapshot_values_equal(da.snap, da.prev);
+	                                                    da.doWsTagUpdate = !da.hadPrev || !snapshot_updates_equal(da.snap, da.prev);
 	                                                }
 
 	                                                if (!g_alarms.empty()) {
@@ -29631,7 +30651,7 @@ window.addEventListener("load", startAutoRefresh);
 	                                                    }
 	                                                }
 
-	                                                if (g_uaServer && dsnap.quality == 1) {
+	                                                if (g_uaServer) {
 	                                                    da.doUaUpdate = true;
 	                                                }
 
@@ -29702,7 +30722,7 @@ window.addEventListener("load", startAutoRefresh);
 		                                    if (mqttMode) {
 		                                        doMqttPublish = true;
 		                                    }
-		                                    if (g_uaServer && snap.quality == 1) {
+		                                    if (g_uaServer) {
 		                                        doUaUpdate = true;
 		                                    }
 		                                }
@@ -29727,7 +30747,7 @@ window.addEventListener("load", startAutoRefresh);
 		                                    }
 		                                    if (a.doUaUpdate) {
 		                                        std::lock_guard<std::mutex> ql(uaQueueMutex);
-		                                        uaQueue.push_back(UaUpdate{spec.conn.id, a.cfg.logical_name, a.snap.value});
+		                                        uaQueue.push_back(UaUpdate{spec.conn.id, a.cfg.logical_name, a.snap, spec.freshness_epoch});
 		                                    }
 		                                    if (a.doMqttPublish) {
 		                                        std::lock_guard<std::mutex> ql(mqttQueueMutex);
@@ -29753,7 +30773,7 @@ window.addEventListener("load", startAutoRefresh);
 
 		                                if (a.doUaUpdate) {
 		                                    std::lock_guard<std::mutex> ql(uaQueueMutex);
-		                                    uaQueue.push_back(UaUpdate{spec.conn.id, a.cfg.logical_name, a.snap.value});
+		                                    uaQueue.push_back(UaUpdate{spec.conn.id, a.cfg.logical_name, a.snap, spec.freshness_epoch});
 		                                }
 
 		                                if (a.doMqttPublish) {
@@ -29772,7 +30792,7 @@ window.addEventListener("load", startAutoRefresh);
 
 	                                if (doUaUpdate) {
 	                                    std::lock_guard<std::mutex> ql(uaQueueMutex);
-	                                    uaQueue.push_back(UaUpdate{spec.conn.id, t.cfg.logical_name, snap.value});
+	                                    uaQueue.push_back(UaUpdate{spec.conn.id, t.cfg.logical_name, snap, spec.freshness_epoch});
 	                                }
 
 		                                if (doMqttPublish) {
@@ -30052,7 +31072,14 @@ window.addEventListener("load", startAutoRefresh);
 	        logicSchedulerThread.detach();
 
         std::unordered_map<std::string, ModbusConnectionRecovery> modbusConnectionRecovery;
-	        while (true) {
+	        auto lastDemandPlanning = DemandSchedulerPreview::Clock::time_point{};
+        while (true) {
+            const auto planningNow = DemandSchedulerPreview::Clock::now();
+            if (lastDemandPlanning == DemandSchedulerPreview::Clock::time_point{} ||
+                planningNow - lastDemandPlanning >= std::chrono::milliseconds(200)) {
+                g_demandSchedulerPreview.refresh(collect_polling_demand(drivers, driverMutex));
+                lastDemandPlanning = planningNow;
+            }
             // Snapshot counters without nesting runtime locks under the reload lock.
             std::vector<std::tuple<std::string, uint64_t, uint64_t>> modbusCounters;
             {
@@ -30122,6 +31149,15 @@ window.addEventListener("load", startAutoRefresh);
 		                    stopPollers();
 		                }
 
+                    // Pollers are joined above. Remove their queued publications before
+                    // replacing bindings; unrelated connections retain their updates.
+                    {
+                        std::lock_guard<std::mutex> lock(uaQueueMutex);
+                        if (!targetedReload) uaQueue.clear();
+                        else uaQueue.erase(std::remove_if(uaQueue.begin(), uaQueue.end(), [&](const UaUpdate &update) {
+                            return update.conn_id == requestedTargetConn;
+                        }), uaQueue.end());
+                    }
 		                bool ok = false;
 		                std::string err;
 		                OpcUaSyncResult opcuaSync;
@@ -30140,8 +31176,15 @@ window.addEventListener("load", startAutoRefresh);
 			                    }
 			                    if (targetedReload) {
 			                        DriverContext newDriver;
-			                        bool hasDriver = false;
-			                        if (!load_single_driver_for_connection(newDriver, hasDriver, configDir, requestedTargetConn, err)) {
+                                bool hasDriver = false;
+                                bool previouslyConfigured = false;
+                                {
+                                    std::lock_guard<std::mutex> lock(driverMutex);
+                                    previouslyConfigured = std::any_of(drivers.begin(), drivers.end(), [&](const DriverContext &driver) {
+                                        return driver.conn.id == requestedTargetConn;
+                                    });
+                                }
+                                if (!load_single_driver_for_connection(newDriver, hasDriver, configDir, requestedTargetConn, err, previouslyConfigured)) {
 			                            if (err.empty()) err = "Connection reload failed (see server log for details).";
 			                        } else {
 			                            {
@@ -30160,9 +31203,8 @@ window.addEventListener("load", startAutoRefresh);
 			                                    drivers.push_back(std::move(newDriver));
 			                                }
 
-			                                const std::string prefix = requestedTargetConn + ":";
-			                                for (auto tt = tagTable.begin(); tt != tagTable.end();) {
-			                                    if (tt->first.rfind(prefix, 0) == 0) tt = tagTable.erase(tt);
+                                    for (auto tt = tagTable.begin(); tt != tagTable.end();) {
+                                        if (tt->second.connection_id == requestedTargetConn) tt = tagTable.erase(tt);
 			                                    else ++tt;
 			                                }
 			                                if (hasDriver && is_memory_connection_id(requestedTargetConn)) {
@@ -30203,7 +31245,12 @@ window.addEventListener("load", startAutoRefresh);
 			                                    } else {
 			                                        opcuaSync.attempted = true;
 			                                        opcuaSync.ok = true;
-			                                        opcuaSync.retired = 1;
+                                        opcuaSync.retired = 0;
+                                        for (auto &binding : g_uaBindings) {
+                                            if (binding.conn_id != requestedTargetConn || binding.retired) continue;
+                                            ua_retire_tag_binding(binding);
+                                            ++opcuaSync.retired;
+                                        }
 			                                        opcuaSync.full_rebuild_required = true;
 			                                        opcuaSync.message = "Connection removed; full rebuild required to remove OPC UA folder.";
 			                                    }
@@ -30220,6 +31267,11 @@ window.addEventListener("load", startAutoRefresh);
 			                                g_full_rebuild_required.store(rebuildRequired, std::memory_order_relaxed);
 			                                opcuaSync.full_rebuild_required = rebuildRequired;
 			                            }
+                                {
+                                    std::lock_guard<std::mutex> lock(g_activePollTestMetricsMutex);
+                                    g_activePollTestEligibility.erase(requestedTargetConn);
+                                    g_activePollTestReadStarts.erase(requestedTargetConn);
+                                }
 			                            ok = true;
 			                        }
 			                    } else {
@@ -30275,6 +31327,11 @@ window.addEventListener("load", startAutoRefresh);
 			                    std::cerr << "[reload] " << err << "\n";
 			                }
 
+                    if (!targetedReload) {
+                        std::lock_guard<std::mutex> lock(g_activePollTestMetricsMutex);
+                        g_activePollTestEligibility.clear();
+                        g_activePollTestReadStarts = json::object();
+                    }
 		                if (!targetedReload) {
 		                    std::lock_guard<std::mutex> mlock(g_metricsMutex);
 		                    g_connPollMetrics.clear();
@@ -30328,55 +31385,39 @@ window.addEventListener("load", startAutoRefresh);
 	                    local.swap(uaQueue);
 	                }
 
-	                for (const auto &u : local) {
+                    {
+                        std::lock_guard<std::mutex> lock(g_writeReadbackMutex);
+                        local.insert(local.begin(), g_writeReadbackUpdates.begin(), g_writeReadbackUpdates.end());
+                        g_writeReadbackUpdates.clear();
+                    }
+                    for (const auto &u : local) {
+                        {
+                            std::lock_guard<std::mutex> lock(driverMutex);
+                            if (!ua_publication_is_current(drivers, u)) continue;
+                            bool superseded = false;
+                            for (const auto &driver : drivers) {
+                                if (driver.conn.id != u.conn_id) continue;
+                                auto gate = driver.poll_gates.find(u.logical_name);
+                                if (u.snapshot.quality == 1 && gate != driver.poll_gates.end() &&
+                                    gate->second.quality(u.snapshot.poll_read, true) != PollReadGate::Quality::Good) superseded = true;
+                                const auto cached = tagTable.find(make_tag_key(u.conn_id, u.logical_name));
+                                if (u.snapshot.polling_state == PollCacheState::Waiting && cached != tagTable.end() &&
+                                    cached->second.quality == 1) superseded = true;
+                                break;
+                            }
+                            if (superseded) continue;
+                        }
 	                    auto itb = g_uaBindingIndex.find(ua_key(u.conn_id, u.logical_name));
 	                    if (itb == g_uaBindingIndex.end()) continue;
 	                    UaTagBinding &b = g_uaBindings[itb->second];
 	                    if (b.retired) continue;
 
-	                    UA_Variant value;
-	                    UA_Variant_init(&value);
-
-	                    std::visit([&](auto &&arg) {
-	                        using T = std::decay_t<decltype(arg)>;
-	                        if constexpr (std::is_same_v<T, bool>) {
-	                            UA_Boolean v = arg ? UA_TRUE : UA_FALSE;
-	                            UA_Variant_setScalar(&value, &v, &UA_TYPES[UA_TYPES_BOOLEAN]);
-	                        } else if constexpr (std::is_same_v<T, int16_t>) {
-	                            UA_Int16 v = arg;
-	                            UA_Variant_setScalar(&value, &v, &UA_TYPES[UA_TYPES_INT16]);
-	                        } else if constexpr (std::is_same_v<T, uint16_t>) {
-	                            UA_UInt16 v = arg;
-	                            UA_Variant_setScalar(&value, &v, &UA_TYPES[UA_TYPES_UINT16]);
-	                        } else if constexpr (std::is_same_v<T, int32_t>) {
-	                            UA_Int32 v = arg;
-	                            UA_Variant_setScalar(&value, &v, &UA_TYPES[UA_TYPES_INT32]);
-	                        } else if constexpr (std::is_same_v<T, uint32_t>) {
-	                            UA_UInt32 v = arg;
-	                            UA_Variant_setScalar(&value, &v, &UA_TYPES[UA_TYPES_UINT32]);
-	                        } else if constexpr (std::is_same_v<T, float>) {
-	                            UA_Float v = arg;
-	                            UA_Variant_setScalar(&value, &v, &UA_TYPES[UA_TYPES_FLOAT]);
-	                        } else if constexpr (std::is_same_v<T, double>) {
-	                            UA_Double v = arg;
-	                            UA_Variant_setScalar(&value, &v, &UA_TYPES[UA_TYPES_DOUBLE]);
-	                        } else if constexpr (std::is_same_v<T, std::string>) {
-	                            UA_String v = UA_STRING_ALLOC(arg.c_str());
-	                            UA_Variant_setScalarCopy(&value, &v, &UA_TYPES[UA_TYPES_STRING]);
-	                            UA_String_clear(&v);
-	                        }
-	                    }, u.value);
-
-	                    if (value.type) {
-	                        g_suppressOpcUaWriteCallback = true;
-	                        UA_StatusCode wst = UA_Server_writeValue(g_uaServer, b.nodeId, value);
-	                        g_suppressOpcUaWriteCallback = false;
-	                        if (wst != UA_STATUSCODE_GOOD) {
-	                            std::cerr << "OPC UA live: writeValue failed for ["
-	                                      << b.conn_id << "]." << b.logical_name
-	                                      << ": " << UA_StatusCode_name(wst) << "\n";
-	                        }
-	                    }
+                        const auto status = ua_snapshot_status(b, u.snapshot);
+                        const auto wst = ua_write_snapshot(g_uaServer, b.nodeId, u.snapshot, status);
+                        if (wst != UA_STATUSCODE_GOOD) {
+                            std::cerr << "OPC UA live: writeDataValue failed for [" << b.conn_id
+                                      << "]." << b.logical_name << ": " << UA_StatusCode_name(wst) << "\n";
+                        }
 	                }
 
 	                auto uaNow = std::chrono::steady_clock::now();
@@ -30488,6 +31529,47 @@ window.addEventListener("load", startAutoRefresh);
 
 	            if (g_uaServer) {
 	                UA_Server_run_iterate(g_uaServer, false);
+                if (g_nativeVerifiedReads) {
+                    std::vector<NativePendingRead> requests;
+                    { std::lock_guard<std::mutex> lock(g_nativeReadMutex);
+                      for (const auto &entry : g_nativeReads) requests.push_back(entry.second); }
+                    for (const auto &request : requests) {
+                        if (request.server != g_uaServer) continue;
+                        FreshReadCheck check;
+                        { std::lock_guard<std::mutex> lock(driverMutex);
+                          check = check_fresh_input(drivers, tagTable, tagRuntimeIndex,
+                              request.cid, request.name, request.requested, request.max_age, true); }
+                        if (check.reason == "waiting" && PollReadStamp::Clock::now() < request.deadline) continue;
+                        UA_DataValue result; UA_DataValue_init(&result);
+                        result.hasStatus = true;
+                        if (check.reason == "fresh") {
+                            UA_VariableAttributes attr = UA_VariableAttributes_default;
+                            if (ua_set_variable_attr_from_snapshot(attr, check.sample)) {
+                                result.value = attr.value; UA_Variant_init(&attr.value);
+                                result.hasValue = true; result.status = UA_STATUSCODE_GOOD;
+                                if (request.timestamps == UA_TIMESTAMPSTORETURN_SOURCE || request.timestamps == UA_TIMESTAMPSTORETURN_BOTH) {
+                                    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(check.sample.timestamp.time_since_epoch()).count();
+                                    result.hasSourceTimestamp = true;
+                                    result.sourceTimestamp = UA_DATETIME_UNIX_EPOCH + ms * UA_DATETIME_MSEC;
+                                }
+                            } else result.status = UA_STATUSCODE_BADTYPEMISMATCH;
+                            UA_VariableAttributes_clear(&attr);
+                        } else if (check.reason == "waiting") result.status = UA_STATUSCODE_BADTIMEOUT;
+                        else if (check.reason == "disabled" || check.reason == "source_unavailable") result.status = UA_STATUSCODE_BADOUTOFSERVICE;
+                        else if (check.reason == "not_found") result.status = UA_STATUSCODE_BADNODEIDUNKNOWN;
+                        else result.status = UA_STATUSCODE_BADNOTSUPPORTED;
+                        if (request.timestamps == UA_TIMESTAMPSTORETURN_SERVER || request.timestamps == UA_TIMESTAMPSTORETURN_BOTH) {
+                            result.hasServerTimestamp = true; result.serverTimestamp = UA_DateTime_now();
+                        }
+                        // The library validates liveness AND token before touching output.
+                        UA_Server_opcbridgeCompleteRead(g_uaServer, request.output, request.token, &result);
+                        UA_DataValue_clear(&result);
+                        std::lock_guard<std::mutex> lock(g_nativeReadMutex);
+                        auto current = g_nativeReads.find(request.output);
+                        if (current != g_nativeReads.end() && current->second.token == request.token) g_nativeReads.erase(current);
+                    }
+                }
+
 	                persist_opcua_rejected_certificates();
 	            }
 

@@ -1,4 +1,6 @@
 #include "httplib.h"
+#include "consumer_demand_client.h"
+#include "execution_demand.h"
 #include "nlohmann/json.hpp"
 
 #include <curl/curl.h>
@@ -198,6 +200,7 @@ struct QueuedEvent {
     FlowEvent event;
     int hops = 0;
     std::string input_port;
+    uint64_t input_epoch = 0; // Reject tag-input events from a replaced deployment.
 };
 
 static bool event_writable(const FlowEvent& event, std::string& reason) {
@@ -403,6 +406,28 @@ public:
         load_all();
         start_mqtt();
         stop_.store(false);
+        demand_.start("opcbridge-flow", [this] {
+            std::set<std::string> tags;
+            {
+                std::lock_guard<std::mutex> lock(mu_);
+                for (const auto &entry : deployed_) {
+                    if (!entry.second.value("enabled", true)) continue;
+                    for (const auto &node : entry.second.value("nodes", json::array())) {
+                        if (node.value("type", "") != "opc_tag_input") continue;
+                        const auto cfg = node.value("config", json::object());
+                        const auto cid = cfg.value("connection_id", ""), name = cfg.value("tag_name", "");
+                        if (!cid.empty() && !name.empty()) tags.insert(cid + ":" + name);
+                    }
+                }
+                for (const auto &cfg : input_demand_.snapshot()) {
+                    const auto cid = cfg.value("connection_id", ""), name = cfg.value("tag_name", "");
+                    if (!cid.empty() && !name.empty()) tags.insert(cid + ":" + name);
+                }
+            }
+            ConsumerDemandClient::Scopes scopes;
+            if (!tags.empty()) scopes[consumer_demand_base_url(config_.opcbridge_base_url)] = {{"tags", tags}};
+            return scopes;
+        });
         worker_ = std::thread([this]() { worker_loop(); });
     }
 
@@ -410,6 +435,7 @@ public:
         if (stop_.exchange(true)) return;
         cv_.notify_all();
         if (worker_.joinable()) worker_.join();
+        demand_.stop();
         stop_mqtt();
         save_state();
     }
@@ -458,6 +484,7 @@ public:
             {"component_version", OPCBRIDGE_FLOW_VERSION}, {"suite_version", OPCBRIDGE_SUITE_VERSION},
             {"draft_flows", draft_count}, {"deployed_flows", deployed_count},
             {"running_flows", running}, {"failed_flows", failed},
+            {"demand_observation", demand_.status()},
             {"mqtt", {{"configured", configured_brokers > 0}, {"connected", connected_brokers},
                       {"brokers", broker_status}}}};
     }
@@ -515,6 +542,7 @@ public:
         {
             std::lock_guard<std::mutex> lock(mu_);
             deployed_ = std::move(next);
+            ++input_epoch_[id];
             FlowRuntime& state = runtime_[id];
             state.status = candidate.value("enabled", true) ? "running" : "disabled";
             state.last_error.clear();
@@ -522,6 +550,7 @@ public:
             state.nodes.clear();
             for (const auto& node : candidate.value("nodes", json::array())) state.nodes[node.value("id", "")];
             next_poll_ms_[id].clear();
+            lifecycle_wait_started_[id].clear();
             combine_inputs_[id].clear();
             boolean_inputs_[id].clear();
             json_inputs_[id].clear();
@@ -549,6 +578,7 @@ public:
         {
             std::lock_guard<std::mutex> lock(mu_);
             deployed_ = std::move(next);
+            ++input_epoch_[id];
             runtime_[id].status = "stopped";
             combine_inputs_[id].clear();
             boolean_inputs_[id].clear();
@@ -612,6 +642,7 @@ private:
         drafts_ = load_collection(read_json(drafts_path_, {{"flows", json::array()}}));
         deployed_ = load_collection(read_json(deployed_path_, {{"flows", json::array()}}));
         for (const auto& entry : deployed_) {
+            input_epoch_[entry.first] = 1;
             FlowRuntime state;
             state.status = entry.second.value("enabled", true) ? "running" : "disabled";
             state.deployed_ms = entry.second.value("deployed_ms", 0LL);
@@ -664,6 +695,17 @@ private:
             if (type == "opc_tag_input" || type == "opc_tag_write") {
                 if (trim(cfg.value("connection_id", "")).empty() || trim(cfg.value("tag_name", "")).empty()) {
                     error = type + " requires a connection and tag"; return false;
+                }
+            }
+            if (type == "opc_tag_input") {
+                if (cfg.contains("require_fresh_read") && !cfg["require_fresh_read"].is_boolean()) {
+                    error = "require_fresh_read must be boolean"; return false;
+                }
+                for (const auto &limit : std::vector<std::pair<std::string, int>>{{"fresh_max_age_ms", 60000}, {"fresh_timeout_ms", 5000}}) {
+                    if (cfg.contains(limit.first) && (!cfg[limit.first].is_number_integer() ||
+                        cfg[limit.first] < 0 || cfg[limit.first] > limit.second)) {
+                        error = limit.first + " is outside its integer range"; return false;
+                    }
                 }
             }
             if (type == "mqtt_subscribe" || type == "mqtt_publish") {
@@ -839,7 +881,7 @@ private:
     }
 
     void poll_inputs() {
-        struct Task { std::string flow_id; std::string node_id; json config; };
+        struct Task { std::string flow_id; std::string node_id; std::shared_ptr<const json> config; uint64_t epoch; };
         std::vector<Task> tasks;
         const long long now = now_ms();
         {
@@ -853,39 +895,92 @@ private:
                     const int interval = std::max(100, node["config"].value("poll_interval_ms", config_.poll_interval_ms));
                     if (next_poll_ms_[flow_entry.first][node_id] <= now) {
                         next_poll_ms_[flow_entry.first][node_id] = now + interval;
-                        tasks.push_back({flow_entry.first, node_id, node["config"]});
+                        tasks.push_back({flow_entry.first, node_id, input_demand_.retain(node["config"]), input_epoch_[flow_entry.first]});
                     }
                 }
             }
         }
-        for (const auto& task : tasks) poll_tag(task.flow_id, task.node_id, task.config);
+        for (const auto& task : tasks) poll_tag(task.flow_id, task.node_id, *task.config, task.epoch);
     }
 
-    void poll_tag(const std::string& flow_id, const std::string& node_id, const json& cfg) {
+    void poll_tag(const std::string& flow_id, const std::string& node_id, const json& cfg, uint64_t epoch) {
         const std::string conn = cfg.value("connection_id", ""), tag = cfg.value("tag_name", "");
-        const std::string url = config_.opcbridge_base_url + "/tags?connection_id=" + url_encode(conn) +
-            "&tag=" + url_encode(tag) + "&limit=1";
-        const HttpResult response = http_request("GET", url, "", 3000);
+        bool lifecycleRetryScheduled = false;
+        auto fail = [&](const std::string &error) {
+            std::lock_guard<std::mutex> lock(mu_);
+            if (input_epoch_[flow_id] != epoch || !deployed_.count(flow_id)) return;
+            if (!lifecycleRetryScheduled) lifecycle_wait_started_[flow_id].erase(node_id);
+            NodeRuntime &node = runtime_[flow_id].nodes[node_id];
+            node.status = "error"; node.last_error = error;
+        };
+        const bool requireFresh = cfg.value("require_fresh_read", false);
+        auto scheduleLifecycleRetry = [&](const json &row) {
+            const std::string state = row.value("polling_state", "");
+            const bool waiting = row.value("connection_id", "") == conn && row.value("name", "") == tag &&
+                row.value("quality", 0) != 1 && (state == "inactive" || state == "waiting");
+            std::lock_guard<std::mutex> lock(mu_);
+            if (input_epoch_[flow_id] != epoch || !deployed_.count(flow_id)) return;
+            if (!waiting) { lifecycle_wait_started_[flow_id].erase(node_id); return; }
+            const auto now = std::chrono::steady_clock::now();
+            auto &started = lifecycle_wait_started_[flow_id][node_id];
+            if (started == std::chrono::steady_clock::time_point{}) started = now;
+            if (now - started >= std::chrono::seconds(5)) {
+                lifecycle_wait_started_[flow_id].erase(node_id);
+                return; // The scheduler already set the normal configured interval.
+            }
+            auto &next = next_poll_ms_[flow_id][node_id];
+            next = std::min(next, now_ms() + 250);
+            lifecycleRetryScheduled = true;
+        };
+        HttpResult response;
+        if (requireFresh) {
+            const int timeout = cfg.value("fresh_timeout_ms", 1000);
+            const json body = {{"tags", json::array({{{"connection_id", conn}, {"name", tag}}})},
+                {"max_age_ms", cfg.value("fresh_max_age_ms", 0)}, {"timeout_ms", timeout}};
+            response = http_request("POST", consumer_demand_base_url(config_.opcbridge_base_url) +
+                "/polling/fresh-read", body.dump(), timeout + 1500);
+        } else {
+            const std::string url = config_.opcbridge_base_url + "/tags?connection_id=" + url_encode(conn) +
+                "&tag=" + url_encode(tag) + "&limit=1";
+            response = http_request("GET", url, "", 3000);
+        }
         FlowEvent event; event.timestamp_ms = now_ms(); event.source = "opcbridge:" + conn + ":" + tag;
         if (!response.transport_ok || response.status != 200) {
             event.quality = "bad_source";
-            set_node_error(flow_id, node_id, response.error.empty() ? "OPCBridge tag request failed" : response.error);
+            fail(response.error.empty() ? "OPCBridge tag request failed" : response.error);
             return;
         }
         try {
             const json body = json::parse(response.body);
-            const json rows = body.value("tags", json::array());
+            json rows = body.value("tags", json::array());
+            if (requireFresh) {
+                if (!body.value("ok", false) || !rows.is_array() || rows.size() != 1 ||
+                    !rows[0].value("fresh", false) || !rows[0].contains("sample")) {
+                    std::string reason = "Fresh OPCBridge sample unavailable";
+                    if (rows.is_array() && rows.size() == 1 && rows[0].contains("reason") && rows[0]["reason"].is_string())
+                        reason += ": " + rows[0]["reason"].get<std::string>();
+                    fail(reason); return;
+                }
+                const json sample = rows[0]["sample"];
+                if (sample.value("connection_id", "") != conn || sample.value("name", "") != tag) {
+                    fail("Fresh OPCBridge sample does not match requested tag"); return;
+                }
+                rows = json::array({sample});
+            }
+            if (!requireFresh) scheduleLifecycleRetry(rows.is_array() && rows.size() == 1 ? rows[0] : json::object());
             if (!rows.is_array() || rows.empty() || !rows[0].contains("value") || rows[0]["value"].is_null()) {
-                set_node_error(flow_id, node_id, "Tag has no current value"); return;
+                fail("Tag has no current value"); return;
             }
             const json& row = rows[0];
-            if (row.value("quality", 0) != 1) { set_node_error(flow_id, node_id, "Tag quality is bad"); return; }
+            if (row.value("quality", 0) != 1) { fail("Tag quality is bad"); return; }
             event.present = true; event.value = row["value"]; event.quality = "good";
             event.timestamp_ms = row.value("timestamp_ms", now_ms());
             bool changed = false;
             bool had_baseline = false;
             {
                 std::lock_guard<std::mutex> lock(mu_);
+                if (input_epoch_[flow_id] != epoch || !deployed_.count(flow_id)) return;
+                lifecycle_wait_started_[flow_id].erase(node_id);
                 NodeRuntime& observed = runtime_[flow_id].nodes[node_id];
                 observed.status = "watching";
                 observed.last_error.clear();
@@ -901,8 +996,8 @@ private:
             // setpoints initialize downstream logic. Null and bad-quality values
             // are rejected above. Subsequent events may be limited to changes.
             if (!had_baseline || changed || !cfg.value("only_on_change", true))
-                enqueue({flow_id, node_id, event, 0, ""});
-        } catch (const std::exception& ex) { set_node_error(flow_id, node_id, ex.what()); }
+                enqueue({flow_id, node_id, event, 0, "", epoch});
+        } catch (const std::exception& ex) { fail(ex.what()); }
     }
 
     void process_event(const QueuedEvent& queued) {
@@ -910,6 +1005,7 @@ private:
         json flow, node;
         {
             std::lock_guard<std::mutex> lock(mu_);
+            if (queued.input_epoch && input_epoch_[queued.flow_id] != queued.input_epoch) return;
             auto found = deployed_.find(queued.flow_id);
             if (found == deployed_.end() || !found->second.value("enabled", true)) return;
             flow = found->second;
@@ -940,7 +1036,7 @@ private:
                     if (part.second.is_null()) continue;
                     FlowEvent item = output; item.key = part.first; item.value = part.second;
                     for (const auto& edge : flow.value("edges", json::array()))
-                        if (edge.value("from", "") == queued.node_id) enqueue({queued.flow_id, edge.value("to", ""), item, queued.hops + 1, edge.value("to_port", "")});
+                        if (edge.value("from", "") == queued.node_id) enqueue({queued.flow_id, edge.value("to", ""), item, queued.hops + 1, edge.value("to_port", ""), queued.input_epoch});
                 }
                 mark_node_output(queued.flow_id, queued.node_id, output, "split " + std::to_string(parts.size()) + " items");
             }
@@ -956,7 +1052,7 @@ private:
                     const std::string port = "rule_" + std::to_string(index);
                     for (const auto& edge : flow.value("edges", json::array()))
                         if (edge.value("from", "") == queued.node_id && edge.value("from_port", "rule_0") == port)
-                            enqueue({queued.flow_id, edge.value("to", ""), output, queued.hops + 1, edge.value("to_port", "")});
+                            enqueue({queued.flow_id, edge.value("to", ""), output, queued.hops + 1, edge.value("to_port", ""), queued.input_epoch});
                     if (!cfg.value("check_all", false)) break;
                 }
                 ++index;
@@ -964,7 +1060,7 @@ private:
             if (!matched && cfg.value("otherwise", true)) {
                 for (const auto& edge : flow.value("edges", json::array()))
                     if (edge.value("from", "") == queued.node_id && edge.value("from_port", "") == "otherwise")
-                        enqueue({queued.flow_id, edge.value("to", ""), output, queued.hops + 1, edge.value("to_port", "")});
+                        enqueue({queued.flow_id, edge.value("to", ""), output, queued.hops + 1, edge.value("to_port", ""), queued.input_epoch});
             }
             mark_node_output(queued.flow_id, queued.node_id, output, matched ? "matched" : "otherwise");
         } else if (type == "linear_map") {
@@ -1173,7 +1269,7 @@ private:
                 }
                 for (const auto& edge : flow.value("edges", json::array()))
                     if (edge.value("from", "") == queued.node_id)
-                        enqueue({queued.flow_id, edge.value("to", ""), output, queued.hops + 1, edge.value("to_port", "")});
+                        enqueue({queued.flow_id, edge.value("to", ""), output, queued.hops + 1, edge.value("to_port", ""), queued.input_epoch});
                 mark_node_output(queued.flow_id, queued.node_id, output, "rate limit released latest value");
             } else if (!event_writable(output, error)) {
                 // Rejected below.
@@ -1195,10 +1291,10 @@ private:
                 if (release_now) {
                     for (const auto& edge : flow.value("edges", json::array()))
                         if (edge.value("from", "") == queued.node_id)
-                            enqueue({queued.flow_id, edge.value("to", ""), output, queued.hops + 1, edge.value("to_port", "")});
+                            enqueue({queued.flow_id, edge.value("to", ""), output, queued.hops + 1, edge.value("to_port", ""), queued.input_epoch});
                     mark_node_output(queued.flow_id, queued.node_id, output, "rate limit released value");
                 } else if (schedule) {
-                    if (!enqueue_delayed({queued.flow_id, queued.node_id, output, queued.hops + 1, "__rate_release"}, due))
+                    if (!enqueue_delayed({queued.flow_id, queued.node_id, output, queued.hops + 1, "__rate_release", queued.input_epoch}, due))
                         error = "delayed message safety limit reached";
                     else set_node_status(queued.flow_id, queued.node_id, "waiting to release latest value");
                 } else set_node_status(queued.flow_id, queued.node_id, "updated pending latest value");
@@ -1207,7 +1303,7 @@ private:
                 int queued_count = 0;
                 for (const auto& edge : flow.value("edges", json::array())) {
                     if (edge.value("from", "") != queued.node_id) continue;
-                    if (!enqueue_delayed({queued.flow_id, edge.value("to", ""), output, queued.hops + 1, edge.value("to_port", "")}, due)) {
+                    if (!enqueue_delayed({queued.flow_id, edge.value("to", ""), output, queued.hops + 1, edge.value("to_port", ""), queued.input_epoch}, due)) {
                         error = "delayed message safety limit reached"; break;
                     }
                     ++queued_count;
@@ -1223,7 +1319,7 @@ private:
                 FlowEvent sent = output; sent.present = !value.is_null(); sent.value = value; sent.quality = sent.present ? "good" : "bad_null"; sent.timestamp_ms = now_ms();
                 for (const auto& edge : flow.value("edges", json::array()))
                     if (edge.value("from", "") == queued.node_id)
-                        enqueue({queued.flow_id, edge.value("to", ""), sent, queued.hops + 1, edge.value("to_port", "")});
+                        enqueue({queued.flow_id, edge.value("to", ""), sent, queued.hops + 1, edge.value("to_port", ""), queued.input_epoch});
                 mark_node_output(queued.flow_id, queued.node_id, sent, status);
             };
             if (queued.input_port.rfind("__trigger_release:", 0) == 0) {
@@ -1256,7 +1352,7 @@ private:
                         if (cfg.value("extend_delay", true) || current == 0) { generation = ++current; start_timer = true; }
                     }
                     if (start_timer && cfg.value("send_initial", true)) send_value(configured_flow_value(cfg.value("initial_value", json("true"))), "trigger started");
-                    if (start_timer && !replace_trigger_timer({queued.flow_id, queued.node_id, output, queued.hops + 1, "__trigger_release:" + std::to_string(generation)}, now_ms() + duration_ms))
+                    if (start_timer && !replace_trigger_timer({queued.flow_id, queued.node_id, output, queued.hops + 1, "__trigger_release:" + std::to_string(generation), queued.input_epoch}, now_ms() + duration_ms))
                         error = "delayed message safety limit reached";
                 }
             }
@@ -1356,7 +1452,7 @@ private:
         if (!emit) return;
         mark_node_output(queued.flow_id, queued.node_id, output, "ok");
         for (const auto& edge : flow.value("edges", json::array())) {
-            if (edge.value("from", "") == queued.node_id) enqueue({queued.flow_id, edge.value("to", ""), output, queued.hops + 1, edge.value("to_port", "")});
+            if (edge.value("from", "") == queued.node_id) enqueue({queued.flow_id, edge.value("to", ""), output, queued.hops + 1, edge.value("to_port", ""), queued.input_epoch});
         }
     }
 
@@ -1620,6 +1716,9 @@ private:
         }
     }
 
+    ConsumerDemandClient demand_;
+    ExecutionDemand<json> input_demand_;
+    std::map<std::string, uint64_t> input_epoch_;
     ServiceConfig config_;
     std::string drafts_path_, deployed_path_, state_path_, write_token_, admin_token_;
     mutable std::mutex mu_, queue_mu_, wait_mu_, mqtt_mu_;
@@ -1629,6 +1728,7 @@ private:
     std::map<std::string, json> drafts_, deployed_;
     std::map<std::string, FlowRuntime> runtime_;
     std::map<std::string, std::map<std::string, long long>> next_poll_ms_;
+    std::map<std::string, std::map<std::string, std::chrono::steady_clock::time_point>> lifecycle_wait_started_;
     std::map<std::string, std::map<std::string, json>> last_input_values_;
     std::map<std::string, std::map<std::string, std::map<std::string, FlowEvent>>> combine_inputs_;
     std::map<std::string, std::map<std::string, std::map<std::string, FlowEvent>>> boolean_inputs_;

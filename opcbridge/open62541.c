@@ -3619,6 +3619,7 @@ typedef enum {
 typedef struct UA_AsyncOperation {
     TAILQ_ENTRY(UA_AsyncOperation) pointers;
     UA_AsyncOperationType asyncOperationType;
+    UA_UInt64 opcbridgeReadToken;
 
     union {
         /* The operation is part of a service request */
@@ -39777,10 +39778,38 @@ Service_Read(UA_Server *server, UA_Session *session, const UA_ReadRequest *reque
     for(size_t i = 0; i < request->nodesToReadSize; i++) {
         UA_Boolean done = Operation_Read(server, session, request->timestampsToReturn,
                                          &request->nodesToRead[i], &response->results[i]);
-        if(!done)
+#ifdef UA_ENABLE_SUBSCRIPTIONS
+        if(server->config.opcbridgeReadObserver &&
+           request->nodesToRead[i].attributeId == UA_ATTRIBUTEID_VALUE &&
+           (!response->results[i].hasStatus ||
+            response->results[i].status != UA_STATUSCODE_BADUSERACCESSDENIED)) {
+            void *context = NULL;
+            if(getNodeContext(server, request->nodesToRead[i].nodeId, &context) == UA_STATUSCODE_GOOD)
+                server->config.opcbridgeReadObserver(server,
+                    &request->nodesToRead[i].nodeId, request->maxAge);
+        }
+#endif
+        UA_UInt64 verificationToken = 0;
+#ifdef UA_ENABLE_SUBSCRIPTIONS
+        if(done && server->config.opcbridgeReadVerifier &&
+           request->nodesToRead[i].attributeId == UA_ATTRIBUTEID_VALUE &&
+           response->results[i].status != UA_STATUSCODE_BADUSERACCESSDENIED &&
+           response->results[i].status != UA_STATUSCODE_BADNOTREADABLE) {
+            void *context = NULL;
+            if(getNodeContext(server, request->nodesToRead[i].nodeId, &context) == UA_STATUSCODE_GOOD) {
+                verificationToken = server->config.opcbridgeReadVerifier(server,
+                    &request->nodesToRead[i], request->maxAge, request->timestampsToReturn,
+                    &response->results[i]);
+                if(verificationToken) done = false;
+            }
+        }
+#endif
+        if(!done) {
             persistAsyncResponseOperation(server, &aopArray[i],
                                           UA_ASYNCOPERATIONTYPE_READ_REQUEST,
                                           ar, &response->results[i]);
+            aopArray[i].opcbridgeReadToken = verificationToken;
+        }
     }
 
     /* If async operations are pending, persist them and signal the service is
@@ -39845,6 +39874,28 @@ UA_Server_setAsyncReadResult(UA_Server *server, UA_DataValue *result) {
     }
     unlockServer(server);
     return (op) ? UA_STATUSCODE_GOOD : UA_STATUSCODE_BADNOTFOUND;
+}
+
+UA_StatusCode
+UA_Server_opcbridgeCompleteRead(UA_Server *server, UA_DataValue *output,
+                               UA_UInt64 token, const UA_DataValue *value) {
+    lockServer(server);
+    UA_AsyncOperation *op = NULL;
+    UA_StatusCode status = UA_STATUSCODE_BADNOTFOUND;
+    TAILQ_FOREACH(op, &server->asyncManager.waitingOps, pointers) {
+        if(op->asyncOperationType != UA_ASYNCOPERATIONTYPE_READ_REQUEST ||
+           op->output.read != output || !token || op->opcbridgeReadToken != token) continue;
+        UA_DataValue_clear(output);
+        status = UA_DataValue_copy(value, output);
+        if(status != UA_STATUSCODE_GOOD) {
+            output->hasStatus = true;
+            output->status = status;
+        }
+        processOperationResult(server, op);
+        break;
+    }
+    unlockServer(server);
+    return status;
 }
 
 /*********/
@@ -41361,6 +41412,16 @@ removeMonitoredItemBackPointer(UA_Server *server, UA_Session *session,
     return UA_STATUSCODE_GOOD;
 }
 
+/* OPCBridge local observation only: never modifies monitoring or sampling. */
+static void
+opcbridgeObserveMonitoredItem(UA_Server *server, UA_MonitoredItem *mon, UA_Boolean removed) {
+    if(server->config.opcbridgeMonitoredItemObserver && mon->registered && mon->subscription)
+        server->config.opcbridgeMonitoredItemObserver(server,
+            mon->subscription->subscriptionId, mon->monitoredItemId,
+            &mon->itemToMonitor.nodeId, mon->itemToMonitor.attributeId,
+            mon->monitoringMode, mon->parameters.samplingInterval, removed);
+}
+
 void
 UA_MonitoredItem_register(UA_Server *server, UA_MonitoredItem *mon) {
     UA_LOCK_ASSERT(&server->serviceMutex);
@@ -41376,6 +41437,8 @@ UA_MonitoredItem_register(UA_Server *server, UA_MonitoredItem *mon) {
     LIST_INSERT_HEAD(&sub->monitoredItems, mon, listEntry);
     sub->monitoredItemsSize++;
     server->monitoredItemsSize++;
+
+    opcbridgeObserveMonitoredItem(server, mon, false);
 
     /* Register the MonitoredItem in userland */
     if(server->config.monitoredItemRegisterCallback) {
@@ -41397,6 +41460,7 @@ UA_Server_unregisterMonitoredItem(UA_Server *server, UA_MonitoredItem *mon) {
 
     if(!mon->registered)
         return;
+    opcbridgeObserveMonitoredItem(server, mon, true);
     mon->registered = false;
 
     UA_Subscription *sub = mon->subscription;
@@ -41445,6 +41509,7 @@ UA_MonitoredItem_setMonitoringMode(UA_Server *server, UA_MonitoredItem *mon,
             UA_Notification_delete(notification);
         }
         UA_DataValue_clear(&mon->lastValue);
+        opcbridgeObserveMonitoredItem(server, mon, false);
         return UA_STATUSCODE_GOOD;
     }
 
@@ -41472,6 +41537,7 @@ UA_MonitoredItem_setMonitoringMode(UA_Server *server, UA_MonitoredItem *mon,
     UA_StatusCode res = UA_MonitoredItem_registerSampling(server, mon);
     if(res != UA_STATUSCODE_GOOD) {
         mon->monitoringMode = UA_MONITORINGMODE_DISABLED;
+        opcbridgeObserveMonitoredItem(server, mon, false);
         return res;
     }
 
@@ -41483,6 +41549,7 @@ UA_MonitoredItem_setMonitoringMode(UA_Server *server, UA_MonitoredItem *mon,
        mon->itemToMonitor.attributeId != UA_ATTRIBUTEID_EVENTNOTIFIER)
         UA_MonitoredItem_sample(server, mon);
 
+    opcbridgeObserveMonitoredItem(server, mon, false);
     return UA_STATUSCODE_GOOD;
 }
 

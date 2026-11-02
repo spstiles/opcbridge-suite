@@ -8,6 +8,7 @@
 //   - ws_send_json(const json&)
 
 #include "ws.h"
+#include "consumer_demand.h"
 
 #include <ixwebsocket/IXWebSocketServer.h>
 #include <iostream>
@@ -27,6 +28,8 @@ static bool g_wsEnabled = false;
 
 struct ClientSubs
 {
+    ConsumerDemand demand;
+    bool explicit_demand = false; // Opt-in: delivery scope does not imply PLC demand.
     bool subscribe_all = true; // backward compatible default
     bool has_custom = false;
     std::unordered_set<std::string> tags;
@@ -75,6 +78,7 @@ bool ws_init(uint16_t port)
                 std::lock_guard<std::mutex> lock(g_wsMutex);
                 g_clientsById[id] = webSocketWeak;
                 auto &subs = g_subsById[id];
+                subs.explicit_demand = false;
                 subs.subscribe_all = true;
                 subs.has_custom = false;
                 subs.tags.clear();
@@ -141,6 +145,17 @@ bool ws_init(uint16_t port)
 
                         std::lock_guard<std::mutex> lock(g_wsMutex);
                         auto &subs = g_subsById[cid];
+
+                        if (t == "register_demand" || t == "release_demand") {
+                            // Invalid replacements leave the previous registration intact.
+                            if (t == "register_demand" && j.contains("demand_mode")) {
+                                if (!j["demand_mode"].is_string() ||
+                                    (j["demand_mode"] != "explicit" && j["demand_mode"] != "subscription")) return;
+                            }
+                            if (subs.demand.apply(j) && t == "register_demand" && j.contains("demand_mode"))
+                                subs.explicit_demand = j["demand_mode"] == "explicit";
+                            return;
+                        }
 
                         if (t == "subscribe_all") {
                             subs.subscribe_all = true;
@@ -286,4 +301,27 @@ void ws_send_json(const json &msg)
             ws_forget_client_locked(id);
         }
     }
+}
+
+json ws_demand_snapshot() {
+    std::lock_guard<std::mutex> lock(g_wsMutex);
+    json result = {{"all_tags_clients", 0}, {"tags", json::object()}, {"owners", json::object()}};
+    for (const auto &entry : g_subsById) {
+        auto client = g_clientsById.find(entry.first);
+        if (client == g_clientsById.end()) continue;
+        auto socket = client->second.lock();
+        if (!socket || socket->getReadyState() != ix::ReadyState::Open) continue;
+        const auto &subs = entry.second;
+        for (const auto &registration : subs.demand.owners()) {
+            merge_consumer_scope(result["owners"], registration.first, registration.second);
+        }
+        if (subs.explicit_demand) continue;
+        if (!subs.has_custom || subs.subscribe_all) {
+            result["all_tags_clients"] = result["all_tags_clients"].get<size_t>() + 1;
+        } else {
+            for (const auto &key : subs.tags)
+                result["tags"][key] = result["tags"].value(key, size_t{0}) + 1;
+        }
+    }
+    return result;
 }

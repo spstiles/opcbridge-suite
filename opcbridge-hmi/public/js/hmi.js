@@ -12172,6 +12172,7 @@ const applyTagRowsToCache = (rows) => {
 };
 
 const seedTagValuesForKeys = async (keys) => {
+  if (document.visibilityState === "hidden") return false;
   const queryItems = Array.from(new Set(keys || []))
     .map(wsTagKeyToQueryItem)
     .filter(Boolean);
@@ -12222,6 +12223,8 @@ const scheduleTagSeedRefresh = () => {
 const wsSendSubscribe = (tags) => {
   if (!wsConnected || !wsClient || wsClient.readyState !== WebSocket.OPEN) return;
   try {
+    wsClient.send(JSON.stringify({ type: "register_demand", owner: "opcbridge-hmi-viewer",
+      tags: tags.filter(key => !String(key).startsWith("_system:")) }));
     wsClient.send(JSON.stringify({ type: "subscribe", tags }));
   } catch {
     // ignore
@@ -12230,8 +12233,9 @@ const wsSendSubscribe = (tags) => {
 
 const updateWsSubscriptions = () => {
   if (!wsConnected) return;
-  const tags = collectActiveWsSubscriptions();
-  const fingerprint = tags.join("\n");
+  const hidden = document.visibilityState === "hidden";
+  const tags = hidden ? [] : collectActiveWsSubscriptions();
+  const fingerprint = `${hidden ? "hidden" : "visible"}:${tags.join("\n")}`;
   if (fingerprint === wsLastSubscribeFingerprint) return;
   wsLastSubscribeFingerprint = fingerprint;
   const activeInfoKeys = new Set(tags.map(wsTagKeyToQueryItem).filter(Boolean).map((tag) =>
@@ -12242,6 +12246,16 @@ const updateWsSubscriptions = () => {
   }
   wsSendSubscribe(tags);
 };
+
+document.addEventListener("visibilitychange", () => {
+  updateWsSubscriptions();
+  if (document.visibilityState !== "hidden") scheduleTagSeedRefresh();
+});
+window.addEventListener("pagehide", () => wsSendSubscribe([]));
+window.addEventListener("pageshow", () => {
+  wsLastSubscribeFingerprint = "";
+  scheduleWsSubscribeRefresh();
+});
 
 const scheduleWsSubscribeRefresh = () => {
   if (wsSubscribeTimer) return;

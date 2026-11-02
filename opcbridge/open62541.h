@@ -47305,6 +47305,13 @@ UA_Server_setAsyncCallMethodResult(UA_Server *server, UA_Variant *output,
 UA_EXPORT UA_THREADSAFE UA_StatusCode
 UA_Server_setAsyncReadResult(UA_Server *server, UA_DataValue *result);
 
+/* OPCBridge: copy only into a live async response with a matching token, under
+ * the server lock. The output pointer is opaque to the caller. */
+UA_EXPORT UA_THREADSAFE UA_StatusCode
+UA_Server_opcbridgeCompleteRead(UA_Server *server, UA_DataValue *output,
+                               UA_UInt64 token, const UA_DataValue *value);
+
+
 /* See the UA_CallbackValueSource documentation. The value needs to be the
  * pointer used in the write callback. The statuscode is the result signal to be
  * returned asynchronously. */
@@ -48187,6 +48194,19 @@ struct UA_ServerConfig {
      * @param attributeId Identifies which attribute (value, data type etc.) is
      *        monitored
      * @param removed Determines if the MonitoredItem was removed or created. */
+    /* OPCBridge local hooks. Observers are notification-only; the optional
+     * verifier can defer explicit reads. Callbacks must not re-enter the
+     * server or acquire the driver lock. */
+    void (*opcbridgeMonitoredItemObserver)(UA_Server *server, UA_UInt32 subscriptionId,
+        UA_UInt32 monitoredItemId, const UA_NodeId *nodeId, UA_UInt32 attributeId,
+        UA_MonitoringMode mode, UA_Double samplingInterval, UA_Boolean removed);
+    void (*opcbridgeReadObserver)(UA_Server *server, const UA_NodeId *nodeId,
+        UA_Double maxAge);
+    /* Zero declines; a nonzero unique token opts into async verification. */
+    UA_UInt64 (*opcbridgeReadVerifier)(UA_Server *server, const UA_ReadValueId *item,
+        UA_Double maxAge, UA_TimestampsToReturn timestamps, UA_DataValue *output);
+
+
     void (*monitoredItemRegisterCallback)(UA_Server *server,
                                           const UA_NodeId *sessionId,
                                           void *sessionContext,

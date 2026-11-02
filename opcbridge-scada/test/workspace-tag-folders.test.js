@@ -94,7 +94,7 @@ test('live folder filtering occurs before pagination and excludes other connecti
   const state = { liveTagsPaging: { indexLoaded: false }, liveTagFilter: { type: 'tag_folder', connection_id: 'Field_Ops', prefix: 'Pump_01' } };
   let queried = [];
   const live = vm.createContext({
-    state, URLSearchParams, isPanelActive: () => true,
+    state, URLSearchParams, document: { visibilityState: 'visible' }, isPanelActive: () => true,
     liveTagsQueryParamsForCurrentScope: () => ({ params: new URLSearchParams() }),
     apiGet: async () => ({ tags: rows, total: rows.length }),
     apiPostJson: async (url, body) => { queried = body.tags; return { tags: [] }; },
