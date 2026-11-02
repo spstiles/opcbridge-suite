@@ -14395,8 +14395,12 @@ static json collect_polling_demand(const std::vector<DriverContext> &drivers,
         for (const auto &tag : driver.tags) {
             const std::string key = make_tag_key(driver.conn.id, tag.cfg.logical_name);
             const auto found = observations.find(ua_tag_nodeid_string(driver.conn.id, tag.cfg.logical_name));
-            ObservedTag row{driver.conn.id, tag.cfg.logical_name, tag.poll_source.empty() ? tag.cfg.source_tag : tag.poll_source,
-                tag.cfg.enabled, 0, allClients, 0, 0, -1, {}};
+            ObservedTag row{};
+            row.cid = driver.conn.id;
+            row.name = tag.cfg.logical_name;
+            row.source = tag.poll_source.empty() ? tag.cfg.source_tag : tag.poll_source;
+            row.enabled = tag.cfg.enabled;
+            row.ws = allClients;
             row.arrayElement = !tag.poll_source.empty();
             row.pollWork = tag.cfg.source_tag.empty() && tag.poll_source.empty() &&
                 !is_memory_tag(tag.cfg) && (tag.handle >= 0 || tag.handle_deferred);
