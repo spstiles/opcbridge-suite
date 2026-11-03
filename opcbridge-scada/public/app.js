@@ -713,8 +713,8 @@
   workspaceChildrenTbody: document.getElementById('workspaceChildrenTbody'),
 
   workspaceSaveBtn: document.getElementById('workspaceSaveBtn'),
-  workspaceApplyPollingBtn: document.getElementById('workspaceApplyPollingBtn'),
-  workspaceRebuildOpcuaBtn: document.getElementById('workspaceRebuildOpcuaBtn'),
+  workspaceSaveApplyBtn: document.getElementById('workspaceSaveApplyBtn'),
+  workspaceApplyBtn: document.getElementById('workspaceApplyBtn'),
   workspaceDiscardBtn: document.getElementById('workspaceDiscardBtn'),
   workspaceSaveStatus: document.getElementById('workspaceSaveStatus'),
 
@@ -1277,7 +1277,7 @@ const state = {
   workspaceTabLoadInFlight: false,
   workspaceConfigLoaded: false,
   workspaceLoadPromise: null,
-  workspaceRebuildInFlight: false,
+  workspaceApplyInFlight: false,
   workspaceSaveInFlight: false,
   runtimeReloadBusy: false,
   selectedConnPath: '',
@@ -1293,7 +1293,7 @@ const state = {
   liveTagsScrollTimer: null,
 
   workspaceConnDirty: new Map(), // pathRel -> connection object
-  workspaceDeletePaths: new Set(), // connection config paths to delete on Save/Save+Reload
+  workspaceDeletePaths: new Set(), // connection config paths to delete on Save
   workspaceDeletedTagConnectionIds: new Set(), // orphan tag stores intentionally removed on Save
 
   // tree
@@ -11873,47 +11873,6 @@ async function opcbridgeReloadConnection(connectionId) {
   return r;
 }
 
-async function opcbridgeReloadConnections(connectionIds) {
-  const ids = Array.from(new Set((Array.isArray(connectionIds) ? connectionIds : [])
-    .map((v) => String(v || '').trim())
-    .filter(Boolean))).sort();
-  const results = [];
-  for (const cid of ids) {
-    const result = await opcbridgeReloadConnection(cid);
-    if (result) results.push(result);
-  }
-  return { ids, results };
-}
-
-function summarizeOpcuaSyncResults(results) {
-  const rows = Array.isArray(results) ? results : [];
-  const total = { added: 0, updated: 0, retired: 0, datatype_conflicts: 0, add_failures: 0 };
-  let attempted = false;
-  let fullRebuild = false;
-  let failed = false;
-  rows.forEach((r) => {
-    const sync = r?.opcua_sync || {};
-    attempted = attempted || Boolean(sync.attempted);
-    fullRebuild = fullRebuild || Boolean(sync.full_rebuild_required || r?.full_rebuild_required);
-    failed = failed || sync.ok === false;
-    total.added += Math.max(0, Math.trunc(Number(sync.added) || 0));
-    total.updated += Math.max(0, Math.trunc(Number(sync.updated) || 0));
-    total.retired += Math.max(0, Math.trunc(Number(sync.retired) || 0));
-    total.datatype_conflicts += Math.max(0, Math.trunc(Number(sync.datatype_conflicts) || 0));
-    total.add_failures += Math.max(0, Math.trunc(Number(sync.add_failures) || 0));
-  });
-  const bits = [];
-  if (total.added) bits.push(`${total.added} OPC UA node${total.added === 1 ? '' : 's'} added`);
-  if (total.updated) bits.push(`${total.updated} updated`);
-  if (total.retired) bits.push(`${total.retired} retired`);
-  if (total.datatype_conflicts) bits.push(`${total.datatype_conflicts} datatype conflict${total.datatype_conflicts === 1 ? '' : 's'}`);
-  if (total.add_failures) bits.push(`${total.add_failures} add failure${total.add_failures === 1 ? '' : 's'}`);
-  if (!attempted) return fullRebuild ? 'Saved. Polling applied; OPC UA rebuild required.' : 'Saved. Polling changes applied.';
-  if (failed) return `Saved. Polling applied; OPC UA sync had errors${bits.length ? ` (${bits.join(', ')})` : ''}.`;
-  if (fullRebuild) return `Saved. OPC UA synced; full rebuild recommended${bits.length ? ` (${bits.join(', ')})` : ''}.`;
-  return `Saved. Polling and OPC UA synced${bits.length ? ` (${bits.join(', ')})` : ''}.`;
-}
-
 function renderRuntimeRebuildStatus(status) {
   const st = status && typeof status === 'object' ? status : {};
   const required = Boolean(status?.full_rebuild_required);
@@ -11923,8 +11882,8 @@ function renderRuntimeRebuildStatus(status) {
     state.runtimeReloadBusy = requested || inProgress;
     renderWorkspaceSaveBar();
   }
-  if (state.workspaceRebuildInFlight && (requested || inProgress)) {
-    setWorkspaceSaveStatus(inProgress ? 'Rebuilding OPC UA namespace…' : 'OPC UA rebuild queued…');
+  if (state.workspaceApplyInFlight && (requested || inProgress)) {
+    setWorkspaceSaveStatus(inProgress ? 'Applying saved configuration…' : 'Apply queued…');
   }
   const done = Boolean(st.done);
   const ok = Boolean(st.ok);
@@ -11935,7 +11894,7 @@ function renderRuntimeRebuildStatus(status) {
   const syncAttempted = Boolean(sync.attempted);
   const syncOk = syncAttempted ? sync.ok !== false : true;
 
-  let label = required ? 'Full rebuild required.' : 'Full runtime is current.';
+  let label = required ? 'Saved configuration needs applying.' : 'Runtime ready.';
   let cls = required ? 'status-degraded' : 'status-ok';
   if (requested && !inProgress) {
     label = target ? `Connection reload queued: ${targetName}` : 'Full runtime rebuild queued.';
@@ -11958,9 +11917,9 @@ function renderRuntimeRebuildStatus(status) {
     if (inProgress || requested) {
       els.overviewRebuildHint.textContent = 'SCADA will keep polling this status while OPCBridge applies the runtime change.';
     } else if (required) {
-      els.overviewRebuildHint.textContent = 'Press Rebuild Full Runtime to refresh OPC UA nodes and rebuild all runtime bindings.';
+      els.overviewRebuildHint.textContent = 'Use Apply in Workspace to activate the saved configuration and update OPC UA nodes.';
     } else {
-      els.overviewRebuildHint.textContent = 'Connection-level polling changes can apply without a full OPC UA rebuild unless structural OPC UA cleanup is required.';
+      els.overviewRebuildHint.textContent = 'Use Save & Apply in Workspace, or Save changes as you work and click Apply when ready.';
     }
   }
   if (els.overviewRebuildDetails) {
@@ -11985,7 +11944,7 @@ function renderRuntimeRebuildStatus(status) {
     els.overviewRebuildDetails.innerHTML = rows.map((r) => `<div>${escapeHtml(r)}</div>`).join('');
   }
   if (els.overviewRebuildBtn) {
-    els.overviewRebuildBtn.disabled = !canEditConfig() || requested || inProgress || state.workspaceRebuildInFlight;
+    els.overviewRebuildBtn.disabled = !canEditConfig() || requested || inProgress || state.workspaceApplyInFlight;
   }
 }
 
@@ -18140,17 +18099,18 @@ function setWorkspaceSaveStatus(msg) {
 
 function renderWorkspaceSaveBar() {
   const dirty = workspaceIsDirty();
-  const applyBlocked = Date.now() < Number(state.workspaceApplyPollingBlockUntil || 0);
-  const busy = state.workspaceSaveInFlight || state.runtimeReloadBusy;
+  const applyBlocked = Date.now() < Number(state.workspaceApplyBlockUntil || 0);
+  const busy = Boolean(state.workspaceSaveInFlight || state.runtimeReloadBusy);
   if (els.overviewRebuildBtn) els.overviewRebuildBtn.disabled = !canEditConfig() || busy;
-  if (els.workspaceSaveBtn) els.workspaceSaveBtn.disabled = !dirty || busy;
-  if (els.workspaceApplyPollingBtn) els.workspaceApplyPollingBtn.disabled = !dirty || applyBlocked || busy;
-  if (els.workspaceRebuildOpcuaBtn) els.workspaceRebuildOpcuaBtn.disabled = !canEditConfig() || busy;
+  if (els.workspaceSaveBtn) els.workspaceSaveBtn.disabled = !canEditConfig() || !dirty || busy;
+  if (els.workspaceSaveApplyBtn) els.workspaceSaveApplyBtn.disabled = !canEditConfig() || !dirty || applyBlocked || busy;
+  if (els.workspaceApplyBtn) els.workspaceApplyBtn.disabled = !canEditConfig() || applyBlocked || busy;
   if (els.workspaceDiscardBtn) els.workspaceDiscardBtn.disabled = !dirty || busy;
 }
 
-function blockWorkspaceApplyPollingBriefly() {
-  state.workspaceApplyPollingBlockUntil = Date.now() + 750;
+// Prevent a rapid follow-up click after deleting tags from activating changes.
+function blockWorkspaceApplyBriefly() {
+  state.workspaceApplyBlockUntil = Date.now() + 750;
   renderWorkspaceSaveBar();
   window.setTimeout(renderWorkspaceSaveBar, 800);
 }
@@ -18695,7 +18655,7 @@ function stageDeleteTagById(connectionId, tagName) {
   const name = String(tagName || '').trim();
   if (!cid || !name) return;
 
-  if (!window.confirm(`Delete tag '${cid}:${name}'? (Applied with Save & Apply Changes.)`)) return;
+  if (!window.confirm(`Delete tag '${cid}:${name}'? (Activate with Save & Apply.)`)) return;
 
   const key = `${cid}::${name}`;
   const before = Array.isArray(state.tagConfigAll) ? state.tagConfigAll.length : 0;
@@ -18706,10 +18666,10 @@ function stageDeleteTagById(connectionId, tagName) {
   if ((state.tagConfigAll || []).length === before) return;
 
   markTagsDirty(true);
-  blockWorkspaceApplyPollingBriefly();
+  blockWorkspaceApplyBriefly();
   if (state.workspaceChildrenSel) state.workspaceChildrenSel.delete(key);
   renderWorkspaceTree();
-  setWorkspaceSaveStatus(`Deleted tag '${cid}:${name}' locally. Use Save & Apply Changes to update runtime.`);
+  setWorkspaceSaveStatus(`Deleted tag '${cid}:${name}' locally. Use Save & Apply to update runtime.`);
   renderWorkspaceSaveBar();
 }
 
@@ -20268,7 +20228,7 @@ async function saveEditedDeviceFromModal() {
     }
     markTagsDirty(true);
 
-    // Update alarms config to the new connection_id (staged with Save/Save+Reload).
+    // Update alarms config to the new connection_id (staged until saved).
     if (state.alarmsConfig && Array.isArray(state.alarmsConfig.alarms)) {
       state.alarmsConfig = {
         ...(state.alarmsConfig || {}),
@@ -20931,7 +20891,7 @@ function setWorkspaceDeviceEnabled(connectionId, relPath, enabled) {
   if (!state.workspaceConnDirty) state.workspaceConnDirty = new Map();
   state.workspaceConnDirty.set(path, connObj);
   if (state.connObjCache) state.connObjCache.set(path, connObj);
-  setWorkspaceSaveStatus(`Device '${connectionName}' ${connObj.enabled ? 'enabled' : 'disabled'} locally. Click Save or Save & Apply Changes.`);
+  setWorkspaceSaveStatus(`Device '${connectionName}' ${connObj.enabled ? 'enabled' : 'disabled'} locally. Use Save & Apply, or Save and Apply later.`);
   renderWorkspaceSaveBar();
   saveWorkspaceDraft();
   renderWorkspaceTree();
@@ -21308,9 +21268,9 @@ function wireNewDeviceFormUi() {
 }
 
 function wireWorkspaceSaveBarUi() {
-  els.workspaceSaveBtn?.addEventListener('click', () => saveWorkspaceAll());
-  els.workspaceApplyPollingBtn?.addEventListener('click', () => saveWorkspaceAll({ applyPolling: true }));
-  els.workspaceRebuildOpcuaBtn?.addEventListener('click', () => saveWorkspaceAll({ rebuildOpcua: true }));
+  els.workspaceSaveBtn?.addEventListener('click', () => saveWorkspaceAll({ apply: false }));
+  els.workspaceSaveApplyBtn?.addEventListener('click', () => saveWorkspaceAll());
+  els.workspaceApplyBtn?.addEventListener('click', applyWorkspaceChanges);
   els.workspaceDiscardBtn?.addEventListener('click', discardWorkspaceChanges);
   renderWorkspaceSaveBar();
 }
@@ -25802,7 +25762,7 @@ function stageMoveOrphanTagsToMemory(connectionId) {
   stageOrphanTagStoreRemoval(cid, orphanTags);
   markTagsDirty(true);
   renderWorkspaceTree();
-  setWorkspaceSaveStatus(`Moved '${cid}' tags to Memory locally. Save & Apply Changes to remove the orphaned store.`);
+  setWorkspaceSaveStatus(`Moved '${cid}' tags to Memory locally. Use Save & Apply to remove the orphaned store.`);
   renderWorkspaceSaveBar();
 }
 
@@ -25818,7 +25778,7 @@ function stageDeleteOrphanTagGroup(connectionId) {
   markTagsDirty(true);
   state.selectedNodeId = 'folder:orphaned_tags';
   renderWorkspaceTree();
-  setWorkspaceSaveStatus(`Deleted orphaned group '${cid}' locally. Save & Apply Changes to remove its file.`);
+  setWorkspaceSaveStatus(`Deleted orphaned group '${cid}' locally. Use Save & Apply to remove its file.`);
   renderWorkspaceSaveBar();
 }
 
@@ -26746,7 +26706,7 @@ function renderWorkspaceDetails(node) {
     const keys = Array.from(state.workspaceChildrenSel || []);
     const tagKeys = keys.filter((k) => k.includes('::'));
     if (!tagKeys.length) return;
-    if (!window.confirm(`Delete ${tagKeys.length} tag(s)? (Applied on Save / Save+Reload.)`)) return;
+    if (!window.confirm(`Delete ${tagKeys.length} tag(s)? (Activate with Save & Apply.)`)) return;
 
     const delSet = new Set(tagKeys);
     state.tagConfigAll = (state.tagConfigAll || []).filter((t) => !delSet.has(makeTagKey(t)));
@@ -26754,7 +26714,7 @@ function renderWorkspaceDetails(node) {
       for (const k of delSet.values()) state.tagConfigEdited.delete(k);
     }
     markTagsDirty(true);
-    blockWorkspaceApplyPollingBriefly();
+    blockWorkspaceApplyBriefly();
     clearSelection();
     renderWorkspaceTree();
   };
@@ -27082,68 +27042,41 @@ async function refreshWorkspaceConfigViews() {
   }
 }
 
-async function saveWorkspaceAll({ applyPolling = false, rebuildOpcua = false } = {}) {
-  if (state.workspaceSaveInFlight || state.runtimeReloadBusy) return;
-  if (!rebuildOpcua && !workspaceIsDirty()) return;
-  if (rebuildOpcua && !workspaceIsDirty() && !window.confirm('Rebuild the full OPCBridge runtime and OPC UA namespace now?')) return;
-  if (state.workspaceLoadPromise) return;
+async function saveWorkspaceAll({ apply = true } = {}) {
+  if (!canEditConfig()) { openLoginModal(); return; }
+  if (state.workspaceSaveInFlight || state.runtimeReloadBusy || state.workspaceLoadPromise) return;
+  if (!workspaceIsDirty()) return;
+  if (apply && Date.now() < Number(state.workspaceApplyBlockUntil || 0)) return;
   state.workspaceSaveInFlight = true;
-  state.workspaceRebuildInFlight = rebuildOpcua;
-  setWorkspaceSaveStatus(rebuildOpcua
-    ? (workspaceIsDirty() ? 'Saving changes before rebuilding…' : 'Requesting OPC UA rebuild…')
-    : 'Saving Workspace changes…');
+  setWorkspaceSaveStatus('Saving Workspace changes…');
   renderWorkspaceSaveBar();
   try {
     await new Promise((resolve) => window.setTimeout(resolve, 0));
-    await saveWorkspaceAllImpl({ applyPolling, rebuildOpcua });
+    const saved = await saveWorkspaceAllImpl();
+    if (saved && apply) {
+      state.workspaceApplyInFlight = true;
+      await applySavedWorkspaceConfig();
+    }
   } finally {
-    state.workspaceRebuildInFlight = false;
+    state.workspaceApplyInFlight = false;
     state.workspaceSaveInFlight = false;
     setWorkspaceLoading();
     renderWorkspaceSaveBar();
   }
 }
 
-async function saveWorkspaceAllImpl({ applyPolling = false, rebuildOpcua = false } = {}) {
-  if (applyPolling && Date.now() < Number(state.workspaceApplyPollingBlockUntil || 0)) {
-    setWorkspaceSaveStatus('Tag delete staged. Click Save & Apply Changes when ready.');
-    renderWorkspaceSaveBar();
-    return;
-  }
-  if (!workspaceIsDirty()) {
-    if (!rebuildOpcua) return;
-    setWorkspaceSaveStatus('Rebuilding OPC UA namespace…');
-    renderWorkspaceSaveBar();
-    try {
-      await opcbridgeReload();
-      setWorkspaceSaveStatus('Reloaded. Refreshing…');
-      await Promise.all([loadConnectionsList(), loadTagsConfig(), loadOpcbridgeAlarmsConfig().catch(() => null)]);
-      renderWorkspaceTree();
-      setWorkspaceSaveStatus('OPC UA namespace rebuilt.');
-    } catch (err) {
-      setWorkspaceSaveStatus(/timeout|timed out/i.test(String(err?.message || err))
-        ? 'Rebuild request could not be confirmed. The server may still be working; check runtime status before retrying.'
-        : `OPC UA rebuild failed: ${err.message}`);
-    } finally {
-      renderWorkspaceSaveBar();
-    }
-    return;
-  }
+async function saveWorkspaceAllImpl() {
+  if (!workspaceIsDirty()) return;
   setWorkspaceSaveStatus('Saving…');
   renderWorkspaceSaveBar();
-  let pollingReloadResult = null;
   try {
-    const changedConnectionIds = new Set();
     // 0) Apply staged deletes
     if (state.workspaceDeletePaths && state.workspaceDeletePaths.size) {
       for (const relPath of Array.from(state.workspaceDeletePaths.values())) {
         const oldObj = state.connObjCache?.get?.(relPath);
         const oldId = String(oldObj?.id || connectionIdForConnFilePath(relPath) || '').trim();
-        if (oldId) {
-          changedConnectionIds.add(oldId);
-          if (String(relPath).startsWith('connections/')) {
-            state.workspaceDeletedTagConnectionIds.add(oldId);
-          }
+        if (oldId && String(relPath).startsWith('connections/')) {
+          state.workspaceDeletedTagConnectionIds.add(oldId);
         }
         try {
           await apiPostJson('/api/opcbridge/config/delete', { path: relPath });
@@ -27163,22 +27096,16 @@ async function saveWorkspaceAllImpl({ applyPolling = false, rebuildOpcua = false
       for (const [pathRel, obj] of state.workspaceConnDirty.entries()) {
         if (!obj || typeof obj !== 'object') throw new Error(`Invalid connection object for ${pathRel}`);
         if (!String(obj.id || '').trim()) throw new Error(`Connection config must contain string field 'id' (${pathRel})`);
-        const oldObj = state.connObjCache?.get?.(pathRel);
-        const oldId = String(oldObj?.id || connectionIdForConnFilePath(pathRel) || '').trim();
-        const newId = String(obj.id || '').trim();
-        if (oldId) changedConnectionIds.add(oldId);
-        if (newId) changedConnectionIds.add(newId);
         await apiPostJson('/api/opcbridge/config/file', { path: pathRel, content: prettyJson(obj) });
         if (state.connObjCache) state.connObjCache.set(String(pathRel), obj);
       }
     }
 
     // 2) Save tags config (includes any edits staged in tags config page + workspace popups)
-  if (state.tagConfigDirty) {
-    const baseTags = Array.isArray(state.tagConfigLoadedAll) ? state.tagConfigLoadedAll : state.tagConfigAll;
-    const effective = getEffectiveTagsAll();
-    const tagChanged = await saveTagsForChangedConnections(baseTags, effective);
-      tagChanged.forEach((cid) => { if (cid) changedConnectionIds.add(cid); });
+    if (state.tagConfigDirty) {
+      const baseTags = Array.isArray(state.tagConfigLoadedAll) ? state.tagConfigLoadedAll : state.tagConfigAll;
+      const effective = getEffectiveTagsAll();
+      await saveTagsForChangedConnections(baseTags, effective);
     }
 
     const effectiveTagsForHistorian = getEffectiveTagsAll();
@@ -27195,19 +27122,6 @@ async function saveWorkspaceAllImpl({ applyPolling = false, rebuildOpcua = false
       state.alarmsConfigDirty = false;
     }
 
-	    if (rebuildOpcua) {
-	      setWorkspaceSaveStatus('Saved. Rebuilding OPC UA namespace…');
-	      renderWorkspaceSaveBar();
-	      await opcbridgeReload();
-	    } else if (applyPolling) {
-	      const ids = Array.from(changedConnectionIds).filter(Boolean);
-	      if (ids.length) {
-	        setWorkspaceSaveStatus(`Saved. Applying runtime changes to ${ids.map(displayConnectionName).join(', ')}…`);
-	        renderWorkspaceSaveBar();
-	        pollingReloadResult = await opcbridgeReloadConnections(ids);
-	      }
-	    }
-
     // Clear dirty state and refresh
     if (state.workspaceConnDirty) state.workspaceConnDirty.clear();
     state.tagConfigEdited = new Map();
@@ -27220,13 +27134,12 @@ async function saveWorkspaceAllImpl({ applyPolling = false, rebuildOpcua = false
     await Promise.all([loadConnectionsList(), loadTagsConfig(), loadOpcbridgeAlarmsConfig().catch(() => null)]);
     await loadWorkspaceConnectionObjects();
     renderWorkspaceTree();
-	    setWorkspaceSaveStatus(rebuildOpcua
-	      ? 'Saved. OPC UA namespace rebuilt.'
-	      : (applyPolling ? summarizeOpcuaSyncResults(pollingReloadResult?.results || []) : 'Saved. OPC UA namespace rebuild may be required for structural changes.'));
+    setWorkspaceSaveStatus('Saved. Click Apply when ready to activate the saved configuration.');
+    return true;
   } catch (err) {
     const msg = String(err?.message || err || '');
     const lowerMsg = msg.toLowerCase();
-    if (!rebuildOpcua && (lowerMsg.includes('upstream timeout') || lowerMsg.includes('request timed out'))) {
+    if (lowerMsg.includes('upstream timeout') || lowerMsg.includes('request timed out')) {
       setWorkspaceSaveStatus('Save is taking longer than expected (timeout). The server may still be working; waiting a moment then refreshing…');
       renderWorkspaceSaveBar();
       setTimeout(async () => {
@@ -27234,21 +27147,62 @@ async function saveWorkspaceAllImpl({ applyPolling = false, rebuildOpcua = false
           await Promise.all([loadConnectionsList(), loadTagsConfig(), loadOpcbridgeAlarmsConfig().catch(() => null)]);
           await loadWorkspaceConnectionObjects();
           renderWorkspaceTree();
-          setWorkspaceSaveStatus(rebuildOpcua
-            ? 'Saved. OPC UA namespace rebuilt.'
-            : (applyPolling ? summarizeOpcuaSyncResults(pollingReloadResult?.results || []) : 'Saved.'));
+          setWorkspaceSaveStatus('Save could not be confirmed. Review the saved configuration before applying.');
           renderWorkspaceSaveBar();
         } catch {
           // keep the prior status
         }
       }, 5000);
     } else {
-      setWorkspaceSaveStatus(rebuildOpcua && /timeout|timed out/i.test(msg)
-        ? 'Save/rebuild request could not be confirmed. The server may still be working; check runtime status before retrying.'
-        : `Save failed: ${msg}`);
+      setWorkspaceSaveStatus(`Save failed: ${msg}`);
     }
+    return false;
   } finally {
     renderWorkspaceSaveBar();
+  }
+}
+
+async function applyWorkspaceChanges() {
+  if (!canEditConfig()) { openLoginModal(); return; }
+  if (state.workspaceSaveInFlight || state.runtimeReloadBusy || state.workspaceLoadPromise) return;
+  if (Date.now() < Number(state.workspaceApplyBlockUntil || 0)) return;
+  if (workspaceIsDirty()) {
+    setWorkspaceSaveStatus('Use Save & Apply, or save your changes before clicking Apply.');
+    return;
+  }
+  state.workspaceSaveInFlight = true;
+  state.workspaceApplyInFlight = true;
+  renderWorkspaceSaveBar();
+  try {
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    await applySavedWorkspaceConfig();
+  } finally {
+    state.workspaceApplyInFlight = false;
+    state.workspaceSaveInFlight = false;
+    setWorkspaceLoading();
+    renderWorkspaceSaveBar();
+  }
+}
+
+async function applySavedWorkspaceConfig() {
+  setWorkspaceSaveStatus('Applying saved configuration…');
+  let applied = false;
+  try {
+    // Apply the complete saved configuration, including structural UA changes.
+    // This also works after earlier saves or a browser refresh; no edit flags are needed.
+    await opcbridgeReload();
+    applied = true;
+    setWorkspaceSaveStatus('Applied. Refreshing Workspace…');
+    await Promise.all([loadConnectionsList(), loadTagsConfig(), loadOpcbridgeAlarmsConfig().catch(() => null)]);
+    await loadWorkspaceConnectionObjects();
+    renderWorkspaceTree();
+    setWorkspaceSaveStatus('Saved configuration applied.');
+  } catch (err) {
+    setWorkspaceSaveStatus(applied
+      ? `Configuration applied, but Workspace refresh failed: ${err.message}`
+      : (/timeout|timed out/i.test(String(err?.message || err))
+        ? 'Apply could not be confirmed. Check runtime status before retrying.'
+        : `Apply failed: ${err.message}`));
   }
 }
 
