@@ -47,6 +47,48 @@ int main() {
     UA_Server *server = UA_Server_new();
     UA_ServerConfig_setDefault(UA_Server_getConfig(server));
     UA_Server_addNamespace(server, "urn:opcbridge:quality-test");
+    // An unchanged Kraft-like reload must retain all 70 derived nodes, not
+    // mistake their lack of physical handles for removal from configuration.
+    {
+        g_uaServer = server;
+        g_uaBridgeNodeId = UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER);
+        DriverContext kraft; kraft.conn.id = "ReloadKraft"; kraft.conn.driver = "modbus_tcp";
+        for (int i = 0; i < 16; ++i) {
+            TagRuntime source; source.handle = 1; source.cfg.logical_name = "Source" + std::to_string(i);
+            source.cfg.datatype = "int16"; kraft.tags.push_back(source);
+        }
+        for (int i = 0; i < 70; ++i) {
+            TagRuntime derived; derived.cfg.logical_name = "Derived" + std::to_string(i);
+            derived.cfg.source_tag = "Source0"; derived.cfg.datatype = "int16";
+            kraft.tags.push_back(derived);
+        }
+        OpcUaSyncResult result; std::string error;
+        assert(sync_opcua_connection_nodes(kraft, result, error));
+        assert(result.added == 86 && result.retired == 0 && !result.full_rebuild_required);
+        for (int repeat = 0; repeat < 2; ++repeat) {
+            assert(sync_opcua_connection_nodes(kraft, result, error));
+            assert(result.updated == 86 && result.retired == 0 && !result.full_rebuild_required);
+            for (const auto &binding : g_uaBindings) assert(!binding.retired);
+        }
+        // Genuine removal still retires the removed node and requests cleanup.
+        kraft.tags.pop_back();
+        assert(sync_opcua_connection_nodes(kraft, result, error));
+        assert(result.retired == 1 && result.full_rebuild_required);
+        DriverContext remote; remote.conn.id = "ReloadRemote"; remote.conn.driver = "opcua_client";
+        TagRuntime input; input.cfg.logical_name = "RemoteValue"; input.cfg.datatype = "int32";
+        remote.tags.push_back(input);
+        assert(sync_opcua_connection_nodes(remote, result, error));
+        assert(result.added == 1 && !result.full_rebuild_required);
+        assert(sync_opcua_connection_nodes(remote, result, error));
+        assert(result.updated == 1 && result.retired == 0 && !result.full_rebuild_required);
+        TagRuntime invalid;
+        assert(!ua_tag_has_node(kraft.conn, invalid));
+        invalid.handle_deferred = true;
+        assert(ua_tag_has_node(kraft.conn, invalid));
+        for (auto &binding : g_uaBindings) UA_NodeId_clear(&binding.nodeId);
+        g_uaBindings.clear(); g_uaBindingIndex.clear();
+        g_uaServer = nullptr; g_uaBridgeNodeId = UA_NODEID_NULL;
+    }
     // Folder labels follow configuration; identity survives rename and duplicates.
     ConnectionConfig folder; folder.id = "connection_random"; folder.name = "B125";
     const UA_NodeId parent = UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER);

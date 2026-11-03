@@ -12209,6 +12209,13 @@ static UA_NodeId ua_ensure_connection_object(UA_Server *server,
                                              UA_NodeId bridgeId,
                                              const ConnectionConfig &conn);
 
+// Startup, node creation, and connection reload must use identical eligibility.
+// Derived tags and remote UA tags have no libplctag handle of their own.
+static bool ua_tag_has_node(const ConnectionConfig &conn, const TagRuntime &tag) {
+    return tag.handle >= 0 || tag.handle_deferred || is_memory_tag(tag.cfg) ||
+        !tag.cfg.source_tag.empty() || !tag.poll_source.empty() || is_opcua_client_driver_name(conn.driver);
+}
+
 static bool ua_add_tag_variable_node(UA_Server *server,
                                      UA_NodeId parent,
                                      std::deque<UaTagBinding> &bindings,
@@ -12524,8 +12531,7 @@ static bool ua_add_tag_variable_node(UA_Server *server,
                                      std::string &err) {
     const TagConfig &cfg = tag.cfg;
     err.clear();
-    if (tag.handle < 0 && !tag.handle_deferred && !is_memory_tag(tag.cfg) &&
-        tag.cfg.source_tag.empty() && tag.poll_source.empty() && !is_opcua_client_driver_name(conn.driver)) {
+    if (!ua_tag_has_node(conn, tag)) {
         err = "invalid handle";
         return false;
     }
@@ -12641,7 +12647,7 @@ static bool sync_opcua_connection_nodes(DriverContext &driver,
     std::unordered_set<std::string> liveKeys;
     for (auto &tag : driver.tags) {
         const std::string key = ua_key(driver.conn.id, tag.cfg.logical_name);
-        if (tag.handle < 0 && !tag.handle_deferred && !is_memory_tag(tag.cfg) && tag.poll_source.empty()) continue;
+        if (!ua_tag_has_node(driver.conn, tag)) continue;
 
         TagSnapshot seed = make_initial_snapshot_for_opcua(driver.conn, tag);
         UA_VariableAttributes tmpAttr = UA_VariableAttributes_default;
@@ -13243,8 +13249,7 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers,
         for (auto &tag : driver.tags) {
             const TagConfig &cfg = tag.cfg;
 
-            if (tag.handle < 0 && !tag.handle_deferred && !is_memory_tag(tag.cfg) &&
-                tag.cfg.source_tag.empty() && tag.poll_source.empty() && !is_opcua_client_driver_name(conn.driver)) {
+            if (!ua_tag_has_node(conn, tag)) {
                 std::cerr << "OPC UA: skipping tag '" << cfg.logical_name
                           << "' on connection '" << conn.id
                           << "' (invalid handle)\n";
