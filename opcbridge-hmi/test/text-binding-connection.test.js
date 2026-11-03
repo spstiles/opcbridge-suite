@@ -47,3 +47,22 @@ test('unavailable saved connections remain editable alongside the available conn
   assert.ok(select.options.some(option => option.value === 'plc_c'));
   assert.equal(select.value, 'offline_plc');
 });
+test('catalog arrival refreshes a picker opened before connections were loaded', () => {
+  const { context, select } = setup();
+  context.tagsCache = [];
+  context.setFriendlyConnectionInputValue(select, '');
+  assert.equal(select.options.length, 1);
+  select.id = 'textBindingConnection';
+  context.document.querySelectorAll = () => [select];
+  context.activeCompactTagBindingId = 'indicator';
+  context.tagBindingConnectionSelect = select;
+  let refreshedTags = false;
+  context.populateCompactTagBindingConnectionOptions = () => context.ensureFriendlyConnectionNames(select);
+  context.populateCompactTagBindingTagOptions = () => { refreshedTags = true; };
+  vm.runInContext(source.slice(source.indexOf('const refreshTagBindingCatalogOptions ='), source.indexOf('const loadTags =')), context);
+  context.tagsCache = [{ connection_id:'plc_b' }, { connection_id:'plc_a' }];
+  context.tagsCacheVersion++;
+  vm.runInContext('refreshTagBindingCatalogOptions()',context);
+  assert.deepEqual(select.options.map(option => option.textContent), ['Select connection…','Line A','Line B']);
+  assert.equal(refreshedTags,true);
+});

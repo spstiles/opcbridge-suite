@@ -375,6 +375,7 @@ const textBindingTitle = document.getElementById("textBindingTitle");
 const textBindingCloseBtn = document.getElementById("textBindingCloseBtn");
 const textBindingSourceTypeSelect = document.getElementById("textBindingSourceType");
 const textBindingConnectionRow = document.getElementById("textBindingConnectionRow");
+const textBindingPropertySelect = document.getElementById("textBindingProperty");
 const textBindingConnectionInput = document.getElementById("textBindingConnection");
 const textBindingTagRow = document.getElementById("textBindingTagRow");
 const textBindingTagInput = document.getElementById("textBindingTag");
@@ -392,6 +393,7 @@ const textBindingCancelBtn = document.getElementById("textBindingCancelBtn");
 const tagBindingOverlay = document.getElementById("tagBindingOverlay");
 const tagBindingTitle = document.getElementById("tagBindingTitle");
 const tagBindingCloseBtn = document.getElementById("tagBindingCloseBtn");
+const tagBindingPropertySelect = document.getElementById("tagBindingProperty");
 const tagBindingConnectionSelect = document.getElementById("tagBindingConnection");
 const tagBindingTagSelect = document.getElementById("tagBindingTag");
 const tagBindingTagFilterInput = document.getElementById("tagBindingTagFilter");
@@ -2239,7 +2241,7 @@ const getAutomationExpressionValidationError = (expression) => {
     return "Unsupported syntax in expression.";
   }
   const identifiers = withoutStrings.match(/\b[A-Za-z_][A-Za-z0-9_]*\b/g) || [];
-  const allowedIdentifiers = new Set(["tag", "min", "max", "abs", "round", "floor", "ceil", "true", "false", "null"]);
+  const allowedIdentifiers = new Set(["tag", "quality", "min", "max", "abs", "round", "floor", "ceil", "true", "false", "null"]);
   const invalidToken = identifiers.find((token) => !allowedIdentifiers.has(token));
   if (invalidToken) return `Unsupported token: ${invalidToken}`;
   try {
@@ -2251,6 +2253,7 @@ const getAutomationExpressionValidationError = (expression) => {
       "round",
       "floor",
       "ceil",
+      "quality",
       `"use strict"; return (${source});`
     );
     return "";
@@ -2295,6 +2298,7 @@ const compileVisibilityExpression = (expression) => {
       "round",
       "floor",
       "ceil",
+      "quality",
       `"use strict"; return (${source});`
     );
     visibilityExpressionFunctionCache.set(source, fn);
@@ -2319,7 +2323,8 @@ const evaluateVisibilityExpression = (expression) => {
       Math.abs,
       Math.round,
       Math.floor,
-      Math.ceil
+      Math.ceil,
+      getBoundTagQuality
     );
     return result;
   } catch {
@@ -2350,12 +2355,12 @@ const decodeExpressionStringLiteral = (literal) => {
 };
 
 const rewriteAutomationExpressionConnections = (expression, resolver) => String(expression || "").replace(
-  /tag\s*\(\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*,\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*\)/g,
+  /(?:tag|quality)\s*\(\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*,\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*\)/g,
   (match, connectionLiteral, tagLiteral) => {
     const connection = decodeExpressionStringLiteral(connectionLiteral);
     const tag = decodeExpressionStringLiteral(tagLiteral);
     const resolved = String(resolver(connection, tag) || connection);
-    return resolved === connection ? match : `tag(${JSON.stringify(resolved)}, ${JSON.stringify(tag)})`;
+    return resolved === connection ? match : `${match.trimStart().startsWith("quality") ? "quality" : "tag"}(${JSON.stringify(resolved)}, ${JSON.stringify(tag)})`;
   }
 );
 
@@ -2372,7 +2377,7 @@ const normalizeAutomationExpressionConnectionReferences = (expression) => rewrit
 const extractVisibilityExpressionTagKeys = (expression, out) => {
   const target = out instanceof Set ? out : new Set();
   const source = String(expression || "");
-  const regex = /tag\s*\(\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*,\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*\)/g;
+  const regex = /(?:tag|quality)\s*\(\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*,\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*\)/g;
   let match = regex.exec(source);
   while (match) {
     const connectionId = decodeExpressionStringLiteral(match[1]);
@@ -2388,7 +2393,7 @@ const extractAutomationExpressionTagReferences = (expression) => {
   const references = [];
   const seen = new Set();
   const source = String(expression || "");
-  const regex = /tag\s*\(\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*,\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*\)/g;
+  const regex = /(?:tag|quality)\s*\(\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*,\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*\)/g;
   let match = regex.exec(source);
   while (match) {
     const connection_id = decodeExpressionStringLiteral(match[1]);
@@ -7998,11 +8003,11 @@ const collectScreenReferenceMappings = () => {
           apply(replacement, resolved) {
             const parsed = parseMappedTagReference(replacement);
             if (!parsed) return false;
-            const expressionPattern = /tag\s*\(\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*,\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*\)/g;
+            const expressionPattern = /(?:tag|quality)\s*\(\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*,\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*\)/g;
             value.expression = String(value.expression || "").replace(expressionPattern, (match, connectionLiteral, tagLiteral) => {
               const matches = decodeExpressionStringLiteral(connectionLiteral) === reference.connection_id
                 && decodeExpressionStringLiteral(tagLiteral) === reference.tag;
-              return matches ? `tag(${JSON.stringify(parsed.connection_id)}, ${JSON.stringify(parsed.tag)})` : match;
+              return matches ? `${match.trimStart().startsWith("quality") ? "quality" : "tag"}(${JSON.stringify(parsed.connection_id)}, ${JSON.stringify(parsed.tag)})` : match;
             });
             value.status = resolved ? "resolved" : "unresolved";
             value.mappedReference = replacement;
@@ -8399,6 +8404,7 @@ let runtimeRenderDeferredTimer = null;
 let runtimePointerInteractionUntilMs = 0;
 const tagValueCache = new Map();
 const tagQualityCache = new Map();
+const tagQualityLabelCache = new Map();
 const activeTagInfoCache = new Map();
 let tagsCache = [];
 let tagsAllCache = [];
@@ -9860,7 +9866,7 @@ const normalizeTextBinding = (bind) => {
   if (!hasValue) return null;
   return sourceType === "expression"
     ? { sourceType, expression, digits, padZeros, decimals, multiplier }
-    : { sourceType, connection_id, tag, digits, padZeros, decimals, multiplier };
+    : { sourceType, connection_id, tag, property: bind.property === "quality" ? "quality" : "value", digits, padZeros, decimals, multiplier };
 };
 
 const getTextBindingsMap = (obj) => {
@@ -9957,7 +9963,7 @@ const renderBoundTemplate = (rawText, bindings, previewOnly = false) => {
     const cacheKey = bind.sourceType === "expression" ? "" : normalizeTagCacheKey(bind.connection_id, bind.tag);
     const rawValue = bind.sourceType === "expression"
       ? evaluateAutomationExpression(bind.expression)
-      : (cacheKey ? tagValueCache.get(cacheKey) : undefined);
+      : (bind.property === "quality" ? getBoundTagQuality(bind.connection_id, bind.tag) : (cacheKey ? tagValueCache.get(cacheKey) : undefined));
     return getTextBindingDisplayValue(rawValue, bind, previewOnly || isEditMode);
   });
 };
@@ -11984,14 +11990,33 @@ const normalizeTagQuality = (quality) => {
 };
 
 const isExplicitBadQuality = (quality) => normalizeTagQuality(quality) === 0;
+const tagQualityLabel = (quality) => {
+  const normalized = normalizeTagQuality(quality);
+  if (normalized === 1) return "GOOD";
+  if (normalized === 0) return "BAD";
+  const text = String(quality ?? "").trim().toUpperCase();
+  return text || "UNKNOWN";
+};
+const getBoundTagQuality = (connectionId, tag) => {
+  const key = normalizeTagCacheKey(connectionId, tag);
+  return tagQualityLabelCache.get(key) || tagQualityLabel(tagQualityCache.get(key));
+};
 const runtimeAutomationStateCache = new WeakMap();
 const runtimeAutomationNumberCache = new WeakMap();
 const runtimeTextBindingDisplayCache = new WeakMap();
 
-const applyTagSnapshotToCache = (key, value, quality, hasValue, hasQuality) => {
+const applyTagSnapshotToCache = (key, value, quality, hasValue, hasQuality, pollingState = "") => {
   if (!key) return false;
   let changed = false;
   const normalizedQuality = hasQuality ? normalizeTagQuality(quality) : null;
+  if (hasQuality) {
+    const state = String(pollingState || "").toLowerCase();
+    const label = ["inactive", "waiting"].includes(state) ? state.toUpperCase() : tagQualityLabel(quality);
+    if (tagQualityLabelCache.get(key) !== label) {
+      tagQualityLabelCache.set(key, label);
+      changed = true;
+    }
+  }
 
   if (hasQuality && tagQualityCache.get(key) !== normalizedQuality) {
     tagQualityCache.set(key, normalizedQuality);
@@ -12165,7 +12190,8 @@ const applyTagRowsToCache = (rows) => {
       tag.value,
       tag.quality,
       Object.prototype.hasOwnProperty.call(tag, "value"),
-      Object.prototype.hasOwnProperty.call(tag, "quality")
+      Object.prototype.hasOwnProperty.call(tag, "quality"),
+      tag.polling_state
     ) || changed;
   });
   return changed;
@@ -12329,7 +12355,8 @@ const connectWebSocket = () => {
           payload.value,
           payload.quality,
           Object.prototype.hasOwnProperty.call(payload, "value"),
-          Object.prototype.hasOwnProperty.call(payload, "quality")
+          Object.prototype.hasOwnProperty.call(payload, "quality"),
+          payload.polling_state
         );
         if (changed) scheduleRuntimeRender([normalizeWsTagKey(payload.connection_id, payload.name)]);
       }
@@ -12772,6 +12799,7 @@ const closeTextBindingModal = () => {
 
 const updateTextBindingSourceUi = () => {
   const expressionMode = textBindingSourceTypeSelect?.value === "expression";
+  if (textBindingPropertySelect) textBindingPropertySelect.closest(".prop-row").hidden = expressionMode;
   textBindingConnectionRow?.classList.toggle("is-hidden", expressionMode);
   if (textBindingConnectionRow) textBindingConnectionRow.hidden = expressionMode;
   textBindingTagRow?.classList.toggle("is-hidden", expressionMode);
@@ -12892,10 +12920,12 @@ const openTextBindingModal = (placeholderKey, objectType = "text") => {
   const key = String(placeholderKey || "").trim();
   if (!key) return;
   const binding = objectType === "button" ? (getButtonLabelBindingsMap(obj)[key] || null) : (getTextBindingsMap(obj)[key] || null);
+  if (!tagCatalogLoaded) void loadTags();
   textBindingModalKey = key;
   textBindingModalObjectType = objectType;
   if (textBindingTitle) textBindingTitle.textContent = `${objectType === "button" ? "Button Label" : "Text"} Binding {${key}}`;
   if (textBindingSourceTypeSelect) textBindingSourceTypeSelect.value = binding?.sourceType === "expression" ? "expression" : "tag";
+  if (textBindingPropertySelect) textBindingPropertySelect.value = binding?.property === "quality" ? "quality" : "value";
   setTagBindingFieldValues(textBindingConnectionInput, textBindingTagInput, binding);
   setInputValueSafe(textBindingExpressionInput, binding?.expression || "");
   updateTextBindingSourceUi();
@@ -13083,6 +13113,16 @@ const loadLiveTagsForModal = async () => {
   }
 };
 
+const refreshTagBindingCatalogOptions = () => {
+  document.querySelectorAll("select.automation-tag-input, #visibilityExprTagConnection, #rectColorExprTagConnection").forEach(select => {
+    if (/connection/i.test(select.id)) populateConnectionSelect(select);
+  });
+  if (activeCompactTagBindingId) {
+    populateCompactTagBindingConnectionOptions();
+    populateCompactTagBindingTagOptions(tagBindingConnectionSelect?.value || "");
+  }
+};
+
 const loadTags = async () => {
   if (tagsStatus) tagsStatus.textContent = "Loading…";
   const busyToken = isEditMode
@@ -13124,6 +13164,7 @@ const loadTags = async () => {
     ).filter(Boolean));
     tagCatalogLoaded = true;
     tagsCacheVersion += 1;
+    refreshTagBindingCatalogOptions();
     invalidateReferenceHealthCache();
     if (isEditMode) void scanSystemReferenceHealth({ force: true });
     const repairedScreenReferences = repairScreenTagConnections(currentScreenObj);
@@ -13149,7 +13190,8 @@ const loadTags = async () => {
           tag.value,
           tag.quality,
           Object.prototype.hasOwnProperty.call(tag, "value"),
-          Object.prototype.hasOwnProperty.call(tag, "quality")
+          Object.prototype.hasOwnProperty.call(tag, "quality"),
+          tag.polling_state
         );
       });
       if (!isEditMode) {
@@ -13172,6 +13214,7 @@ const loadTags = async () => {
     knownTagKeysCache = new Set();
     tagCatalogLoaded = false;
     tagsCacheVersion += 1;
+    refreshTagBindingCatalogOptions();
     invalidateReferenceHealthCache();
     if (isEditMode && selectedIndices.length === 1) {
       syncPropertiesFromSelection();
@@ -13833,7 +13876,7 @@ const resolveIndicatorState = (obj) => {
   if (isEditMode || !key) {
     return states[0] || null;
   }
-  const raw = tagValueCache.get(key);
+  const raw = bind.property === "quality" ? getBoundTagQuality(connectionId, tagName) : tagValueCache.get(key);
   if (raw === undefined || raw === null) return states[0] || null;
   if (mode === "equals") {
     return states.find((state) => matchesIndicatorEquals(raw, state?.value)) || states[0] || null;
@@ -22792,6 +22835,7 @@ if (textBindingSaveBtn) {
     }
     const patch = {
       sourceType,
+      property: textBindingPropertySelect?.value === "quality" ? "quality" : "value",
       ...(sourceType === "expression"
         ? { expression, connection_id: "", tag: "" }
         : { expression: "", connection_id: String(textBindingConnectionInput?.value || "").trim(), tag: String(textBindingTagInput?.value || "").trim() }),
@@ -22864,7 +22908,7 @@ if (tagBindingSaveBtn) {
     if (config.connectionInput) setFriendlyConnectionInputValue(config.connectionInput, connection_id);
     if (config.tagInput) config.tagInput.value = tag;
     if (config.tagSelect) setSelectValueSafe(config.tagSelect, formatTagSelectValue(connection_id, tag));
-    config.apply({ connection_id, tag });
+    config.apply({ connection_id, tag, ...(activeCompactTagBindingId === "indicator" ? { property: tagBindingPropertySelect?.value === "quality" ? "quality" : "value" } : {}) });
     closeCompactTagBindingModal();
     renderCompactTagBindingRows();
   });
@@ -25842,6 +25886,11 @@ function openCompactTagBindingModal(id) {
   activeCompactTagBindingId = id;
   if (tagBindingTitle) tagBindingTitle.textContent = config.modalTitle || config.label || "Tag Binding";
   const binding = config.read();
+  if (tagBindingPropertySelect) {
+    tagBindingPropertySelect.closest(".prop-row").hidden = id !== "indicator";
+    tagBindingPropertySelect.value = binding.property === "quality" ? "quality" : "value";
+  }
+  if (!tagCatalogLoaded) void loadTags();
   refreshAliasInsertionControls();
   if (tagBindingTagFilterInput) tagBindingTagFilterInput.value = "";
   if (tagBindingTemplateInput) {
@@ -26097,9 +26146,10 @@ function initializeCompactTagBindingRows() {
     modalTitle: "Indicator Tag",
     read: () => ({
       connection_id: String(indicatorConnectionInput?.value || "").trim(),
-      tag: parseTagSelectValue(indicatorTagSelect?.value || "").tag
+      tag: parseTagSelectValue(indicatorTagSelect?.value || "").tag,
+      property: getActiveObjects()?.[selectedIndices[0]]?.bindValue?.property || "value"
     }),
-    apply: ({ connection_id, tag }) => updateIndicatorBindProperty({ connection_id, tag })
+    apply: ({ connection_id, tag, property }) => updateIndicatorBindProperty({ connection_id, tag, property: property || "value" })
   });
 
   registerCompactTagBinding({
