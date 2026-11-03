@@ -752,6 +752,13 @@ Key concepts:
 - CSV export/import for alarms (fast redeploy)
 - JSON export/import for full config (advanced)
 
+Alarm CSV exports use `connection_name`, containing the connection name shown in
+Workspace. Imports resolve that name to the destination installation's internal
+connection ID. Older `connection_id` columns still accept either the displayed
+name or a legacy ID. Connection names are matched without regard to case;
+duplicate names are rejected as ambiguous. Tag names must still match the saved
+destination configuration exactly.
+
 Screenshot placeholder: Export CSV / Import CSV workflows.
 
 ---

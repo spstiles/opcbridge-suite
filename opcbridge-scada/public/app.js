@@ -12293,7 +12293,7 @@ const ALARM_CSV_HEADERS = [
   'name',
   'group',
   'site',
-  'connection_id',
+  'connection_name',
   'tag_name',
   'type',
   'value',
@@ -12345,7 +12345,16 @@ function unwrapAlarmCompareValue(value) {
   return cur;
 }
 
-function downloadAlarmsCsv({ group = '', site = '' } = {}) {
+async function downloadAlarmsCsv({ group = '', site = '' } = {}) {
+  let connections;
+  try {
+    const snapshot = await apiGet('/api/opcbridge/workspace/config');
+    if (!snapshot?.ok || !Array.isArray(snapshot.connections)) throw new Error('Connection list unavailable');
+    connections = new Map(snapshot.connections.map(c => [String(c.id || ''), String(c.description || c.name || c.id || '').trim()]));
+  } catch (err) {
+    window.alert(`Cannot export alarms CSV: ${err.message}`);
+    return;
+  }
   const cfg = state.alarmsConfig || { alarms: [] };
   const g = String(group || '').trim();
   const s = String(site || '').trim();
@@ -12367,7 +12376,7 @@ function downloadAlarmsCsv({ group = '', site = '' } = {}) {
     name: String(a?.name || a?.id || '').trim(),
     group: String(a?.group || '').trim(),
     site: String(a?.site || '').trim(),
-    connection_id: String(a?.connection_id || '').trim(),
+    connection_name: connections.get(String(a?.connection_id || '').trim()) || displayConnectionName(a?.connection_id),
     tag_name: String(a?.tag_name || a?.tag || '').trim(),
     type: String(a?.type || '').trim(),
     value: alarmCsvValueText(a),
@@ -12826,6 +12835,31 @@ async function importTagsCsvIntoWorkspace(connectionId) {
   setWorkspaceSaveStatus(`Imported tags CSV for ${connectionName}: upserted ${Number(result?.upserted || 0)}, deleted ${Number(result?.deleted || 0)}${skipText}. Rebuilt full runtime.${historianSyncText}`);
 }
 
+function alarmCsvConnectionResolver(connections, tags) {
+  const names = new Map();
+  const ids = new Set();
+  const add = (id, name) => {
+    if (!id) return;
+    ids.add(id);
+    const key = name.trim().toLowerCase();
+    if (!names.has(key)) names.set(key, new Set());
+    names.get(key).add(id);
+  };
+  (connections || []).forEach(c => add(String(c.id || '').trim(), String(c.description || c.name || c.id || '').trim()));
+  (tags || []).forEach(t => {
+    const id = String(t.connection_id || '').trim();
+    if (!ids.has(id)) add(id, id === '_memory' ? 'Memory' : id === '_system' ? 'System' : id);
+  });
+  return (value, legacy = false) => {
+    const text = String(value || '').trim();
+    const matches = new Set(names.get(text.toLowerCase()) || []);
+    if (legacy && ids.has(text)) matches.add(text);
+    if (matches.size > 1) return { error: `ambiguous connection name '${text}'` };
+    if (!matches.size) return { error: `unknown connection name '${text}'` };
+    return { id: matches.values().next().value };
+  };
+}
+
 async function importAlarmsCsv() {
   if (!canEditConfig()) { window.alert('Login required to import alarms.'); return; }
   const csvText = await pickCsvText();
@@ -12834,13 +12868,14 @@ async function importAlarmsCsv() {
   const { records } = parseCsv(csvText);
   if (!records.length) { window.alert('CSV had no data rows (make sure the first row is a header).'); return; }
 
-  // Validate imported alarms against configured tags (not runtime tags).
-  // This prevents "phantom" alarms created by typos in connection_id/tag_name.
-  if (!Array.isArray(state.tagConfigLoadedAll) || state.tagConfigLoadedAll.length === 0) {
-    await loadTagsConfig().catch(() => null);
+  // Read a fresh saved configuration without replacing any unsaved Workspace edits.
+  const snapshot = await apiGet('/api/opcbridge/workspace/config');
+  if (!snapshot?.ok || !Array.isArray(snapshot.tags) || !Array.isArray(snapshot.connections)) {
+    throw new Error('Saved connection/tag configuration is unavailable.');
   }
+  const resolveConnection = alarmCsvConnectionResolver(snapshot.connections, snapshot.tags);
   const tagRefSet = new Set();
-  (Array.isArray(state.tagConfigLoadedAll) ? state.tagConfigLoadedAll : []).forEach((t) => {
+  snapshot.tags.forEach((t) => {
     const cid = String(t?.connection_id || '').trim();
     if (!cid) return;
     const add = (ref) => {
@@ -12853,7 +12888,7 @@ async function importAlarmsCsv() {
     if (t?.address != null) add(String(t.address));
   });
   if (tagRefSet.size === 0) {
-    window.alert('Cannot import alarms CSV: configured tag list is empty or unavailable (needed to validate connection_id/tag_name).');
+    window.alert('Cannot import alarms CSV: configured tag list is empty or unavailable (needed to validate connection names and tag names).');
     return;
   }
 
@@ -12929,24 +12964,26 @@ async function importAlarmsCsv() {
       return;
     }
 
-    const rawConn = String(csvGet(r, 'connection_id') || '');
+    const namedConnection = String(csvGet(r, 'connection_name') || csvGet(r, 'connection') || '').trim();
+    const rawConn = namedConnection || String(csvGet(r, 'connection_id') || '');
     const rawTag = String(csvGet(r, 'tag_name') || csvGet(r, 'tag') || '');
-    const connectionId = rawConn.trim();
+    const connectionName = rawConn.trim();
     const tagName = rawTag.trim();
-    if (!connectionId || !tagName) {
+    if (!connectionName || !tagName) {
       skipped += 1;
       skippedMissing += 1;
-      if (!sampleMissing) sampleMissing = { id, reason: 'missing connection_id or tag_name' };
+      if (!sampleMissing) sampleMissing = { id, reason: 'missing connection name or tag_name' };
       return;
     }
-    // Guardrail: connection_id and tag_name should not contain whitespace.
-    // Whitespace (including accidental spaces) can cause imports to create duplicate alarms.
-    if (/\s/.test(connectionId)) {
+    const resolved = resolveConnection(connectionName, !namedConnection);
+    if (resolved.error) {
       skipped += 1;
       skippedInvalid += 1;
-      if (!sampleInvalid) sampleInvalid = { id, reason: `invalid connection_id (contains whitespace): '${connectionId}'` };
+      failures.push({ row: recordIdx + 2, id, connection_name: connectionName, tag_name: tagName, reason: resolved.error });
+      if (!sampleInvalid) sampleInvalid = { id, reason: resolved.error };
       return;
     }
+    const connectionId = resolved.id;
     if (/\s/.test(tagName)) {
       skipped += 1;
       skippedInvalid += 1;
@@ -12961,11 +12998,11 @@ async function importAlarmsCsv() {
       failures.push({
         row: recordIdx + 2, // +1 for 0-index, +1 for header line
         id,
-        connection_id: connectionId,
+        connection_name: connectionName,
         tag_name: tagName,
         reason: 'unknown tag (not in configured tag list)'
       });
-      if (!sampleInvalid) sampleInvalid = { id, reason: `unknown tag '${connectionId}:${tagName}'` };
+      if (!sampleInvalid) sampleInvalid = { id, reason: `unknown tag '${connectionName}:${tagName}'` };
       return;
     }
 
@@ -13072,14 +13109,14 @@ async function importAlarmsCsv() {
   window.alert(msg);
 
   if (failures.length) {
-    const lines = failures.slice(0, 12).map((f) => `- row ${f.row}: ${f.id}: ${f.connection_id}:${f.tag_name}`);
+    const lines = failures.slice(0, 12).map((f) => `- row ${f.row}: ${f.id}: ${f.connection_name}:${f.tag_name} — ${f.reason}`);
     const extra = failures.length > 12 ? `\n… +${failures.length - 12} more` : '';
-    const prompt = `Some rows were rejected and not imported (unknown tag):\n\n${lines.join('\n')}${extra}\n\nDownload a failures CSV now?`;
+    const prompt = `Some rows were rejected and not imported:\n\n${lines.join('\n')}${extra}\n\nDownload a failures CSV now?`;
     if (window.confirm(prompt)) {
       downloadTextFile({
         filename: `opcbridge-alarms-import-failures-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`,
         mime: 'text/csv',
-        text: toCsv(failures, ['row', 'id', 'connection_id', 'tag_name', 'reason'])
+        text: toCsv(failures, ['row', 'id', 'connection_name', 'tag_name', 'reason'])
       });
     }
   }

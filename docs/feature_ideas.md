@@ -1,5 +1,23 @@
 # Feature Ideas
 
+## DXF Import for HMI Backgrounds
+
+Import existing CAD drawings such as plant layouts and process diagrams by
+converting DXF files to SVG for use as HMI backgrounds.
+
+Initial scope:
+- Upload a DXF and preview the converted drawing.
+- Choose which layers to include, allowing dimensions and construction lines to be hidden.
+- Preserve drawing proportions and fit the SVG to the HMI canvas.
+- Treat the drawing as one background object, with existing HMI values, indicators, and controls placed over it.
+- Test text, fonts, blocks, units, and geometry fidelity against real drawings before selecting a converter; review converter licensing and dependencies.
+
+Later possibilities:
+- Select individual drawing elements and bind appearance or behavior to tags.
+- Consider direct DWG import after establishing the DXF workflow.
+
+This is future work; no importer implementation is included yet.
+
 ## Native HMI Arc Objects
 
 Initial open-arc implementation added: drag start/end points in any quadrant for a 90° bend,
