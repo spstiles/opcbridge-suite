@@ -1210,6 +1210,8 @@ struct BlockPollMetrics {
 };
 
 struct ConnPollMetrics {
+    // Successful server-status reads verify UA communication independently of value changes.
+    std::atomic<int64_t> remote_ua_verified_ts_ms{-1};
     IdleConnectionProbe idle_probe;
     ActiveSweep active_sweep;
     std::atomic<uint64_t> reads_total{0};
@@ -24819,6 +24821,11 @@ window.addEventListener("load", startAutoRefresh);
 									}
 								}
 								runtimeIssue = connection_runtime_issue(connectionMetrics);
+                                const int64_t uaVerified = connectionMetrics
+                                    ? connectionMetrics->remote_ua_verified_ts_ms.load(std::memory_order_relaxed) : -1;
+                                const bool uaCommunicationHealthy = is_opcua_client_driver_name(driver.conn.driver) &&
+                                    runtimeIssue.empty() && uaVerified >= 0 && now_epoch_ms >= uaVerified &&
+                                    now_epoch_ms - uaVerified <= 15000;
 
 								large_time_sliced = (driver.conn.polling_mode == "time_sliced" || driver.tags.size() >= 500);
 								if (large_time_sliced && !demandDriven) {
@@ -24866,7 +24873,9 @@ window.addEventListener("load", startAutoRefresh);
 											std::max<int64_t>(static_cast<int64_t>(scan_ms) * 6, 15000),
 											freshness_budget_ms
 										);
-										bool recent = (age_ms >= 0 && age_ms <= budget_ms);
+										// UA data-change silence is normal for unchanged values. Keep the
+                                        // original value timestamp; verify transport separately.
+                                        bool recent = uaCommunicationHealthy || (age_ms >= 0 && age_ms <= budget_ms);
 
 									if (recent && snap.quality == 1) {
 										++good_recent;
@@ -24888,17 +24897,19 @@ window.addEventListener("load", startAutoRefresh);
 								const int64_t last_read_age_ms = (metric_last_read_ts_ms >= 0)
 									? (now_epoch_ms - metric_last_read_ts_ms)
 									: -1;
-								if (!intentionallyIdle && last_read_age_ms >= 0 && (runtime_last_read_age_ms < 0 || last_read_age_ms < runtime_last_read_age_ms)) {
+								if (uaCommunicationHealthy && (runtime_last_read_age_ms < 0 || now_epoch_ms - uaVerified < runtime_last_read_age_ms))
+                                    runtime_last_read_age_ms = now_epoch_ms - uaVerified;
+                                if (!intentionallyIdle && last_read_age_ms >= 0 && (runtime_last_read_age_ms < 0 || last_read_age_ms < runtime_last_read_age_ms)) {
 									runtime_last_read_age_ms = last_read_age_ms;
 								}
 								const int64_t stall_budget_ms = std::max<int64_t>(
 									60000,
 									expected_sweep_ms > 0 ? expected_sweep_ms * 3 : freshness_budget_ms
 								);
-								const bool connection_stalled = !intentionallyIdle && (last_read_age_ms >= 0 && last_read_age_ms > stall_budget_ms);
+								const bool connection_stalled = !uaCommunicationHealthy && !intentionallyIdle && (last_read_age_ms >= 0 && last_read_age_ms > stall_budget_ms);
 								if (connection_stalled) stalled_connection_count++;
 								const bool transient_full_bad_snapshot =
-									(good_recent == 0 &&
+									(!is_opcua_client_driver_name(driver.conn.driver) && good_recent == 0 &&
 									 total_seen > 0 &&
 									 stale_or_bad == total_seen &&
 									 last_ok_age_ms >= 0 &&
@@ -24935,7 +24946,7 @@ window.addEventListener("load", startAutoRefresh);
 										// Poll loop may be behind briefly; avoid flapping ERROR unless we've
 										// had no good snapshots for an extended period.
 										const int64_t hard_grace_ms = 120000; // 2 minutes
-										if (last_ok_age_ms >= 0 && last_ok_age_ms <= hard_grace_ms) {
+										if (!is_opcua_client_driver_name(driver.conn.driver) && last_ok_age_ms >= 0 && last_ok_age_ms <= hard_grace_ms) {
 											dstatus["status"] = "ok";
 											dstatus["reason"] = "recovering after recent read timeouts";
 											++ok_count;
@@ -25005,6 +25016,8 @@ window.addEventListener("load", startAutoRefresh);
 								if (newest_age_ms >= 0) dstatus["newest_age_ms"] = newest_age_ms;
 								if (is_opcua_client_driver_name(driver.conn.driver)) {
 									dstatus["transport"] = "OPC UA subscription";
+                                    dstatus["communication_verified"] = uaCommunicationHealthy;
+                                    if (uaVerified >= 0) dstatus["communication_check_age_ms"] = now_epoch_ms - uaVerified;
 									dstatus["security_mode"] = driver.conn.opcua_secure
 										? "Basic256Sha256 / SignAndEncrypt"
 										: "Unsecured";
@@ -29437,16 +29450,23 @@ window.addEventListener("load", startAutoRefresh);
 								}
 							} pollerHandleCleanup{&spec.tags};
 
-							UA_Client *remoteUaClient = nullptr;
+							bool remoteUaSubscriptionInactive = false;
+                            UA_Client *remoteUaClient = nullptr;
 							bool remoteUaConnected = false;
 							auto remoteUaConnectRetryAfter = std::chrono::steady_clock::time_point{};
 							UA_UInt32 remoteUaSubscriptionId = 0;
 							auto remoteUaSubscriptionRetryAfter = std::chrono::steady_clock::time_point{};
 							auto remoteUaLastIterate = std::chrono::steady_clock::time_point{};
+                            auto remoteUaLastHealthCheck = std::chrono::steady_clock::time_point{};
 							if (is_opcua_client_driver_name(spec.conn.driver)) {
 								remoteUaClient = UA_Client_new();
 							if (remoteUaClient) {
 								const UA_StatusCode configureRc = configure_remote_opcua_client(remoteUaClient, spec.conn);
+                                auto *config = UA_Client_getConfig(remoteUaClient);
+                                config->clientContext = &remoteUaSubscriptionInactive;
+                                config->subscriptionInactivityCallback = [](UA_Client *client, UA_UInt32, void *) {
+                                    *static_cast<bool*>(UA_Client_getConfig(client)->clientContext) = true;
+                                };
 								if (configureRc != UA_STATUSCODE_GOOD) {
 									set_connection_runtime_issue(spec.metrics, remote_opcua_issue_text(configureRc));
 									std::cerr << "Remote OPC UA security setup '" << spec.conn.id << "' failed: "
@@ -29656,9 +29676,28 @@ window.addEventListener("load", startAutoRefresh);
 								    now - remoteUaLastIterate < std::chrono::milliseconds(25)) return;
 								remoteUaLastIterate = now;
 								if (!ensureRemoteUaSubscription()) return;
-								const UA_StatusCode iterateStatus = UA_Client_run_iterate(remoteUaClient, 0);
+								UA_StatusCode iterateStatus = UA_Client_run_iterate(remoteUaClient, 0);
+                                if (remoteUaSubscriptionInactive) {
+                                    remoteUaSubscriptionInactive = false;
+                                    iterateStatus = UA_STATUSCODE_BADTIMEOUT;
+                                }
+                                if (iterateStatus == UA_STATUSCODE_GOOD &&
+                                    (remoteUaLastHealthCheck.time_since_epoch().count() == 0 ||
+                                     now - remoteUaLastHealthCheck >= std::chrono::seconds(5))) {
+                                    remoteUaLastHealthCheck = now;
+                                    UA_Variant serverState;
+                                    UA_Variant_init(&serverState);
+                                    iterateStatus = UA_Client_readValueAttribute(remoteUaClient,
+                                        UA_NODEID_NUMERIC(0, UA_NS0ID_SERVER_SERVERSTATUS_STATE), &serverState);
+                                    UA_Variant_clear(&serverState);
+                                    if (spec.metrics) spec.metrics->remote_ua_verified_ts_ms.store(
+                                        iterateStatus == UA_STATUSCODE_GOOD ? std::chrono::duration_cast<std::chrono::milliseconds>(
+                                            std::chrono::system_clock::now().time_since_epoch()).count() : -1,
+                                        std::memory_order_relaxed);
+                                }
 								if (iterateStatus == UA_STATUSCODE_GOOD) return;
-								set_connection_runtime_issue(spec.metrics, remote_opcua_issue_text(iterateStatus));
+								if (spec.metrics) spec.metrics->remote_ua_verified_ts_ms.store(-1, std::memory_order_relaxed);
+                                set_connection_runtime_issue(spec.metrics, remote_opcua_issue_text(iterateStatus));
 								remoteUaConnected = false;
 								remoteUaSubscriptionId = 0;
 								remoteUaSubscriptionRetryAfter = now + std::chrono::seconds(1);

@@ -33,6 +33,12 @@ shows polling activity separately from the last successful communication check. 
 shows active sweep time and oldest active sample age; active sweep measurements
 reset when the active sources change and exclude idle communication probes.
 
+Remote OPC UA connections use subscriptions, so unchanged GOOD values do not
+become unhealthy just because no value-change notification arrives. A server-status
+read every five seconds verifies communication separately, without refreshing tag
+timestamps. Bad upstream quality, failed communication checks, and inactive
+subscriptions still affect connection health.
+
 
 ## Why OPCBridge Exists
 
