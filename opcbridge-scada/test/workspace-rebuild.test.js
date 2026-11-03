@@ -37,13 +37,14 @@ test('a wait deadline cannot be mistaken for successful completion', async () =>
   await assert.rejects(waiter([])({ maxWaitMs: 0 }), /could not be confirmed/);
 });
 
-function workspace() {
+function workspace({ pending = false } = {}) {
+  const server = { pending };
   const events = [];
   const messages = [];
   const state = {
     workspaceConnDirty: new Map(), workspaceDeletePaths: new Set(),
     workspaceDeletedTagConnectionIds: new Set(), connObjCache: new Map(),
-    tagConfigEdited: new Map(), tagConfigAll: [], connFiles: []
+    tagConfigEdited: new Map(), tagConfigAll: [], connFiles: [], runtimeSavedChangesPending: pending
   };
   const els = { workspaceSaveBtn: {}, workspaceSaveApplyBtn: {}, workspaceApplyBtn: {}, workspaceDiscardBtn: {} };
   const context = vm.createContext({
@@ -51,18 +52,25 @@ function workspace() {
     canEditConfig: () => true, openLoginModal: () => events.push('login'),
     workspaceIsDirty: () => state.workspaceConnDirty.size > 0 || state.workspaceDeletePaths.size > 0 || state.tagConfigDirty,
     setWorkspaceSaveStatus: value => messages.push(value), setWorkspaceLoading() {},
-    prettyJson: JSON.stringify, apiPostJson: async (url, body) => events.push({ url, body }),
-    opcbridgeReload: async () => events.push('apply'),
+    connectionIdForConnFilePath: rel => rel.split('/').pop().replace(/\.json$/, ''),
+    displayConnectionName: id => id, saveWorkspaceDraft() {},
+    prettyJson: JSON.stringify, apiPostJson: async (url, body) => { server.pending = true; events.push({ url, body }); },
+    apiGet: async () => ({ saved_changes_pending: server.pending }),
+    opcbridgeReload: async () => { events.push('apply'); server.pending = false; },
     getEffectiveTagsAll: () => [], historianTagRulesFromWorkspaceTags: () => [],
+    saveTagsForChangedConnections: async () => [], saveHistorianConfigFromWorkspaceTags: async () => 0,
     markTagsDirty: value => { state.tagConfigDirty = value; }, clearWorkspaceDraft() {},
     loadConnectionsList: async () => {}, loadTagsConfig: async () => {},
     loadOpcbridgeAlarmsConfig: async () => {}, loadWorkspaceConnectionObjects: async () => {},
     renderWorkspaceTree() {}
   });
   vm.runInContext(source.slice(source.indexOf('function renderWorkspaceSaveBar('), source.indexOf('const OPCBRIDGE_SCADA_DRAFT_KEY')), context);
+  vm.runInContext(source.slice(source.indexOf('function renderRuntimeRebuildStatus('), source.indexOf('function wireOverviewRuntimeUi(')), context);
   vm.runInContext(source.slice(source.indexOf('async function saveWorkspaceAll('), source.indexOf('async function discardWorkspaceChanges(')), context);
+  vm.runInContext(source.slice(source.indexOf('async function deleteDeviceById('), source.indexOf('async function addAlarmGroupInteractive(')), context);
+  vm.runInContext(source.slice(source.indexOf('async function discardWorkspaceChanges('), source.indexOf('function updateWorkspaceLiveTagFilterLabel(')), context);
   const edit = id => state.workspaceConnDirty.set(`connections/${id}.json`, { id });
-  return { context, state, els, events, messages, edit };
+  return { context, state, els, events, messages, edit, server };
 }
 
 test('multiple saves leave Apply available and apply saved changes only when requested', async () => {
@@ -81,9 +89,10 @@ test('multiple saves leave Apply available and apply saved changes only when req
   assert.equal(w.messages.at(-1), 'Saved configuration applied.');
 });
 
-test('Apply works with a clean Workspace after reopening the page', async () => {
+test('Apply restores server pending state after reopening the page', async () => {
   const w = workspace();
-  w.context.renderWorkspaceSaveBar();
+  w.server.pending = true;
+  await w.context.refreshWorkspaceApplyStatus();
   assert.equal(w.els.workspaceApplyBtn.disabled, false);
   await w.context.applyWorkspaceChanges();
   assert.deepEqual(w.events, ['apply']);
@@ -119,7 +128,7 @@ test('Apply preserves unsaved edits and directs the user to Save & Apply', async
 });
 
 test('Apply waits for reload completion and prevents overlapping actions', async () => {
-  const w = workspace();
+  const w = workspace({ pending: true });
   let finish;
   w.context.opcbridgeReload = () => { w.events.push('apply'); return new Promise(resolve => { finish = resolve; }); };
   const work = w.context.applyWorkspaceChanges();
@@ -136,18 +145,18 @@ test('Apply waits for reload completion and prevents overlapping actions', async
 });
 
 test('failed Apply can be retried with no edits and does not claim success', async () => {
-  const w = workspace();
+  const w = workspace({ pending: true });
   w.context.opcbridgeReload = async () => { throw new Error('Invalid configuration'); };
   await w.context.applyWorkspaceChanges();
   assert.equal(w.messages.at(-1), 'Apply failed: Invalid configuration');
   assert.equal(w.els.workspaceApplyBtn.disabled, false);
-  w.context.opcbridgeReload = async () => w.events.push('apply');
+  w.context.opcbridgeReload = async () => { w.events.push('apply'); w.server.pending = false; };
   await w.context.applyWorkspaceChanges();
   assert.equal(w.messages.at(-1), 'Saved configuration applied.');
 });
 
 test('refresh errors after a successful Apply report that configuration was applied', async () => {
-  const w = workspace();
+  const w = workspace({ pending: true });
   w.context.loadConnectionsList = async () => { throw new Error('Network error'); };
   await w.context.applyWorkspaceChanges();
   assert.deepEqual(w.events, ['apply']);
@@ -163,6 +172,7 @@ test('Save & Apply blocks a concurrent Apply while saving', async () => {
   await new Promise(resolve => setTimeout(resolve, 5));
   await w.context.applyWorkspaceChanges();
   assert.equal(w.events.includes('apply'), false);
+  w.server.pending = true;
   finish();
   await work;
   assert.deepEqual(w.events, ['apply']);
@@ -185,4 +195,62 @@ test('rapid clicks after staging a tag deletion cannot apply changes', async () 
   await w.context.applyWorkspaceChanges();
   assert.equal(w.events.length, 0);
   assert.equal(w.state.workspaceConnDirty.size, 1);
+});
+
+test('deleting a saved connection enables Save and Discard; Save persists deletion and leaves Apply available', async () => {
+  const w = workspace();
+  w.state.connFiles = [{ path: 'connections/Old.json' }];
+  await w.context.deleteDeviceById('Old', 'connections/Old.json');
+  assert.equal(w.els.workspaceSaveBtn.disabled, false);
+  assert.equal(w.els.workspaceDiscardBtn.disabled, false);
+  assert.equal(w.events.length, 0);
+  w.state.workspaceApplyBlockUntil = 0;
+  w.context.renderWorkspaceSaveBar();
+  assert.equal(w.els.workspaceSaveApplyBtn.disabled, false);
+  await w.context.saveWorkspaceAll({ apply: false });
+  assert.equal(w.events.length, 1);
+  assert.equal(w.events[0].url, '/api/opcbridge/config/delete');
+  assert.equal(w.events[0].body.path, 'connections/Old.json');
+  assert.equal(w.els.workspaceApplyBtn.disabled, false);
+  await w.context.applyWorkspaceChanges();
+  assert.equal(w.events[1], 'apply');
+});
+
+test('discarding a connection deletion restores saved configuration without deleting anything', async () => {
+  const w = workspace();
+  const saved = [{ path: 'connections/Old.json' }];
+  w.state.connFiles = saved.slice();
+  w.context.loadConnectionsList = async () => { w.state.connFiles = saved.slice(); };
+  await w.context.deleteDeviceById('Old', 'connections/Old.json');
+  assert.equal(w.state.connFiles.length, 0);
+  await w.context.discardWorkspaceChanges();
+  assert.equal(w.state.connFiles.length, 1);
+  assert.equal(w.state.workspaceDeletePaths.size, 0);
+  assert.equal(w.state.workspaceDeletedTagConnectionIds.size, 0);
+  assert.equal(w.state.tagConfigDirty, false);
+  assert.equal(w.events.length, 0);
+});
+
+test('Apply is disabled when saved configuration matches the runtime', async () => {
+  const w = workspace();
+  await w.context.refreshWorkspaceApplyStatus();
+  assert.equal(w.els.workspaceApplyBtn.disabled, true);
+  await w.context.applyWorkspaceChanges();
+  assert.equal(w.events.length, 0);
+});
+
+test('a successful Apply disables Apply after the server confirms no pending changes', async () => {
+  const w = workspace({ pending: true });
+  await w.context.applyWorkspaceChanges();
+  assert.equal(w.state.runtimeSavedChangesPending, false);
+  assert.equal(w.els.workspaceApplyBtn.disabled, true);
+});
+
+test('a save made during Apply stays pending when that Apply completes', async () => {
+  const w = workspace({ pending: true });
+  w.context.opcbridgeReload = async () => { w.events.push('apply'); }; // Newer save remains on server.
+  await w.context.applyWorkspaceChanges();
+  assert.equal(w.state.runtimeSavedChangesPending, true);
+  assert.equal(w.els.workspaceApplyBtn.disabled, false);
+  assert.match(w.messages.at(-1), /Newer saved changes/);
 });

@@ -1280,6 +1280,7 @@ const state = {
   workspaceApplyInFlight: false,
   workspaceSaveInFlight: false,
   runtimeReloadBusy: false,
+  runtimeSavedChangesPending: false,
   selectedConnPath: '',
   selectedConnObj: null,
   selectedConnRawDirty: false,
@@ -11876,6 +11877,9 @@ async function opcbridgeReloadConnection(connectionId) {
 function renderRuntimeRebuildStatus(status) {
   const st = status && typeof status === 'object' ? status : {};
   const required = Boolean(status?.full_rebuild_required);
+  if (typeof st.saved_changes_pending === 'boolean') {
+    state.runtimeSavedChangesPending = st.saved_changes_pending;
+  }
   const requested = Boolean(st.requested);
   const inProgress = Boolean(st.in_progress);
   if (status) {
@@ -11894,8 +11898,8 @@ function renderRuntimeRebuildStatus(status) {
   const syncAttempted = Boolean(sync.attempted);
   const syncOk = syncAttempted ? sync.ok !== false : true;
 
-  let label = required ? 'Saved configuration needs applying.' : 'Runtime ready.';
-  let cls = required ? 'status-degraded' : 'status-ok';
+  let label = (required || state.runtimeSavedChangesPending) ? 'Saved configuration needs applying.' : 'Runtime ready.';
+  let cls = (required || state.runtimeSavedChangesPending) ? 'status-degraded' : 'status-ok';
   if (requested && !inProgress) {
     label = target ? `Connection reload queued: ${targetName}` : 'Full runtime rebuild queued.';
     cls = 'status-degraded';
@@ -18104,7 +18108,7 @@ function renderWorkspaceSaveBar() {
   if (els.overviewRebuildBtn) els.overviewRebuildBtn.disabled = !canEditConfig() || busy;
   if (els.workspaceSaveBtn) els.workspaceSaveBtn.disabled = !canEditConfig() || !dirty || busy;
   if (els.workspaceSaveApplyBtn) els.workspaceSaveApplyBtn.disabled = !canEditConfig() || !dirty || applyBlocked || busy;
-  if (els.workspaceApplyBtn) els.workspaceApplyBtn.disabled = !canEditConfig() || applyBlocked || busy;
+  if (els.workspaceApplyBtn) els.workspaceApplyBtn.disabled = !canEditConfig() || !state.runtimeSavedChangesPending || dirty || applyBlocked || busy;
   if (els.workspaceDiscardBtn) els.workspaceDiscardBtn.disabled = !dirty || busy;
 }
 
@@ -18200,6 +18204,8 @@ function restoreWorkspaceDraft() {
         if (rel) state.workspaceDeletePaths.add(rel);
       });
     }
+    // Deleted connections must stay hidden when restoring an unsaved draft.
+    state.connFiles = (state.connFiles || []).filter((file) => !state.workspaceDeletePaths.has(String(file?.path || '')));
     state.workspaceDeletedTagConnectionIds = new Set(
       (Array.isArray(parsed.deleted_tag_connections) ? parsed.deleted_tag_connections : [])
         .map((cid) => String(cid || '').trim())
@@ -21282,33 +21288,30 @@ async function createNewConnectionInteractive(opts = {}) {
 
 
 async function deleteDeviceById(connectionId, pathRel) {
+  if (!canEditConfig()) { openLoginModal(); return; }
   const cid = String(connectionId || '').trim();
   const relPath = String(pathRel || '').trim();
   if (!cid || !relPath) return;
+  const label = displayConnectionName(cid);
+  if (!window.confirm(`Delete device '${label}' and its tags? The deletion takes effect when you save and apply.`)) return;
 
-  if (!window.confirm(`Delete device '${cid}'? This deletes ${relPath} and removes its tags from config.`)) return;
-
-  try {
-    await apiPostJson('/api/opcbridge/config/delete', { path: relPath });
-
-    // The backend deletes all tag stores owned by this connection.
-    try {
-      await loadTagsConfig();
-    } catch (err) {
-      throw new Error(`Device deleted, but refreshing tags failed: ${err.message}`);
-    }
-
-    if (state.selectedNodeId && String(state.selectedNodeId).includes(relPath)) {
-      state.selectedNodeId = 'folder:connectivity';
-    }
-
-    state.connObjCache?.delete?.(relPath);
-
-    await loadConnectionsList();
-    renderWorkspaceTree();
-  } catch (err) {
-    window.alert(`Failed to delete device: ${err.message}`);
+  state.workspaceDeletePaths.add(relPath);
+  state.workspaceDeletedTagConnectionIds.add(cid);
+  state.workspaceConnDirty.delete(relPath);
+  state.connFiles = (state.connFiles || []).filter((file) => String(file?.path || '') !== relPath);
+  state.tagConfigAll = (state.tagConfigAll || []).filter((tag) => String(tag?.connection_id || '') !== cid);
+  for (const key of state.tagConfigEdited.keys()) {
+    if (String(key).startsWith(`${cid}::`)) state.tagConfigEdited.delete(key);
   }
+  markTagsDirty(true);
+  if (state.selectedNodeId && String(state.selectedNodeId).includes(relPath)) {
+    state.selectedNodeId = 'folder:connectivity';
+  }
+  blockWorkspaceApplyBriefly();
+  saveWorkspaceDraft();
+  renderWorkspaceTree();
+  renderWorkspaceSaveBar();
+  setWorkspaceSaveStatus(`Device '${label}' deletion staged. Use Save & Apply, Save, or Discard.`);
 }
 
 async function addAlarmGroupInteractive() {
@@ -27053,7 +27056,7 @@ async function saveWorkspaceAll({ apply = true } = {}) {
   try {
     await new Promise((resolve) => window.setTimeout(resolve, 0));
     const saved = await saveWorkspaceAllImpl();
-    if (saved && apply) {
+    if (saved && apply && state.runtimeSavedChangesPending) {
       state.workspaceApplyInFlight = true;
       await applySavedWorkspaceConfig();
     }
@@ -27130,13 +27133,18 @@ async function saveWorkspaceAllImpl() {
     state.workspaceDeletedTagConnectionIds.clear();
     clearWorkspaceDraft();
 
+    await refreshWorkspaceApplyStatus();
     setWorkspaceSaveStatus('Saved. Refreshing Workspace…');
     await Promise.all([loadConnectionsList(), loadTagsConfig(), loadOpcbridgeAlarmsConfig().catch(() => null)]);
     await loadWorkspaceConnectionObjects();
     renderWorkspaceTree();
-    setWorkspaceSaveStatus('Saved. Click Apply when ready to activate the saved configuration.');
+    setWorkspaceSaveStatus(state.runtimeSavedChangesPending
+      ? 'Saved. Click Apply when ready to activate the saved configuration.'
+      : 'Saved. No runtime changes to apply.');
     return true;
   } catch (err) {
+    // A multi-file save may have persisted some changes before failing.
+    await refreshWorkspaceApplyStatus().catch(() => {});
     const msg = String(err?.message || err || '');
     const lowerMsg = msg.toLowerCase();
     if (lowerMsg.includes('upstream timeout') || lowerMsg.includes('request timed out')) {
@@ -27170,6 +27178,7 @@ async function applyWorkspaceChanges() {
     setWorkspaceSaveStatus('Use Save & Apply, or save your changes before clicking Apply.');
     return;
   }
+  if (!state.runtimeSavedChangesPending) return;
   state.workspaceSaveInFlight = true;
   state.workspaceApplyInFlight = true;
   renderWorkspaceSaveBar();
@@ -27184,6 +27193,11 @@ async function applyWorkspaceChanges() {
   }
 }
 
+async function refreshWorkspaceApplyStatus() {
+  const status = await apiGet('/api/opcbridge/reload/status');
+  renderRuntimeRebuildStatus(status);
+}
+
 async function applySavedWorkspaceConfig() {
   setWorkspaceSaveStatus('Applying saved configuration…');
   let applied = false;
@@ -27192,11 +27206,14 @@ async function applySavedWorkspaceConfig() {
     // This also works after earlier saves or a browser refresh; no edit flags are needed.
     await opcbridgeReload();
     applied = true;
+    await refreshWorkspaceApplyStatus();
     setWorkspaceSaveStatus('Applied. Refreshing Workspace…');
     await Promise.all([loadConnectionsList(), loadTagsConfig(), loadOpcbridgeAlarmsConfig().catch(() => null)]);
     await loadWorkspaceConnectionObjects();
     renderWorkspaceTree();
-    setWorkspaceSaveStatus('Saved configuration applied.');
+    setWorkspaceSaveStatus(state.runtimeSavedChangesPending
+      ? 'Configuration applied. Newer saved changes are still waiting to be applied.'
+      : 'Saved configuration applied.');
   } catch (err) {
     setWorkspaceSaveStatus(applied
       ? `Configuration applied, but Workspace refresh failed: ${err.message}`

@@ -2,6 +2,7 @@
 #include "poll_sweep_estimate.h"
 #include "idle_connection_probe.h"
 #include "active_sweep.h"
+#include "runtime_config_state.h"
 // main.cpp - AB/libplctag "OPC bridge core" with:
 //   - JSON-with-comments config for connections/tags
 //   - Multi-connection EtherNet/IP via libplctag
@@ -14811,11 +14812,14 @@ static json collect_polling_demand(const std::vector<DriverContext> &drivers,
 			}
 
 	        std::vector<DriverContext> drivers;
+	        RuntimeConfigState runtimeConfigState;
+	        const auto initialSavedConfig = RuntimeConfigState::capture(configDir, load_json_with_comments);
 	        const auto initialLoadStarted = std::chrono::steady_clock::now();
 	        if (!load_all_drivers(drivers, configDir)) {
 	            std::cerr << "Initial config load failed. Exiting.\n";
 	            return 1;
 	        }
+	        runtimeConfigState.applied(initialSavedConfig);
 	        {
 	            std::ostringstream msg;
 	            msg << "Driver/config load completed in "
@@ -24650,6 +24654,10 @@ window.addEventListener("load", startAutoRefresh);
 		                    resp["opcua_sync"] = opcua_sync_result_json(g_reloadState.opcua_sync);
 		                }
 		                resp["full_rebuild_required"] = g_full_rebuild_required.load(std::memory_order_relaxed);
+		                const auto saved = RuntimeConfigState::capture(configDir, load_json_with_comments);
+		                resp["saved_changes_pending"] = runtimeConfigState.pending(saved) ||
+		                    g_full_rebuild_required.load(std::memory_order_relaxed);
+		                if (!saved.error.empty()) resp["saved_config_error"] = saved.error;
 		                resp["ok_status"] = true;
 	                res.status = 200;
 		                res.set_content(resp.dump(2), "application/json");
@@ -31171,6 +31179,7 @@ window.addEventListener("load", startAutoRefresh);
 		            }
 
 			    if (doReload) {
+			        const auto savedConfigBeforeReload = RuntimeConfigState::capture(configDir, load_json_with_comments);
 			        const bool targetedReload = !requestedTargetConn.empty();
 			        ws_notify_runtime_reload("begin", requestedGen, requestedTargetConn);
 			        const auto reloadStarted = std::chrono::steady_clock::now();
@@ -31386,6 +31395,7 @@ window.addEventListener("load", startAutoRefresh);
 		                    g_pollers_running_gen.store(activeGen, std::memory_order_relaxed);
 		                }
 		                ws_notify_runtime_reload("end", requestedGen, requestedTargetConn);
+                    if (ok) runtimeConfigState.applied(savedConfigBeforeReload, requestedTargetConn);
 
 	                {
 	                    std::lock_guard<std::mutex> lk(g_reloadMutex);

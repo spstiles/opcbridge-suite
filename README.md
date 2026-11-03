@@ -24,9 +24,10 @@ In SCADA Workspace, create or edit a connection and choose **Tag polling**:
 - **Poll all enabled tags** keeps ordinary polling for that connection.
 
 Use **Save & Apply** in Workspace to save and activate the configuration. Use
-**Save** to save edits as you work, then **Apply** when ready. Apply remains
-available after saving or reopening Workspace; it loads the complete saved
-runtime configuration and updates OPC UA nodes. Applying briefly pauses polling
+**Save** to save edits as you work, then **Apply** when ready. Apply is enabled
+only when saved connection or tag changes are waiting to be applied. The server
+tracks this across browsers and page refreshes; a successful apply clears it.
+Apply loads the complete saved runtime configuration and updates OPC UA nodes. Applying briefly pauses polling
 and may require UA clients to reconnect. Active
 polling currently applies to Allen-Bradley connections. Other drivers and MQTT mode keep ordinary polling. Writable tags follow the same
 read-demand rules; writes request a bounded readback.
