@@ -73,7 +73,16 @@ int main() {
         // Genuine removal still retires the removed node and requests cleanup.
         kraft.tags.pop_back();
         assert(sync_opcua_connection_nodes(kraft, result, error));
-        assert(result.retired == 1 && result.full_rebuild_required);
+        assert(result.retired == 1 && !result.full_rebuild_required);
+        UA_NodeClass removedClass;
+        assert(UA_Server_readNodeClass(server, UA_NODEID_STRING(1, const_cast<char*>("Tags/ReloadKraft/Derived69")), &removedClass) == UA_STATUSCODE_BADNODEIDUNKNOWN);
+        kraft.tags[0].cfg.enabled = false;
+        assert(sync_opcua_connection_nodes(kraft, result, error));
+        assert(result.retired == 1 && !result.full_rebuild_required);
+        assert(UA_Server_readNodeClass(server, UA_NODEID_STRING(1, const_cast<char*>("Tags/ReloadKraft/Source0")), &removedClass) == UA_STATUSCODE_BADNODEIDUNKNOWN);
+        kraft.tags[0].cfg.enabled = true;
+        assert(sync_opcua_connection_nodes(kraft, result, error));
+        assert(result.added == 1 && !result.full_rebuild_required);
         DriverContext remote; remote.conn.id = "ReloadRemote"; remote.conn.driver = "opcua_client";
         TagRuntime input; input.cfg.logical_name = "RemoteValue"; input.cfg.datatype = "int32";
         remote.tags.push_back(input);
@@ -81,6 +90,13 @@ int main() {
         assert(result.added == 1 && !result.full_rebuild_required);
         assert(sync_opcua_connection_nodes(remote, result, error));
         assert(result.updated == 1 && result.retired == 0 && !result.full_rebuild_required);
+        remote.tags[0].cfg.datatype = "float64";
+        assert(sync_opcua_connection_nodes(remote, result, error));
+        assert(result.datatype_conflicts == 1 && result.full_rebuild_required);
+        remote.tags[0].cfg.enabled = false;
+        assert(sync_opcua_connection_nodes(remote, result, error));
+        assert(result.retired == 1);
+        assert(UA_Server_readNodeClass(server, UA_NODEID_STRING(1, const_cast<char*>("Tags/ReloadRemote/RemoteValue")), &removedClass) == UA_STATUSCODE_BADNODEIDUNKNOWN);
         TagRuntime invalid;
         assert(!ua_tag_has_node(kraft.conn, invalid));
         invalid.handle_deferred = true;
@@ -88,6 +104,51 @@ int main() {
         for (auto &binding : g_uaBindings) UA_NodeId_clear(&binding.nodeId);
         g_uaBindings.clear(); g_uaBindingIndex.clear();
         g_uaServer = nullptr; g_uaBridgeNodeId = UA_NODEID_NULL;
+    }
+    // Scalar and typed array conversion share element types without treating a block as a scalar.
+    for (const auto &sample : std::vector<TagValue>{true, int16_t(-3), uint16_t(4), int32_t(-5), uint32_t(6), float(1.5), double(2.5), std::string("text")}) {
+        const char *types[] = {"bool", "int16", "int32", "uint16", "uint32", "float32", "float64", "string"};
+        TagSnapshot block; block.datatype = types[sample.index()]; block.value = sample;
+        block.array_values = {sample, sample, sample};
+        UA_VariableAttributes attributes = UA_VariableAttributes_default;
+        assert(ua_set_variable_attr_from_snapshot(attributes, block));
+        assert(attributes.valueRank == UA_VALUERANK_ONE_DIMENSION && attributes.arrayDimensions[0] == 3);
+        TagSnapshot decoded; ConnectionConfig connection; TagConfig config;
+        assert(snapshot_from_opcua_variant(decoded, connection, config, attributes.value));
+        assert(decoded.datatype == block.datatype && decoded.array_values == block.array_values);
+        assert(snapshot_json_value(decoded).is_array() && snapshot_json_value(decoded).size() == 3);
+        UA_VariableAttributes_clear(&attributes);
+    }
+    {
+        DriverContext owner; owner.conn.id = "Blocks"; owner.conn.driver = "modbus_tcp";
+        TagRuntime block; block.handle = 1; block.cfg.logical_name = "Block"; block.cfg.datatype = "int16"; block.cfg.elem_count = 3;
+        std::deque<UaTagBinding> bindings; std::string error;
+        assert(ua_add_tag_variable_node(server, UA_NODEID_NUMERIC(0, UA_NS0ID_OBJECTSFOLDER), bindings, owner.conn, block, error));
+        auto value = make_initial_snapshot_for_opcua(owner.conn, block);
+        value.quality = 1; value.array_values = {int16_t(1), int16_t(2), int16_t(3)};
+        assert(ua_write_snapshot(server, bindings.back().nodeId, value, UA_STATUSCODE_GOOD) == UA_STATUSCODE_GOOD);
+        UA_Variant actual; UA_Variant_init(&actual);
+        assert(UA_Server_readValue(server, bindings.back().nodeId, &actual) == UA_STATUSCODE_GOOD);
+        assert(actual.arrayLength == 3 && actual.type == &UA_TYPES[UA_TYPES_INT16]);
+        assert(static_cast<UA_Int16*>(actual.data)[2] == 3);
+        UA_Variant_clear(&actual);
+        value.array_values.push_back(int16_t(4));
+        assert(ua_write_snapshot(server, bindings.back().nodeId, value, UA_STATUSCODE_GOOD) == UA_STATUSCODE_GOOD);
+        assert(UA_Server_readValue(server, bindings.back().nodeId, &actual) == UA_STATUSCODE_GOOD && actual.arrayLength == 4);
+        UA_Variant_clear(&actual);
+        UA_NodeId_clear(&bindings.back().nodeId);
+        block.cfg.enabled = false;
+        assert(!ua_tag_has_node(owner.conn, block));
+    }
+    {
+        ConnectionConfig conn; conn.id = "DisabledElement"; conn.driver = "ab_eip";
+        conn.gateway = "127.0.0.1"; conn.path = "1,0"; conn.plc_type = "lgx";
+        TagConfig block; block.logical_name = "Block"; block.plc_tag_name = "Array"; block.datatype = "int32"; block.elem_count = 4;
+        TagConfig off; off.logical_name = "Block[2]"; off.datatype = "int32"; off.enabled = false;
+        DriverContext built; std::string error;
+        assert(build_driver_context_for_connection(conn, {block, off}, built, error));
+        const auto found = std::find_if(built.tags.begin(), built.tags.end(), [](const auto &tag) { return tag.cfg.logical_name == "Block[2]"; });
+        assert(found != built.tags.end() && !ua_tag_has_node(conn, *found));
     }
     // Folder labels follow configuration; identity survives rename and duplicates.
     ConnectionConfig folder; folder.id = "connection_random"; folder.name = "B125";

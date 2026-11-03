@@ -342,7 +342,17 @@ struct TagSnapshot {
     int quality = 0; // 0=bad, 1=good
     PollReadStamp poll_read{}; // Physical poll evidence, independent of cache timestamps.
     PollCacheState polling_state = PollCacheState::Active;
+    std::vector<TagValue> array_values{}; // Typed block value from the same physical read.
 };
+
+static json snapshot_json_value(const TagSnapshot &snap) {
+    if (!snap.array_values.empty()) {
+        json result = json::array();
+        for (const auto &item : snap.array_values) std::visit([&](const auto &value) { result.push_back(value); }, item);
+        return result;
+    }
+    return std::visit([](const auto &value) -> json { return value; }, snap.value);
+}
 
 static const char *snapshot_polling_state(const TagSnapshot &snapshot) {
     if (snapshot.polling_state == PollCacheState::Waiting) return "waiting";
@@ -359,7 +369,21 @@ static bool snapshot_from_opcua_variant(TagSnapshot &snap,
     snap.datatype = tag.datatype;
     snap.timestamp = std::chrono::system_clock::now();
     snap.quality = 1;
-    if (!UA_Variant_isScalar(&value) || !value.data) return false;
+    if (!value.data) return false;
+    if (!UA_Variant_isScalar(&value)) {
+        if (!value.arrayLength || value.arrayLength > 1000000 || value.arrayDimensionsSize > 1) return false;
+        snap.array_values.clear();
+        for (size_t i = 0; i < value.arrayLength; ++i) {
+            UA_Variant element; UA_Variant_init(&element);
+            UA_Variant_setScalar(&element, static_cast<char*>(value.data) + i * value.type->memSize, value.type);
+            TagSnapshot item;
+            if (!snapshot_from_opcua_variant(item, conn, tag, element)) return false;
+            snap.datatype = item.datatype;
+            snap.array_values.push_back(item.value);
+        }
+        snap.value = snap.array_values.front();
+        return true;
+    }
 
     if (UA_Variant_hasScalarType(&value, &UA_TYPES[UA_TYPES_BOOLEAN])) {
         snap.datatype = "bool";
@@ -443,33 +467,48 @@ struct RemoteUaChild {
 
 static std::vector<RemoteUaChild> remote_ua_browse_children(UA_Client *client, const UA_NodeId &parent) {
     std::vector<RemoteUaChild> out;
-    UA_BrowseRequest req;
-    UA_BrowseRequest_init(&req);
-    req.requestedMaxReferencesPerNode = 0;
-    req.nodesToBrowse = UA_BrowseDescription_new();
-    req.nodesToBrowseSize = 1;
-    UA_NodeId_copy(&parent, &req.nodesToBrowse[0].nodeId);
-    req.nodesToBrowse[0].browseDirection = UA_BROWSEDIRECTION_FORWARD;
-    req.nodesToBrowse[0].referenceTypeId = UA_NODEID_NUMERIC(0, UA_NS0ID_HIERARCHICALREFERENCES);
-    req.nodesToBrowse[0].includeSubtypes = true;
-    req.nodesToBrowse[0].resultMask = UA_BROWSERESULTMASK_ALL;
-    UA_BrowseResponse resp = UA_Client_Service_browse(client, req);
-    if (resp.responseHeader.serviceResult == UA_STATUSCODE_GOOD && resp.resultsSize > 0 && resp.results[0].statusCode == UA_STATUSCODE_GOOD) {
-        for (size_t i = 0; i < resp.results[0].referencesSize; ++i) {
-            const UA_ReferenceDescription &ref = resp.results[0].references[i];
+    UA_ByteString continuation = UA_BYTESTRING_NULL;
+    auto append = [&](const UA_BrowseResult &result) {
+        for (size_t i = 0; i < result.referencesSize; ++i) {
+            const auto &ref = result.references[i];
             if (ref.nodeId.serverIndex != 0 || ref.nodeId.namespaceUri.length != 0) continue;
-            RemoteUaChild child;
             UA_String printed = UA_STRING_NULL;
             if (UA_NodeId_print(&ref.nodeId.nodeId, &printed) != UA_STATUSCODE_GOOD) continue;
+            RemoteUaChild child;
             child.node_id.assign(reinterpret_cast<const char*>(printed.data), printed.length);
             UA_String_clear(&printed);
             child.name.assign(reinterpret_cast<const char*>(ref.displayName.text.data), ref.displayName.text.length);
             child.node_class = ref.nodeClass;
             out.push_back(std::move(child));
         }
+        return UA_ByteString_copy(&result.continuationPoint, &continuation);
+    };
+    UA_BrowseRequest request; UA_BrowseRequest_init(&request);
+    request.nodesToBrowseSize = 1;
+    request.nodesToBrowse = static_cast<UA_BrowseDescription*>(UA_Array_new(1, &UA_TYPES[UA_TYPES_BROWSEDESCRIPTION]));
+    UA_NodeId_copy(&parent, &request.nodesToBrowse[0].nodeId);
+    request.nodesToBrowse[0].browseDirection = UA_BROWSEDIRECTION_FORWARD;
+    request.nodesToBrowse[0].referenceTypeId = UA_NODEID_NUMERIC(0, UA_NS0ID_HIERARCHICALREFERENCES);
+    request.nodesToBrowse[0].includeSubtypes = true;
+    request.nodesToBrowse[0].resultMask = UA_BROWSERESULTMASK_ALL;
+    auto response = UA_Client_Service_browse(client, request);
+    UA_StatusCode status = response.responseHeader.serviceResult;
+    if (status == UA_STATUSCODE_GOOD) status = response.resultsSize == 1 ? response.results[0].statusCode : UA_STATUSCODE_BADUNEXPECTEDERROR;
+    if (status == UA_STATUSCODE_GOOD) status = append(response.results[0]);
+    UA_BrowseResponse_clear(&response); UA_BrowseRequest_clear(&request);
+    while (status == UA_STATUSCODE_GOOD && continuation.length) {
+        UA_BrowseNextRequest next; UA_BrowseNextRequest_init(&next);
+        next.continuationPointsSize = 1;
+        next.continuationPoints = &continuation;
+        auto page = UA_Client_Service_browseNext(client, next);
+        UA_ByteString_clear(&continuation);
+        status = page.responseHeader.serviceResult;
+        if (status == UA_STATUSCODE_GOOD) status = page.resultsSize == 1 ? page.results[0].statusCode : UA_STATUSCODE_BADUNEXPECTEDERROR;
+        if (status == UA_STATUSCODE_GOOD) status = append(page.results[0]);
+        UA_BrowseNextResponse_clear(&page);
     }
-    UA_BrowseResponse_clear(&resp);
-    UA_BrowseRequest_clear(&req);
+    UA_ByteString_clear(&continuation);
+    if (status != UA_STATUSCODE_GOOD) throw std::runtime_error("Remote browse incomplete: " + std::string(UA_StatusCode_name(status)));
     return out;
 }
 
@@ -5820,6 +5859,7 @@ bool parse_string_to_tagvalue(const std::string &s,
 
 // Helper: convert TagValue -> string for logging
 static std::string snapshot_value_to_string(const TagSnapshot &snap) {
+    if (!snap.array_values.empty()) return snapshot_json_value(snap).dump();
     std::ostringstream oss;
     std::visit([&oss](auto &&arg) { oss << arg; }, snap.value);
     return oss.str();
@@ -5831,7 +5871,7 @@ static bool update_snapshot_from_plc_at_offset(TagSnapshot &snap,
                                                int byteOffset);
 
 static bool extract_bit_from_snapshot(const TagSnapshot &src, int bit, bool &outBit) {
-    if (bit < 0) return false;
+    if (bit < 0 || !src.array_values.empty()) return false;
 
     bool ok = false;
     uint64_t word = 0;
@@ -6036,7 +6076,7 @@ void ws_notify_tag_update(const TagSnapshot &snap,
 	    j["timestamp_ms"] = ms;
 
 	    if (snap.quality == 1) {
-        std::visit([&j](auto &&arg) { j["value"] = arg; }, snap.value);
+        j["value"] = snapshot_json_value(snap);
     } else j["value"] = nullptr;
 
 	    j["enabled"]               = cfg.enabled;
@@ -7659,9 +7699,7 @@ void dump_tag_table_as_json(const TagTable &tagTable) {
         ).count();
         jt["timestamp_ms"] = ms;
 
-        std::visit([&jt](auto &&arg) {
-            jt["value"] = arg;
-        }, snap.value);
+        jt["value"] = snapshot_json_value(snap);
 
         root["tags"].push_back(jt);
     }
@@ -7767,6 +7805,16 @@ static bool build_driver_context_for_connection(const ConnectionConfig &conn_cfg
             rt.next_poll = std::chrono::steady_clock::now();
             schedule_next_periodic(rt);
             ctx.tags.push_back(std::move(rt));
+            for (int i = 0; tc.elem_count > 1 && i < tc.elem_count; ++i) {
+                TagRuntime element;
+                element.cfg = tc; element.cfg.elem_count = 1;
+                element.cfg.source_tag.clear(); element.cfg.bit = -1;
+                element.cfg.logical_name = tc.logical_name + "[" + std::to_string(i) + "]";
+                element.poll_source = tc.logical_name;
+                element.cfg.plc_tag_name = tc.plc_tag_name + "[" + std::to_string(i) + "]";
+                element.handle = PLCTAG_ERR_NOT_FOUND;
+                if (seen_logical_names.insert(element.cfg.logical_name).second) ctx.tags.push_back(std::move(element));
+            }
             continue;
         }
 
@@ -7875,6 +7923,11 @@ static bool build_driver_context_for_connection(const ConnectionConfig &conn_cfg
             lastProgress = nowProgress;
         }
     }
+
+    // Explicitly disabled component definitions also override generated block elements.
+    std::unordered_set<std::string> disabledNames;
+    for (const auto &config : tag_cfgs) if (!config.enabled) disabledNames.insert(config.logical_name);
+    for (auto &tag : ctx.tags) if (disabledNames.count(tag.cfg.logical_name)) tag.cfg.enabled = false;
 
     size_t validHandles = 0;
     size_t deferredRuntimeHandles = 0;
@@ -11420,9 +11473,7 @@ bool mqtt_publish_snapshot(const TagSnapshot &snap,
         jt["quality"]       = snap.quality;
         jt["timestamp_ms"]  = ms;
 
-        std::visit([&jt](auto &&arg) {
-            jt["value"] = arg;
-        }, snap.value);
+        jt["value"] = snapshot_json_value(snap);
 
         std::string topic = base + "/" + connSafe + "/" + tagSafe;
         mqtt_publish_raw(topic, jt.dump());
@@ -11544,9 +11595,7 @@ bool mqtt_publish_connection_snapshot(const std::string &connId,
             snap.timestamp.time_since_epoch()
         ).count();
 
-        std::visit([&jt](auto &&arg) {
-            jt["value"] = arg;
-        }, snap.value);
+        jt["value"] = snapshot_json_value(snap);
 
         root["tags"].push_back(jt);
     }
@@ -11842,6 +11891,7 @@ void mqtt_shutdown() {
 }
 
 double snapshot_value_as_double(const TagSnapshot &snap, bool &ok) {
+    if (!snap.array_values.empty()) { ok = false; return 0.0; }
     ok = true;
     double v = 0.0;
 
@@ -11865,6 +11915,7 @@ double snapshot_value_as_double(const TagSnapshot &snap, bool &ok) {
 }
 
 std::string snapshot_value_as_text(const TagSnapshot &snap) {
+    if (!snap.array_values.empty()) return snapshot_json_value(snap).dump();
     return tag_value_to_string(snap.value);
 }
 
@@ -12212,8 +12263,8 @@ static UA_NodeId ua_ensure_connection_object(UA_Server *server,
 // Startup, node creation, and connection reload must use identical eligibility.
 // Derived tags and remote UA tags have no libplctag handle of their own.
 static bool ua_tag_has_node(const ConnectionConfig &conn, const TagRuntime &tag) {
-    return tag.handle >= 0 || tag.handle_deferred || is_memory_tag(tag.cfg) ||
-        !tag.cfg.source_tag.empty() || !tag.poll_source.empty() || is_opcua_client_driver_name(conn.driver);
+    return tag.cfg.enabled && (tag.handle >= 0 || tag.handle_deferred || is_memory_tag(tag.cfg) ||
+        !tag.cfg.source_tag.empty() || !tag.poll_source.empty() || is_opcua_client_driver_name(conn.driver));
 }
 
 static bool ua_add_tag_variable_node(UA_Server *server,
@@ -12231,6 +12282,42 @@ static bool sync_opcua_connection_nodes(DriverContext &driver,
 
 static bool ua_set_variable_attr_from_snapshot(UA_VariableAttributes &attr,
                                                const TagSnapshot &seed) {
+    if (!seed.array_values.empty()) {
+        attr.valueRank = UA_VALUERANK_ONE_DIMENSION;
+        attr.arrayDimensionsSize = 1;
+        attr.arrayDimensions = static_cast<UA_UInt32*>(UA_Array_new(1, &UA_TYPES[UA_TYPES_UINT32]));
+        if (!attr.arrayDimensions) return false;
+        attr.arrayDimensions[0] = static_cast<UA_UInt32>(seed.array_values.size());
+        auto set = [&](auto tagSample, auto wireSample, size_t type) {
+            using T = decltype(tagSample); using W = decltype(wireSample);
+            std::unique_ptr<W[]> values(new W[seed.array_values.size()]);
+            size_t i = 0;
+            for (const auto &item : seed.array_values) {
+                if (!std::holds_alternative<T>(item)) return false;
+                values[i++] = static_cast<W>(std::get<T>(item));
+            }
+            attr.dataType = UA_TYPES[type].typeId;
+            return UA_Variant_setArrayCopy(&attr.value, values.get(), seed.array_values.size(), &UA_TYPES[type]) == UA_STATUSCODE_GOOD;
+        };
+        if (seed.datatype == "bool") return set(bool{}, UA_Boolean{}, UA_TYPES_BOOLEAN);
+        if (seed.datatype == "int16") return set(int16_t{}, UA_Int16{}, UA_TYPES_INT16);
+        if (seed.datatype == "uint16") return set(uint16_t{}, UA_UInt16{}, UA_TYPES_UINT16);
+        if (seed.datatype == "int32") return set(int32_t{}, UA_Int32{}, UA_TYPES_INT32);
+        if (seed.datatype == "uint32") return set(uint32_t{}, UA_UInt32{}, UA_TYPES_UINT32);
+        if (seed.datatype == "float32") return set(float{}, UA_Float{}, UA_TYPES_FLOAT);
+        if (seed.datatype == "float64") return set(double{}, UA_Double{}, UA_TYPES_DOUBLE);
+        if (seed.datatype == "string") {
+            std::vector<UA_String> values;
+            for (const auto &item : seed.array_values) {
+                if (!std::holds_alternative<std::string>(item)) return false;
+                const auto &text = std::get<std::string>(item);
+                values.push_back(UA_STRING(const_cast<char*>(text.c_str())));
+            }
+            attr.dataType = UA_TYPES[UA_TYPES_STRING].typeId;
+            return UA_Variant_setArrayCopy(&attr.value, values.data(), values.size(), &UA_TYPES[UA_TYPES_STRING]) == UA_STATUSCODE_GOOD;
+        }
+        return false;
+    }
     attr.valueRank = UA_VALUERANK_SCALAR;
     const std::string &dt = seed.datatype;
     if (dt == "bool") {
@@ -12324,7 +12411,30 @@ static UA_StatusCode ua_write_snapshot(UA_Server *server, const UA_NodeId &node,
     value.hasServerTimestamp = true; value.serverTimestamp = UA_DateTime_now();
     if (status == UA_STATUSCODE_GOOD) {
         UA_VariableAttributes attr = UA_VariableAttributes_default;
-        if (!ua_set_variable_attr_from_snapshot(attr, snapshot)) return UA_STATUSCODE_BADTYPEMISMATCH;
+        if (!ua_set_variable_attr_from_snapshot(attr, snapshot)) {
+            UA_VariableAttributes_clear(&attr);
+            return UA_STATUSCODE_BADTYPEMISMATCH;
+        }
+        if (!snapshot.array_values.empty()) {
+            UA_Int32 rank = UA_VALUERANK_SCALAR;
+            UA_Server_readValueRank(server, node, &rank);
+            UA_Variant dimensions; UA_Variant_init(&dimensions);
+            UA_Server_readArrayDimensions(server, node, &dimensions);
+            const UA_UInt32 count = static_cast<UA_UInt32>(snapshot.array_values.size());
+            const bool shapeChanged = rank != UA_VALUERANK_ONE_DIMENSION || dimensions.arrayLength != 1 ||
+                dimensions.type != &UA_TYPES[UA_TYPES_UINT32] || !dimensions.data ||
+                *static_cast<UA_UInt32*>(dimensions.data) != count;
+            UA_Variant_clear(&dimensions);
+            if (shapeChanged) {
+                ua_write_snapshot(server, node, snapshot, UA_STATUSCODE_BADWAITINGFORINITIALDATA);
+                UA_Server_writeValueRank(server, node, UA_VALUERANK_ONE_DIMENSION);
+                UA_Variant shape; UA_Variant_init(&shape);
+                UA_Variant_setArray(&shape, const_cast<UA_UInt32*>(&count), 1, &UA_TYPES[UA_TYPES_UINT32]);
+                UA_Server_writeArrayDimensions(server, node, shape);
+            }
+            // Whole-array writes are not supported; scalar elements/derived tags retain their write paths.
+            UA_Server_writeAccessLevel(server, node, UA_ACCESSLEVELMASK_READ);
+        }
         value.value = attr.value; UA_Variant_init(&attr.value);
         UA_VariableAttributes_clear(&attr);
         value.hasValue = true;
@@ -12383,7 +12493,9 @@ static TagSnapshot make_initial_snapshot_for_tag(const ConnectionConfig &conn,
 
 static TagSnapshot make_initial_snapshot_for_opcua(const ConnectionConfig &conn,
                                                    const TagRuntime &tag) {
-    return make_initial_snapshot_for_tag(conn, tag, is_memory_tag(tag.cfg) ? 1 : 0);
+    auto seed = make_initial_snapshot_for_tag(conn, tag, is_memory_tag(tag.cfg) ? 1 : 0);
+    if (tag.cfg.elem_count > 1) seed.array_values.assign(tag.cfg.elem_count, seed.value);
+    return seed;
 }
 
 // Caller holds driverMutex. Only the current driver's gate may restore GOOD.
@@ -12675,10 +12787,10 @@ static bool sync_opcua_connection_nodes(DriverContext &driver,
             binding.handle = tag.handle;
             binding.conn_id = driver.conn.id;
             binding.logical_name = tag.cfg.logical_name;
-            binding.writable = tag.cfg.writable;
+            binding.writable = tag.cfg.writable && tag.cfg.elem_count <= 1;
             binding.retired = false;
             ua_restart_read_gate(g_uaServer, binding, driver, tag);
-            const UA_Byte access = tag.cfg.writable
+            const UA_Byte access = binding.writable
                 ? (UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE)
                 : UA_ACCESSLEVELMASK_READ;
             UA_Server_writeAccessLevel(g_uaServer, binding.nodeId, access);
@@ -12710,10 +12822,20 @@ static bool sync_opcua_connection_nodes(DriverContext &driver,
     for (auto &binding : g_uaBindings) {
         if (binding.conn_id != driver.conn.id) continue;
         const std::string key = ua_key(binding.conn_id, binding.logical_name);
+        const auto indexed = g_uaBindingIndex.find(key);
+        // A removed binding stays allocated for callback safety; only the current
+        // node may be deleted. Retired datatype-conflict nodes still need removal if disabled.
+        if (indexed == g_uaBindingIndex.end() || &g_uaBindings[indexed->second] != &binding) continue;
         if (!liveKeys.count(key)) {
             ua_retire_tag_binding(binding);
+            const auto removed = UA_Server_deleteNode(g_uaServer, binding.nodeId, true);
+            if (removed == UA_STATUSCODE_GOOD || removed == UA_STATUSCODE_BADNODEIDUNKNOWN) {
+                g_uaBindingIndex.erase(key);
+            } else {
+                sync.full_rebuild_required = true;
+                ++sync.add_failures;
+            }
             sync.retired++;
-            sync.full_rebuild_required = true;
         }
     }
 
@@ -13249,6 +13371,7 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers,
         for (auto &tag : driver.tags) {
             const TagConfig &cfg = tag.cfg;
 
+            if (!cfg.enabled) continue;
             if (!ua_tag_has_node(conn, tag)) {
                 std::cerr << "OPC UA: skipping tag '" << cfg.logical_name
                           << "' on connection '" << conn.id
@@ -13262,65 +13385,14 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers,
                 const_cast<char*>(cfg.logical_name.c_str())
             );
             vAttr.accessLevel = UA_ACCESSLEVELMASK_READ;
-            if (cfg.writable) {
+            if (cfg.writable && cfg.elem_count <= 1) {
                 vAttr.accessLevel |= UA_ACCESSLEVELMASK_WRITE;
             }
 
             TagSnapshot seed = make_initial_snapshot_for_opcua(conn, tag);
 
-            bool supported = true;
-            const std::string &dt = seed.datatype;
-
-            // Seed initial UA value from the current snapshot (scaled if configured).
-            if (dt == "bool") {
-                UA_Boolean v = std::get<bool>(seed.value) ? (UA_Boolean)true : (UA_Boolean)false;
-                vAttr.dataType  = UA_TYPES[UA_TYPES_BOOLEAN].typeId;
-                vAttr.valueRank = UA_VALUERANK_SCALAR;
-                UA_Variant_setScalarCopy(&vAttr.value, &v, &UA_TYPES[UA_TYPES_BOOLEAN]);
-            } else if (dt == "int16") {
-                UA_Int16 v = (UA_Int16)std::get<int16_t>(seed.value);
-                vAttr.dataType  = UA_TYPES[UA_TYPES_INT16].typeId;
-                vAttr.valueRank = UA_VALUERANK_SCALAR;
-                UA_Variant_setScalarCopy(&vAttr.value, &v, &UA_TYPES[UA_TYPES_INT16]);
-            } else if (dt == "uint16") {
-                UA_UInt16 v = (UA_UInt16)std::get<uint16_t>(seed.value);
-                vAttr.dataType  = UA_TYPES[UA_TYPES_UINT16].typeId;
-                vAttr.valueRank = UA_VALUERANK_SCALAR;
-                UA_Variant_setScalarCopy(&vAttr.value, &v, &UA_TYPES[UA_TYPES_UINT16]);
-            } else if (dt == "int32") {
-                UA_Int32 v = (UA_Int32)std::get<int32_t>(seed.value);
-                vAttr.dataType  = UA_TYPES[UA_TYPES_INT32].typeId;
-                vAttr.valueRank = UA_VALUERANK_SCALAR;
-                UA_Variant_setScalarCopy(&vAttr.value, &v, &UA_TYPES[UA_TYPES_INT32]);
-            } else if (dt == "uint32") {
-                UA_UInt32 v = (UA_UInt32)std::get<uint32_t>(seed.value);
-                vAttr.dataType  = UA_TYPES[UA_TYPES_UINT32].typeId;
-                vAttr.valueRank = UA_VALUERANK_SCALAR;
-                UA_Variant_setScalarCopy(&vAttr.value, &v, &UA_TYPES[UA_TYPES_UINT32]);
-            } else if (dt == "float32") {
-                UA_Float v = (UA_Float)std::get<float>(seed.value);
-                vAttr.dataType  = UA_TYPES[UA_TYPES_FLOAT].typeId;
-                vAttr.valueRank = UA_VALUERANK_SCALAR;
-                UA_Variant_setScalarCopy(&vAttr.value, &v, &UA_TYPES[UA_TYPES_FLOAT]);
-            } else if (dt == "float64") {
-                UA_Double v = (UA_Double)std::get<double>(seed.value);
-                vAttr.dataType  = UA_TYPES[UA_TYPES_DOUBLE].typeId;
-                vAttr.valueRank = UA_VALUERANK_SCALAR;
-                UA_Variant_setScalarCopy(&vAttr.value, &v, &UA_TYPES[UA_TYPES_DOUBLE]);
-            } else if (dt == "string") {
-                std::string s = std::get<std::string>(seed.value);
-                UA_String v = UA_STRING_ALLOC(s.c_str());
-                vAttr.dataType  = UA_TYPES[UA_TYPES_STRING].typeId;
-                vAttr.valueRank = UA_VALUERANK_SCALAR;
-                UA_Variant_setScalarCopy(&vAttr.value, &v, &UA_TYPES[UA_TYPES_STRING]);
-                UA_String_clear(&v);
-            } else {
-                std::cerr << "OPC UA: unsupported datatype '" << dt
-                          << "' for tag '" << cfg.logical_name << "'. Skipping.\n";
-                supported = false;
-            }
-
-            if (!supported) {
+            if (!ua_set_variable_attr_from_snapshot(vAttr, seed)) {
+                UA_VariableAttributes_clear(&vAttr);
                 continue;
             }
 
@@ -13346,7 +13418,7 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers,
 
             UaTagBinding b;
             b.handle       = tag.handle;
-            b.datatype     = dt;
+            b.datatype     = seed.datatype;
             b.nodeId       = varId;
             b.conn_id      = conn.id;
             b.logical_name = cfg.logical_name;
@@ -13432,6 +13504,7 @@ void shutdown_opcua_server() {
 // *before* overwriting, so we optionally publish only on change.
 
 bool snapshot_values_equal(const TagSnapshot &a, const TagSnapshot &b) {
+    if (a.array_values != b.array_values) return false;
     if (a.datatype != b.datatype || a.connection_id != b.connection_id || a.logical_name != b.logical_name)
         return false;
     if (a.value.index() != b.value.index())
@@ -23491,7 +23564,8 @@ window.addEventListener("load", startAutoRefresh);
 		                    jt["timestamp_ms"] = ms;
 
 		                    if (snap.quality == 1) {
-		                        std::visit([&jt](auto &&arg) {
+		                        if (!snap.array_values.empty()) jt["value"] = snapshot_json_value(snap);
+                            else std::visit([&jt](auto &&arg) {
 		                            using V = std::decay_t<decltype(arg)>;
 		                            if constexpr (std::is_same_v<V, float> || std::is_same_v<V, double>) {
 		                                if (std::isfinite(arg)) {
@@ -24389,9 +24463,7 @@ window.addEventListener("load", startAutoRefresh);
                     res.status = 503;
                 } else {
                     jt["quality"] = 1;
-                    std::visit([&jt](auto &&arg) {
-                        jt["value"] = arg;
-                    }, snap.value);
+                    jt["value"] = snapshot_json_value(snap);
 
                     {
                         std::lock_guard<std::mutex> lock(driverMutex);
@@ -25517,32 +25589,65 @@ window.addEventListener("load", startAutoRefresh);
 									auto children = remote_ua_browse_children(client, connId);
 									std::vector<RemoteUaChild> tags;
 									for (const auto &child : children) if (child.node_class == UA_NODECLASS_VARIABLE) tags.push_back(child);
+                                    if (tags.empty()) {
+                                        UA_NodeId_clear(&connId);
+                                        result["connections"].push_back(std::move(conn));
+                                        continue;
+                                    }
 									UA_ReadRequest readReq; UA_ReadRequest_init(&readReq);
-									readReq.nodesToReadSize = tags.size() * 2;
+									readReq.nodesToReadSize = tags.size() * 5;
 									readReq.nodesToRead = static_cast<UA_ReadValueId*>(UA_Array_new(readReq.nodesToReadSize, &UA_TYPES[UA_TYPES_READVALUEID]));
 									for (size_t i = 0; i < tags.size(); ++i) {
 										UA_NodeId tagId = UA_NODEID_NULL;
 										UA_String tagText = UA_STRING(const_cast<char*>(tags[i].node_id.c_str()));
 										if (UA_NodeId_parse(&tagId, tagText) != UA_STATUSCODE_GOOD) continue;
-										UA_NodeId_copy(&tagId, &readReq.nodesToRead[i * 2].nodeId);
-										readReq.nodesToRead[i * 2].attributeId = UA_ATTRIBUTEID_VALUE;
-										UA_NodeId_copy(&tagId, &readReq.nodesToRead[i * 2 + 1].nodeId);
-										readReq.nodesToRead[i * 2 + 1].attributeId = UA_ATTRIBUTEID_ACCESSLEVEL;
+										UA_NodeId_copy(&tagId, &readReq.nodesToRead[i * 5].nodeId);
+										readReq.nodesToRead[i * 5].attributeId = UA_ATTRIBUTEID_VALUE;
+										UA_NodeId_copy(&tagId, &readReq.nodesToRead[i * 5 + 1].nodeId);
+										readReq.nodesToRead[i * 5 + 1].attributeId = UA_ATTRIBUTEID_ACCESSLEVEL;
+                                        const UA_UInt32 attributes[] = { UA_ATTRIBUTEID_DATATYPE, UA_ATTRIBUTEID_VALUERANK, UA_ATTRIBUTEID_ARRAYDIMENSIONS };
+                                        for (size_t j = 0; j < 3; ++j) {
+                                            UA_NodeId_copy(&tagId, &readReq.nodesToRead[i * 5 + 2 + j].nodeId);
+                                            readReq.nodesToRead[i * 5 + 2 + j].attributeId = attributes[j];
+                                        }
 										UA_NodeId_clear(&tagId);
 									}
 									UA_ReadResponse readResp = UA_Client_Service_read(client, readReq);
+                                    if (readResp.responseHeader.serviceResult != UA_STATUSCODE_GOOD) {
+                                        const auto failure = readResp.responseHeader.serviceResult;
+                                        UA_ReadResponse_clear(&readResp); UA_ReadRequest_clear(&readReq);
+                                        throw std::runtime_error("Remote tag metadata read failed: " + std::string(UA_StatusCode_name(failure)));
+                                    }
 									for (size_t i = 0; i < tags.size(); ++i) {
 										std::string datatype = "string";
+                                    size_t elemCount = 1;
 										bool writable = false;
-										if (readResp.resultsSize > i * 2 && readResp.results[i * 2].hasValue) {
+										if (readResp.resultsSize > i * 5 && readResp.results[i * 5].hasValue) {
 											TagSnapshot sample; ConnectionConfig dc; TagConfig dt;
-											if (snapshot_from_opcua_variant(sample, dc, dt, readResp.results[i * 2].value)) datatype = sample.datatype;
+											if (snapshot_from_opcua_variant(sample, dc, dt, readResp.results[i * 5].value)) {
+                                            datatype = sample.datatype;
+                                            if (!sample.array_values.empty()) elemCount = sample.array_values.size();
+                                        }
 										}
-										if (readResp.resultsSize > i * 2 + 1 && readResp.results[i * 2 + 1].hasValue) {
-											const UA_Variant &accessValue = readResp.results[i * 2 + 1].value;
+										if (readResp.resultsSize > i * 5 + 1 && readResp.results[i * 5 + 1].hasValue) {
+											const UA_Variant &accessValue = readResp.results[i * 5 + 1].value;
 											if (UA_Variant_hasScalarType(&accessValue, &UA_TYPES[UA_TYPES_BYTE])) writable = ((*static_cast<const UA_Byte*>(accessValue.data) & UA_ACCESSLEVELMASK_WRITE) != 0);
 										}
-										conn["tags"].push_back({{"name", tags[i].name}, {"node_id", tags[i].node_id}, {"datatype", datatype}, {"writable", writable}});
+                                    if (readResp.resultsSize > i * 5 + 4) {
+                                        const auto &type = readResp.results[i * 5 + 2].value;
+                                        if (UA_Variant_hasScalarType(&type, &UA_TYPES[UA_TYPES_NODEID])) {
+                                            const auto &id = *static_cast<const UA_NodeId*>(type.data);
+                                            for (const auto &entry : std::vector<std::pair<size_t, const char*>>{
+                                                {UA_TYPES_BOOLEAN,"bool"}, {UA_TYPES_INT16,"int16"}, {UA_TYPES_UINT16,"uint16"},
+                                                {UA_TYPES_INT32,"int32"}, {UA_TYPES_UINT32,"uint32"}, {UA_TYPES_FLOAT,"float32"},
+                                                {UA_TYPES_DOUBLE,"float64"}, {UA_TYPES_STRING,"string"}})
+                                                if (UA_NodeId_equal(&id, &UA_TYPES[entry.first].typeId)) datatype = entry.second;
+                                        }
+                                        const auto &dimensions = readResp.results[i * 5 + 4].value;
+                                        if (dimensions.type == &UA_TYPES[UA_TYPES_UINT32] && dimensions.arrayLength == 1 && dimensions.data)
+                                            elemCount = std::max(elemCount, static_cast<size_t>(*static_cast<UA_UInt32*>(dimensions.data)));
+                                    }
+										conn["tags"].push_back({{"name", tags[i].name}, {"node_id", tags[i].node_id}, {"datatype", datatype}, {"writable", writable && elemCount <= 1}, {"elem_count", elemCount}});
 									}
 									UA_ReadResponse_clear(&readResp);
 									UA_ReadRequest_clear(&readReq);
@@ -29925,7 +30030,7 @@ window.addEventListener("load", startAutoRefresh);
 
 			                            int32_t status = PLCTAG_STATUS_OK;
 			                            TagSnapshot snap;
-			                            const bool isArray = (t.cfg.elem_count > 1);
+			                            bool isArray = (t.cfg.elem_count > 1);
 			                            std::vector<TagSnapshot> elemSnaps;
 			                            bool metricsRecorded = false;
 
@@ -29950,7 +30055,10 @@ window.addEventListener("load", startAutoRefresh);
 										if (prefetched != remoteUaPrefetch.end()) {
 			                                            uaStatus = prefetched->second.ua_status;
 			                                            readUs = prefetched->second.read_us;
-			                                            if (uaStatus == UA_STATUSCODE_GOOD) snap = std::move(prefetched->second.snapshot);
+			                                            if (uaStatus == UA_STATUSCODE_GOOD) {
+                                                snap = std::move(prefetched->second.snapshot);
+
+                                            }
 											remoteUaPrefetch.erase(prefetched);
 										} else if (remoteUaSubscriptionId != 0) {
 											// Subscriptions only publish changed values. Reuse the last
@@ -29968,6 +30076,18 @@ window.addEventListener("load", startAutoRefresh);
 											snap.timestamp = std::chrono::system_clock::now();
 											uaStatus = UA_STATUSCODE_GOOD;
 										}
+                                            if (uaStatus == UA_STATUSCODE_GOOD && !snap.array_values.empty()) {
+                                                isArray = true;
+                                                t.cfg.elem_count = static_cast<int>(snap.array_values.size());
+                                                for (size_t i = 0; i < snap.array_values.size(); ++i) {
+                                                    TagSnapshot element;
+                                                    element.connection_id = snap.connection_id;
+                                                    element.logical_name = t.cfg.logical_name + "[" + std::to_string(i) + "]";
+                                                    element.datatype = snap.datatype; element.value = snap.array_values[i];
+                                                    element.timestamp = snap.timestamp; element.quality = snap.quality;
+                                                    elemSnaps.push_back(std::move(element));
+                                                }
+                                            }
 			                                        if (uaStatus != UA_STATUSCODE_GOOD) {
 			                                            status = PLCTAG_ERR_REMOTE_ERR;
 			                                        }
@@ -30090,6 +30210,7 @@ window.addEventListener("load", startAutoRefresh);
                                         auto prefetchedLogix = logixPrefetch.find(top.idx);
                                         auto t0 = std::chrono::steady_clock::now();
                                         auto t1 = t0;
+                                        snap.poll_read = {t0, t1, spec.freshness_epoch};
                                         if (prefetchedLogix != logixPrefetch.end()) {
                                             status = prefetchedLogix->second.status;
                                             t0 = prefetchedLogix->second.started;
@@ -30184,7 +30305,20 @@ window.addEventListener("load", startAutoRefresh);
 		                                record_connection_sweep_progress(spec.metrics, t.sweep_index, spec.total_tag_count);
 		                            }
 
-		                            TagSnapshot prevSnap;
+		                            if (isArray) {
+                                snap.connection_id = spec.conn.id; snap.logical_name = t.cfg.logical_name;
+                                snap.timestamp = std::chrono::system_clock::now();
+                                snap.datatype = t.out_datatype.empty() ? t.cfg.datatype : t.out_datatype;
+                                snap.quality = status == PLCTAG_STATUS_OK && elemSnaps.size() == static_cast<size_t>(t.cfg.elem_count);
+                                snap.array_values.clear();
+                                for (const auto &element : elemSnaps) {
+                                    snap.array_values.push_back(element.value);
+                                    if (element.quality != 1) snap.quality = 0;
+                                    snap.datatype = element.datatype;
+                                }
+                                snap.value = snap.array_values.empty() ? default_tag_value_for_datatype(snap.datatype) : snap.array_values.front();
+                            }
+                            TagSnapshot prevSnap;
 		                            bool hadPrev = false;
 		                            bool doWsTagUpdate = false;
 		                            bool doWsEventRow = false;
@@ -30450,6 +30584,10 @@ window.addEventListener("load", startAutoRefresh);
 		                                        }
 		                                    }
 	                                } else {
+                                        applyLifecycle(snap);
+                                        tagTable[key] = snap;
+                                        doUaUpdate = g_uaServer != nullptr;
+                                        doWsTagUpdate = ws_is_enabled() && (!hadPrev || !snapshot_updates_equal(snap, prevSnap));
 	                                    const int ec = std::max(1, t.cfg.elem_count);
 	                                    const auto ts = std::chrono::system_clock::now();
 	                                    for (int i = 0; i < ec; i++) {
@@ -30837,6 +30975,11 @@ window.addEventListener("load", startAutoRefresh);
 		                                    mqttQueue.push_back(std::move(j));
 		                                }
 		                            }
+                                if (isArray && doWsTagUpdate) ws_notify_tag_update(snap, t.cfg);
+                                if (isArray && doUaUpdate) {
+                                    std::lock_guard<std::mutex> ql(uaQueueMutex);
+                                    uaQueue.push_back(UaUpdate{spec.conn.id, t.cfg.logical_name, snap, spec.freshness_epoch});
+                                }
 	                            if (!isArray) {
 	                                if (doConsolePrint) {
 	                                    print_snapshot(snap);

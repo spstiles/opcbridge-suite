@@ -44,6 +44,19 @@ read every five seconds verifies communication separately, without refreshing ta
 timestamps. Bad upstream quality, failed communication checks, and inactive
 subscriptions still affect connection health.
 
+Enabled block sources are published as typed, one-dimensional UA arrays using
+the same PLC read as their individual elements and derived tags. Whole arrays
+are read-only through UA; writable scalar elements and derived tags retain
+their existing write paths. Disabled tags are excluded from the namespace;
+applying a disable removes an existing node from browsing and reports it
+unavailable to clients that were monitoring it.
+
+To refresh an existing remote OPCBridge connection, open its connection editor,
+Browse the remote server, review the selection, save, then use **Save & Apply**.
+This updates array sizes and types while preserving local names and scan rates,
+and removes imported entries no longer published by the browsed source
+connections. Failed or incomplete browsing does not apply a partial selection.
+
 
 ## Why OPCBridge Exists
 

@@ -17761,7 +17761,7 @@ async function browseEditedRemoteOpcbridge() {
       .map((tag) => String(tag?.plc_tag_name || ''))
       .filter(Boolean));
     renderRemoteOpcuaBrowseResults(els.editDevOpcuaBrowseResults, connections, existingNodeIds, false);
-    setEditDevStatus(`Found ${connections.length} remote connection${connections.length === 1 ? '' : 's'}. Check or uncheck connections and tags, then click Save.`);
+    setEditDevStatus(`Found ${connections.length} remote connection${connections.length === 1 ? '' : 's'}. Review the selections, then click Save. Tags no longer published by the browsed source connections will be removed.`);
   } catch (err) {
     setEditDevStatus(`Remote browse failed: ${err.message || err}`);
   } finally {
@@ -17774,7 +17774,11 @@ function applyEditedRemoteOpcuaTagSelection() {
   const remote = container?._opcuaConnections;
   const connectionId = editedRemoteOpcuaConnectionId();
   if (!connectionId || !Array.isArray(remote)) return;
+  const currentTags = getEffectiveTagsAll();
   const browsedNodeIds = new Set();
+  // Only a successful, complete browse supplies these source connection scopes.
+  const prefixes = remote.map(c => String(c.node_id || '').match(/^(ns=\d+;s=)Connections\/(.+)$/))
+    .filter(Boolean).map(match => `${match[1]}Tags/${match[2]}/`);
   const selectedTags = [];
   container.querySelectorAll('[data-opcua-tag]').forEach((input) => {
     const [ci, ti] = String(input.dataset.opcuaTag || '').split(':').map(Number);
@@ -17785,19 +17789,27 @@ function applyEditedRemoteOpcuaTagSelection() {
     const remoteConnection = String(remote?.[ci]?.name || '').trim();
     const remoteName = String(tag?.name || '').trim();
     const name = remoteConnection ? `${remoteConnection}/${remoteName}` : remoteName;
-    if (nodeId && name) selectedTags.push({ connection_id: connectionId, name, plc_tag_name: nodeId, datatype: String(tag?.datatype || 'string'), scan_ms: 1000, enabled: true, writable: Boolean(tag?.writable) });
+    if (nodeId && name) selectedTags.push({ connection_id: connectionId, name, plc_tag_name: nodeId, datatype: String(tag?.datatype || 'string'), elem_count: Math.max(1, Math.trunc(Number(tag?.elem_count) || 1)), scan_ms: 1000, enabled: true, writable: Boolean(tag?.writable) });
   });
-  const existingByNodeId = new Map((state.tagConfigAll || [])
+  const existingByNodeId = new Map((currentTags || [])
     .filter((tag) => String(tag?.connection_id || '') === connectionId)
     .map((tag) => [String(tag?.plc_tag_name || ''), tag]));
-  const retained = (state.tagConfigAll || []).filter((tag) => {
+  const retained = (currentTags || []).filter((tag) => {
     if (String(tag?.connection_id || '') !== connectionId) return true;
     const nodeId = String(tag?.plc_tag_name || '');
-    return !browsedNodeIds.has(nodeId);
+    return !browsedNodeIds.has(nodeId) && !prefixes.some(prefix => nodeId.startsWith(prefix));
   });
-  const applied = selectedTags.map((tag) => existingByNodeId.get(tag.plc_tag_name) || tag);
+  const applied = selectedTags.map((tag) => {
+    const existing = existingByNodeId.get(tag.plc_tag_name);
+    return existing ? { ...existing, datatype: tag.datatype, elem_count: tag.elem_count, writable: tag.writable } : tag;
+  });
   const previousCount = existingByNodeId.size;
   state.tagConfigAll = retained.concat(applied);
+  // Retained records already contain these edits; do not let stale edit rows
+  // override the refreshed type/shape or resurrect removed imported entries.
+  for (const key of state.tagConfigEdited?.keys?.() || []) {
+    if (String(key).startsWith(`${connectionId}::`)) state.tagConfigEdited.delete(key);
+  }
   markTagsDirty(true);
   return { previousCount, selectedCount: selectedTags.length };
 }
@@ -21165,6 +21177,7 @@ async function createNewDeviceFromWorkspace() {
         name: remoteConnection ? `${remoteConnection}/${name}` : name,
         plc_tag_name: String(tag?.node_id || ''),
         datatype: String(tag?.datatype || 'string'),
+        elem_count: Math.max(1, Math.trunc(Number(tag?.elem_count) || 1)),
         scan_ms: 1000,
         enabled: true,
         writable: Boolean(tag?.writable)
