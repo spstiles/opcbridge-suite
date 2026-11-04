@@ -7684,14 +7684,31 @@ const openSystemReferenceHealth = async () => {
         row.className = `reference-health-item is-${issue.severity || "warning"}`;
         row.innerHTML = `<span class="reference-health-kind"></span><span class="reference-health-message"></span><span class="reference-health-source"></span>`;
         row.querySelector(".reference-health-kind").textContent = issue.category || "reference";
-        row.querySelector(".reference-health-message").textContent = issue.message || "Reference needs attention";
-        row.querySelector(".reference-health-source").textContent = issue.source?.value || "";
+        const display = getReferenceHealthIssueDisplay(issue);
+        row.querySelector(".reference-health-message").textContent = display.message;
+        row.querySelector(".reference-health-source").textContent = display.source;
         row.addEventListener("click", () => openSystemReferenceIssue(screenId, issue));
         group.appendChild(row);
       });
       list.appendChild(group);
     });
   }
+};
+
+const getReferenceHealthIssueDisplay = (issue) => {
+  const original = String(issue?.source?.value || "");
+  let source = original;
+  if (issue?.category === "tag" && original.includes("::")) {
+    const separator = original.indexOf("::");
+    source = `${getConnectionDisplayName(original.slice(0, separator))}::${original.slice(separator + 2)}`;
+  } else {
+    source = formatAutomationExpressionForDisplay(original);
+  }
+  let message = String(issue?.message || "Reference needs attention");
+  // Format message prose separately so tag names in the source stay untouched.
+  const formatMessage = text => text.replace(/\bconnection_[a-f0-9]+\b/gi, id => getConnectionDisplayName(id));
+  message = original ? message.split(original).map(formatMessage).join(source) : formatMessage(message);
+  return { message, source };
 };
 
 const openReferenceHealth = () => {
@@ -7718,10 +7735,11 @@ const openReferenceHealth = () => {
       kind.textContent = issue.category || "reference";
       const message = document.createElement("span");
       message.className = "reference-health-message";
-      message.textContent = issue.message || "Reference needs attention";
+      const display = getReferenceHealthIssueDisplay(issue);
+      message.textContent = display.message;
       const source = document.createElement("span");
       source.className = "reference-health-source";
-      source.textContent = issue.source?.value || "";
+      source.textContent = display.source;
       row.append(kind, message, source);
       row.addEventListener("click", () => selectReferenceIssueObject(issue));
       list.appendChild(row);

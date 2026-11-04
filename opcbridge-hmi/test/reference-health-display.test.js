@@ -1,0 +1,21 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const source = fs.readFileSync(require('node:path').join(__dirname,'../public/js/hmi.js'),'utf8');
+test('health messages use friendly names without modifying saved references or tag names',()=>{
+  const c=vm.createContext({getConnectionDisplayName:id=>id==='connection_abc123'?'OPC Data':'Missing connection',formatAutomationExpressionForDisplay:s=>s});
+  vm.runInContext(source.slice(source.indexOf('const getReferenceHealthIssueDisplay ='),source.indexOf('const openReferenceHealth =')),c);
+  const issue={category:'tag',source:{value:'connection_abc123::FieldOps/Missing'},message:'visibility tag not found: connection_abc123::FieldOps/Missing'};
+  c.issue=issue;
+  vm.runInContext('display = getReferenceHealthIssueDisplay(issue)',c);
+  assert.equal(c.display.message,'visibility tag not found: OPC Data::FieldOps/Missing');
+  assert.equal(c.display.source,'OPC Data::FieldOps/Missing');
+  assert.equal(issue.source.value,'connection_abc123::FieldOps/Missing');
+  c.issue={category:'tag',source:{value:'connection_abc123::connection_deadbeef'},message:'not found: connection_abc123::connection_deadbeef'};
+  vm.runInContext('display = getReferenceHealthIssueDisplay(issue)',c);
+  assert.equal(c.display.message,'not found: OPC Data::connection_deadbeef');
+  c.issue={category:'tag',source:{value:'connection_deadbeef::Missing'},message:'tag not found: connection_deadbeef::Missing'};
+  vm.runInContext('display = getReferenceHealthIssueDisplay(issue)',c);
+  assert.equal(c.display.source,'Missing connection::Missing');
+});
