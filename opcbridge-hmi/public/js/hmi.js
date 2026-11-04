@@ -1754,7 +1754,7 @@ const openVisibilityExpressionModal = () => {
   ensureRectVisibilityDraft(obj);
   const { rule } = getVisibilityRuleState(rectVisibilityDraft || obj.visibility || {});
   visibilityExpressionDraftValue = String(rule?.expression || "");
-  if (visibilityExpressionEditor) visibilityExpressionEditor.value = visibilityExpressionDraftValue;
+  if (visibilityExpressionEditor) visibilityExpressionEditor.value = formatAutomationExpressionForDisplay(visibilityExpressionDraftValue);
   syncVisibilityExpressionValidationUi();
   hideVisibilityExpressionInsertMenu();
   setVisibilityExpressionTagPickerVisible(false);
@@ -1896,7 +1896,7 @@ const openRectColorExpressionModal = () => {
   const draft = normalizeRectColorDraft(obj, rectColorDraft);
   const rule = draft.rules[draft.selectedRuleIndex] || {};
   rectColorExpressionDraftValue = String(rule.expression || "");
-  if (rectColorExpressionEditor) rectColorExpressionEditor.value = rectColorExpressionDraftValue;
+  if (rectColorExpressionEditor) rectColorExpressionEditor.value = formatAutomationExpressionForDisplay(rectColorExpressionDraftValue);
   syncRectColorExpressionValidationUi();
   hideRectColorExpressionInsertMenu();
   setRectColorExpressionTagPickerVisible(false);
@@ -2203,7 +2203,7 @@ const ensureAutomationNumericExpressionModal = () => {
   insertBtn.addEventListener("click", () => {
     const { connection_id, tag } = parseTagSelectValue(tagSelect.value);
     if (!connection_id || !tag) return;
-    insertAutomationNumericExpressionText(`tag(${JSON.stringify(connection_id)}, ${JSON.stringify(tag)})`);
+    insertAutomationNumericExpressionText(formatAutomationExpressionForDisplay(`tag(${JSON.stringify(connection_id)}, ${JSON.stringify(tag)})`));
     setAutomationNumericExpressionTagPickerVisible(false);
   });
   saveBtn.addEventListener("click", () => {
@@ -25313,7 +25313,7 @@ if (visibilityExpressionSaveBtn) {
   visibilityExpressionSaveBtn.addEventListener("click", () => {
     const error = syncVisibilityExpressionValidationUi();
     if (error) return;
-    const nextExpression = String(visibilityExpressionEditor?.value || "");
+    const nextExpression = normalizeAutomationExpressionConnectionReferences(String(visibilityExpressionEditor?.value || ""));
     updateVisibilityProperty({ sourceType: "expression", expression: nextExpression, enabled: true });
     closeVisibilityExpressionModal();
   });
@@ -25377,7 +25377,7 @@ if (visibilityExprInsertTagBtn) {
     const connectionId = String(visibilityExprTagConnection?.value || "").trim();
     const tagName = String(visibilityExprTagName?.value || "").trim();
     if (!connectionId || !tagName) return;
-    insertVisibilityExpressionText(`tag(${JSON.stringify(connectionId)}, ${JSON.stringify(tagName)})`);
+    insertVisibilityExpressionText(formatAutomationExpressionForDisplay(`tag(${JSON.stringify(connectionId)}, ${JSON.stringify(tagName)})`));
     setVisibilityExpressionTagPickerVisible(false);
   });
 }
@@ -25414,7 +25414,7 @@ if (rectColorExpressionSaveBtn) {
   rectColorExpressionSaveBtn.addEventListener("click", () => {
     const error = syncRectColorExpressionValidationUi();
     if (error) return;
-    const nextExpression = String(rectColorExpressionEditor?.value || "");
+    const nextExpression = normalizeAutomationExpressionConnectionReferences(String(rectColorExpressionEditor?.value || ""));
     updateRectColorDraft({ sourceType: "expression", expression: nextExpression, enabled: true });
     closeRectColorExpressionModal();
   });
@@ -25478,7 +25478,7 @@ if (rectColorExprInsertTagBtn) {
     const connectionId = String(rectColorExprTagConnection?.value || "").trim();
     const tagName = String(rectColorExprTagName?.value || "").trim();
     if (!connectionId || !tagName) return;
-    insertRectColorExpressionText(`tag(${JSON.stringify(connectionId)}, ${JSON.stringify(tagName)})`);
+    insertRectColorExpressionText(formatAutomationExpressionForDisplay(`tag(${JSON.stringify(connectionId)}, ${JSON.stringify(tagName)})`));
     setRectColorExpressionTagPickerVisible(false);
   });
 }
