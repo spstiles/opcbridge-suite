@@ -55,3 +55,41 @@ test('quality bindings survive normalization and select indicator states', () =>
   `,c);
   assert.equal(c.binding.property,'quality'); assert.equal(c.state.value,'BAD');
 });
+test('quality(tag()) uses the reference rather than its value and retains demand and names', () => {
+  const c = setup();
+  c.visibilityExpressionFunctionCache = new Map();
+  c.resolveMappedConnectionId = x => x === 'Field Ops' ? 'PLC' : x;
+  c.getConnectionDisplayName = x => x === 'PLC' ? 'Field Ops' : x;
+  c.formatMappedTagReference = (a,b) => `${a}:${b}`;
+  vm.runInContext(source.slice(source.indexOf('const getAutomationExpressionValidationError ='),source.indexOf('const isEditingRectVisibilityDynamic =')),c);
+  for (const value of [0,1,false,'BAD',null]) {
+    c.sampleValue = value;
+    vm.runInContext(`
+      applyTagSnapshotToCache('PLC:Run',sampleValue,1,true,true);
+      result = evaluateAutomationExpression('(quality(tag("PLC", "Run")) != "GOOD")');
+    `,c);
+    assert.equal(c.result,false);
+  }
+  for (const [quality, state, expected] of [[0,'active','BAD'],[0,'waiting','WAITING'],[0,'inactive','INACTIVE'],[1,'active','GOOD']]) {
+    c.sampleQuality=quality; c.sampleState=state;
+    vm.runInContext(`
+      applyTagSnapshotToCache('PLC:Run',1,sampleQuality,true,true,sampleState);
+      result = evaluateAutomationExpression('quality ( tag ( "PLC", "Run" ) )');
+    `,c);
+    assert.equal(c.result,expected);
+  }
+  vm.runInContext(`
+    mapped = normalizeAutomationExpressionConnectionReferences('quality(tag("Field Ops", "Run"))');
+    displayed = formatAutomationExpressionForDisplay(mapped);
+    keys = [...extractAutomationExpressionTagKeys(mapped)];
+    missing = evaluateAutomationExpression("quality(tag('PLC', 'Missing'))");
+    literal = evaluateAutomationExpression(JSON.stringify('quality(tag("PLC", "Run"))'));
+    arithmetic = evaluateAutomationExpression('tag("PLC", "Run") + 2');
+  `,c);
+  assert.equal(c.mapped,'quality(tag("PLC", "Run"))');
+  assert.equal(c.displayed,'quality(tag("Field Ops", "Run"))');
+  assert.deepEqual(Array.from(c.keys),['PLC:Run']);
+  assert.equal(c.missing,'UNKNOWN');
+  assert.equal(c.literal,'quality(tag("PLC", "Run"))');
+  assert.equal(c.arithmetic,3);
+});

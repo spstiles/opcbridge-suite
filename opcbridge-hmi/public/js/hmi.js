@@ -2290,6 +2290,12 @@ const compileVisibilityExpression = (expression) => {
     return null;
   }
   try {
+    // Resolve quality from the tag reference before tag() becomes a scalar value.
+    // The first alternative skips quoted text so string contents remain literal.
+    const compiledSource = source.replace(
+      /("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|\bquality\s*\(\s*tag\s*\(\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*,\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\s*\)\s*\)/g,
+      (match, literal, connection, name) => literal ? match : `quality(${connection}, ${name})`
+    );
     const fn = Function(
       "tag",
       "min",
@@ -2299,7 +2305,7 @@ const compileVisibilityExpression = (expression) => {
       "floor",
       "ceil",
       "quality",
-      `"use strict"; return (${source});`
+      `"use strict"; return (${compiledSource});`
     );
     visibilityExpressionFunctionCache.set(source, fn);
     return fn;
