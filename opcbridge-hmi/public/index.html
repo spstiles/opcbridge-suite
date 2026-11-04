@@ -153,6 +153,7 @@
         <button id="editorZoomResetBtn" class="toolbar-btn toolbar-zoom-readout" type="button" title="Reset zoom to 100%">100%</button>
         <button id="editorZoomInBtn" class="toolbar-btn toolbar-zoom-btn" type="button" title="Zoom in">+</button>
       </div>
+      <button class="toolbar-btn" type="button" data-refresh-tag-catalog title="Reload tags and connections from OPCBridge">Refresh Tags</button>
       <button id="screenSaveBtn" class="screen-save-btn toolbar-btn" type="button">Save</button>
       <button id="snapToggleBtn" class="toolbar-btn" type="button" title="Toggle snap to grid">Snap</button>
       <button id="groupToggleBtn" class="toolbar-btn" type="button" title="Group selected items">Group</button>
@@ -2516,6 +2517,7 @@
 	            <div class="prop-inline automation-tag-inline">
 	              <input id="textBindingTag" class="automation-tag-input" type="text" placeholder="tag" />
 	              <button id="textBindingTagPickBtn" class="panel-btn" type="button">Pick…</button>
+              <button class="panel-btn" type="button" data-refresh-tag-catalog>Refresh Tags</button>
 	            </div>
 	          </div>
 	          <div id="textBindingExpressionRow" class="prop-row is-hidden" hidden>
@@ -2577,7 +2579,7 @@
 	            <label for="tagBindingTagFilter">Filter</label>
 	            <div class="prop-inline">
 	              <input id="tagBindingTagFilter" type="text" placeholder="Filter tags…" />
-	              <button id="tagBindingRefreshBtn" class="panel-btn" type="button">Refresh</button>
+	              <button id="tagBindingRefreshBtn" class="panel-btn" type="button" data-refresh-tag-catalog>Refresh</button>
 	            </div>
 	          </div>
               <div class="prop-row">
@@ -2616,6 +2618,7 @@
               <button id="visibilityExprLogicalBtn" class="panel-btn" type="button">Logical</button>
               <button id="visibilityExprFunctionsBtn" class="panel-btn" type="button">Functions</button>
               <button id="visibilityExprTagsBtn" class="panel-btn" type="button">Tags</button>
+              <button class="panel-btn" type="button" data-refresh-tag-catalog>Refresh Tags</button>
             </div>
             <div id="visibilityExpressionInsertMenu" class="menu-flyout is-hidden" role="menu" aria-label="Expression helper menu"></div>
             <div id="visibilityExpressionTagPicker" class="prop-subgroup is-hidden" hidden>
@@ -2661,6 +2664,7 @@
               <button id="rectColorExprLogicalBtn" class="panel-btn" type="button">Logical</button>
               <button id="rectColorExprFunctionsBtn" class="panel-btn" type="button">Functions</button>
               <button id="rectColorExprTagsBtn" class="panel-btn" type="button">Tags</button>
+              <button class="panel-btn" type="button" data-refresh-tag-catalog>Refresh Tags</button>
             </div>
             <div id="rectColorExpressionInsertMenu" class="menu-flyout is-hidden" role="menu" aria-label="Expression helper menu"></div>
             <div id="rectColorExpressionTagPicker" class="prop-subgroup is-hidden" hidden>

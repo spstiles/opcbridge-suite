@@ -54,6 +54,9 @@ test('catalog arrival refreshes a picker opened before connections were loaded',
   assert.equal(select.options.length, 1);
   select.id = 'textBindingConnection';
   context.document.querySelectorAll = () => [select];
+  context.compactTagBindingConfigs = [];
+  for (const name of ['refreshBarBindTagOptions', 'refreshBarRangeTagOptions', 'refreshNumberInputTagOptions', 'refreshIndicatorTagOptions', 'refreshAutomationTagOptions', 'populateVisibilityExpressionConnectionOptions', 'populateVisibilityExpressionTagOptions', 'populateRectColorExpressionConnectionOptions', 'populateRectColorExpressionTagOptions', 'populateAutomationNumericExpressionConnectionOptions', 'populateAutomationNumericExpressionTagOptions']) context[name] = () => {};
+  context.visibilityExprTagConnection = context.rectColorExprTagConnection = context.automationNumericExprTagConnection = null;
   context.activeCompactTagBindingId = 'indicator';
   context.tagBindingConnectionSelect = select;
   let refreshedTags = false;

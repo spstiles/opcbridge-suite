@@ -2138,7 +2138,12 @@ const ensureAutomationNumericExpressionModal = () => {
   clearBtn.type = "button";
   clearBtn.className = "panel-btn";
   clearBtn.textContent = "Clear";
-  footer.append(saveBtn, cancelBtn, clearBtn);
+  const refreshTagsBtn = document.createElement("button");
+  refreshTagsBtn.type = "button";
+  refreshTagsBtn.className = "panel-btn";
+  refreshTagsBtn.textContent = "Refresh Tags";
+  refreshTagsBtn.setAttribute("data-refresh-tag-catalog", "");
+  footer.append(saveBtn, cancelBtn, clearBtn, refreshTagsBtn);
 
   modal.append(header, body, footer);
   overlay.appendChild(modal);
@@ -13123,6 +13128,20 @@ const refreshTagBindingCatalogOptions = () => {
   document.querySelectorAll("select.automation-tag-input, #visibilityExprTagConnection, #rectColorExprTagConnection").forEach(select => {
     if (/connection/i.test(select.id)) populateConnectionSelect(select);
   });
+  compactTagBindingConfigs.forEach(config => {
+    if (config.editorConnectionInput) populateConnectionSelect(config.editorConnectionInput);
+  });
+  refreshBarBindTagOptions();
+  refreshBarRangeTagOptions();
+  refreshNumberInputTagOptions();
+  refreshIndicatorTagOptions();
+  refreshAutomationTagOptions();
+  populateVisibilityExpressionConnectionOptions();
+  populateVisibilityExpressionTagOptions(visibilityExprTagConnection?.value || "");
+  populateRectColorExpressionConnectionOptions();
+  populateRectColorExpressionTagOptions(rectColorExprTagConnection?.value || "");
+  populateAutomationNumericExpressionConnectionOptions();
+  populateAutomationNumericExpressionTagOptions(automationNumericExprTagConnection?.value || "");
   if (activeCompactTagBindingId) {
     populateCompactTagBindingConnectionOptions();
     populateCompactTagBindingTagOptions(tagBindingConnectionSelect?.value || "");
@@ -13213,20 +13232,10 @@ const loadTags = async () => {
       const query = getTagsFilterQuery();
       tagsStatus.textContent = query ? `${filtered.length}/${sortedAll.length} tags` : `${sortedAll.length} tags`;
     }
+    return true;
   } catch (error) {
     if (tagsStatus) tagsStatus.textContent = `Failed to load tags: ${error.message}`;
-    tagsCache = [];
-    tagsAllCache = [];
-    knownTagKeysCache = new Set();
-    tagCatalogLoaded = false;
-    tagsCacheVersion += 1;
-    refreshTagBindingCatalogOptions();
-    invalidateReferenceHealthCache();
-    if (isEditMode && selectedIndices.length === 1) {
-      syncPropertiesFromSelection();
-      updatePropertiesPanel();
-    }
-    renderTagsList([]);
+    return false;
   } finally {
     hideHmiBusy(busyToken);
   }
@@ -21514,8 +21523,9 @@ if (runtimeBtn) {
 }
 
 if (tagsRefreshBtn) {
-  tagsRefreshBtn.addEventListener("click", () => {
-    void loadLiveTagsForModal();
+  tagsRefreshBtn.addEventListener("click", async () => {
+    if (isEditMode) await refreshEditorTagCatalog();
+    await loadLiveTagsForModal();
   });
 }
 
@@ -22894,13 +22904,23 @@ if (tagBindingAliasInsertBtn) {
     insertAliasTokenIntoInput(tagBindingAliasInsertSelect, tagBindingTemplateInput);
   });
 }
-if (tagBindingRefreshBtn) {
-  tagBindingRefreshBtn.addEventListener("click", async () => {
-    await loadTags();
-    populateCompactTagBindingConnectionOptions();
-    populateCompactTagBindingTagOptions(tagBindingConnectionSelect?.value || "");
-  });
-}
+let tagCatalogRefreshPending = false;
+const refreshEditorTagCatalog = async () => {
+  if (tagCatalogRefreshPending) return;
+  tagCatalogRefreshPending = true;
+  const buttons = [...document.querySelectorAll("[data-refresh-tag-catalog]")];
+  buttons.forEach(button => { button.disabled = true; });
+  try {
+    const ok = await loadTags();
+    showHmiToast(ok ? "Tag list refreshed." : "Could not refresh the tag list. Check the OPCBridge connection.", 5000);
+  } finally {
+    buttons.forEach(button => { button.disabled = false; });
+    tagCatalogRefreshPending = false;
+  }
+};
+document.addEventListener("click", event => {
+  if (event.target.closest?.("[data-refresh-tag-catalog]")) void refreshEditorTagCatalog();
+});
 
 if (tagBindingSaveBtn) {
   tagBindingSaveBtn.addEventListener("click", () => {
