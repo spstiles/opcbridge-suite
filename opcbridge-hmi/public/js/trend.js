@@ -103,7 +103,7 @@
       const label=document.createElement('td'),swatch=document.createElement('span');swatch.className='trend-swatch';swatch.style.background=p.color;label.append(swatch,document.createTextNode(p.label));
       const value=document.createElement('td');value.textContent=p.source==='constant'?p.constant.toFixed(p.decimals):last?last.v.toFixed(p.decimals):'—';
       const time=document.createElement('td');time.textContent=p.source==='constant'?'Reference':last?timeText(last.t):'—';
-      const status=document.createElement('td');status.textContent=options.editing?'Preview':s.errors.get(p)||(!rows.length&&p.source!=='constant'?(s.loading?'Loading…':s.notices.get(p)||(config.source==='cache'?'Building trend cache':'No history')):'');
+      const status=document.createElement('td');status.textContent=options.editing?'Preview':s.errors.get(p)||(!rows.length&&p.source!=='constant'?(s.loading?'Loading…':s.notices.get(p)||(config.source==='cache'?'Building trend cache':'No history')):(p.source==='constant'||rows.at(-1)?.v!=null?'Good':'Bad quality'));
       tr.append(label,value,time,status);body.appendChild(tr);
     });
     host.querySelector('.trend-range').textContent=`${new Date(from).toLocaleString()} – ${new Date(to).toLocaleString()}`;
