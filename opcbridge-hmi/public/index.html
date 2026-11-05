@@ -153,6 +153,7 @@
         <button id="editorZoomResetBtn" class="toolbar-btn toolbar-zoom-readout" type="button" title="Reset zoom to 100%">100%</button>
         <button id="editorZoomInBtn" class="toolbar-btn toolbar-zoom-btn" type="button" title="Zoom in">+</button>
       </div>
+      <button id="insertTrendBtn" class="toolbar-btn" type="button" title="Insert a trend chart">Trend</button>
       <button class="toolbar-btn" type="button" data-refresh-tag-catalog title="Reload tags and connections from OPCBridge">Refresh Tags</button>
       <button id="screenSaveBtn" class="screen-save-btn toolbar-btn" type="button">Save</button>
       <button id="snapToggleBtn" class="toolbar-btn" type="button" title="Toggle snap to grid">Snap</button>
@@ -2755,7 +2756,12 @@
 	        </div>
 	
 	        <div class="settings-section">
-	          <div class="prop-group-title">Runtime</div>
+	          <div class="prop-group-title">Historian</div>
+              <div class="prop-row"><label for="settingsHistorianHost">Host/IP</label><input id="settingsHistorianHost" type="text" placeholder="127.0.0.1" /></div>
+              <div class="prop-row"><label for="settingsHistorianPort">API Port</label><input id="settingsHistorianPort" type="number" min="1" max="65535" placeholder="8096" /></div>
+              <p class="settings-hint">Trend history uses the historian API. Tags must be recorded there to show past data.</p>
+            </div><div class="settings-section">
+          <div class="prop-group-title">Runtime</div>
 	          <div class="prop-row">
 	            <label for="settingsDefaultScreen">Default screen</label>
 	            <select id="settingsDefaultScreen"></select>
@@ -3162,6 +3168,7 @@
       <script src="/js/click-actions.js"></script>
       <script src="/js/layers.js"></script>
       <script src="/js/animator.js"></script>
+      <script src="/js/trend.js"></script>
 	  <script src="/js/hmi.js?v=0.2.70"></script>
 	</body>
 	</html>

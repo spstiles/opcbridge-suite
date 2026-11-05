@@ -5,6 +5,8 @@ const fsp = require("fs/promises");
 const crypto = require("crypto");
 const stripJsonComments = require("strip-json-comments");
 const { createScreensRouter } = require("./screens");
+const { createTrendsRouter } = require("./trends");
+const { TrendCache } = require("./trend-cache");
 
 const ROOT = path.join(__dirname, "..");
 const FILES_ROOT = String(process.env.OPCBRIDGE_HMI_FILES_ROOT || "/etc/opcbridge/hmi");
@@ -304,6 +306,7 @@ const writeConfig = async (nextConfig) => {
       wsPort: Number(opcbridge.wsPort) || 8090,
       writeToken: String(opcbridge.writeToken || "")
     },
+    historian: { host: String(nextConfig?.historian?.host || "127.0.0.1"), httpPort: Number(nextConfig?.historian?.httpPort) || 8096 },
     alarms: {
       host: String(alarms.host || ""),
       httpPort: Number(alarms.httpPort) || 8085,
@@ -319,11 +322,13 @@ const writeConfig = async (nextConfig) => {
   const opcbridgeJson = JSON.stringify(cleaned.opcbridge, null, 2).replace(/\n/g, "\n  ");
   const alarmsJson = JSON.stringify(cleaned.alarms, null, 2).replace(/\n/g, "\n  ");
   const hmiJson = JSON.stringify(cleaned.hmi, null, 2).replace(/\n/g, "\n  ");
+  const historianJson = JSON.stringify(cleaned.historian, null, 2);
   const output = `{\n` +
     `  // opcbridge connection settings used by the HMI client\n` +
     `  \"opcbridge\": ${opcbridgeJson},\n` +
     `  // opcbridge-alarms connection settings (optional)\n` +
     `  \"alarms\": ${alarmsJson},\n` +
+    `  "historian": ${historianJson},\n` +
     `  // HMI runtime settings\n` +
     `  \"hmi\": ${hmiJson}\n` +
     `}\n`;
@@ -366,6 +371,10 @@ const resolveImagePath = (name) => {
 
 const createApp = () => {
   const app = express();
+  const trendCache = new TrendCache({readConfig,
+    screenRoots:[path.join(FILES_ROOT,"screens"),path.join(ROOT,"screens")],
+    file:String(process.env.OPCBRIDGE_HMI_TREND_CACHE_PATH||path.join(FILES_ROOT,".trend-cache","cache.json"))});
+  app.locals.trendCache=trendCache;
 
   app.use(express.json({ limit: `${JSON_BODY_LIMIT_MB}mb` }));
   app.use((req, res, next) => {
@@ -834,6 +843,8 @@ const createApp = () => {
       res.status(500).json({ error: String(error) });
     }
   });
+
+  app.use("/api/trends", createTrendsRouter({ readConfig, cache:trendCache }));
 
   app.get("/api/alarms/history", async (req, res) => {
     try {

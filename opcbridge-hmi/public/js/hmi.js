@@ -2786,7 +2786,7 @@ const getPropertiesPaneTitle = (obj) => {
     case "group": return "Group Properties";
     case "viewport": return "Viewport Properties";
     case "rect": return "Rectangle Properties";
-    case "alarms-panel": return obj.panelMode === "data-entry" ? "Data Entry Form Properties" : (obj.panelMode === "report" ? "Report Table Properties" : "Alarm Panel Properties");
+    case "alarms-panel": return obj.panelMode === "trend" ? "Trend Properties" : obj.panelMode === "data-entry" ? "Data Entry Form Properties" : (obj.panelMode === "report" ? "Report Table Properties" : "Alarm Panel Properties");
     case "ellipse": return "Ellipse Properties";
     case "arc": return "Arc Properties";
     case "circle": return "Circle Properties";
@@ -4930,7 +4930,7 @@ const screenHasAlarmsPanel = () => {
     if (!Array.isArray(objects)) return false;
     for (const obj of objects) {
       if (!obj) continue;
-      if (obj.type === "alarms-panel" && !["report", "data-entry"].includes(obj.panelMode)) return true;
+      if (obj.type === "alarms-panel" && !["report", "data-entry", "trend"].includes(obj.panelMode)) return true;
       if (obj.type === "group" && Array.isArray(obj.children) && walk(obj.children)) return true;
     }
     return false;
@@ -4944,7 +4944,7 @@ const getScreenAlarmHistoryDays = () => {
     if (!Array.isArray(objects)) return;
     objects.forEach((obj) => {
       if (!obj) return;
-      if (obj.type === "alarms-panel" && !["report", "data-entry"].includes(obj.panelMode)) {
+      if (obj.type === "alarms-panel" && !["report", "data-entry", "trend"].includes(obj.panelMode)) {
         const days = Number(obj.historyDays ?? ALARM_HISTORY_WINDOW_DAYS);
         if (Number.isFinite(days) && days > maxDays) maxDays = days;
       }
@@ -4960,7 +4960,7 @@ const findAlarmsPanelObjectByScrollKey = (scrollKey) => {
     if (!Array.isArray(objects)) return null;
     for (const obj of objects) {
       if (!obj) continue;
-      if (obj.type === "alarms-panel" && !["report", "data-entry"].includes(obj.panelMode) && getAlarmsPanelScrollKey(obj) === scrollKey) return obj;
+      if (obj.type === "alarms-panel" && !["report", "data-entry", "trend"].includes(obj.panelMode) && getAlarmsPanelScrollKey(obj) === scrollKey) return obj;
       if (obj.type === "group") {
         const found = walk(obj.children);
         if (found) return found;
@@ -12052,10 +12052,11 @@ const runtimeAutomationStateCache = new WeakMap();
 const runtimeAutomationNumberCache = new WeakMap();
 const runtimeTextBindingDisplayCache = new WeakMap();
 
-const applyTagSnapshotToCache = (key, value, quality, hasValue, hasQuality, pollingState = "") => {
+const applyTagSnapshotToCache = (key, value, quality, hasValue, hasQuality, pollingState = "", timestampMs = null) => {
   if (!key) return false;
   let changed = false;
   const normalizedQuality = hasQuality ? normalizeTagQuality(quality) : null;
+  if (typeof TrendWidget !== "undefined" && timestampMs != null) TrendWidget.recordLive(key, value, timestampMs, quality, pollingState);
   if (hasQuality) {
     const state = String(pollingState || "").toLowerCase();
     const label = ["inactive", "waiting"].includes(state) ? state.toUpperCase() : tagQualityLabel(quality);
@@ -12162,6 +12163,10 @@ const collectTagKeysFromValue = (value, out, visited = new WeakSet(), visibility
 
   const browserColor = Boolean(getBrowserColorFlashRate(value));
   Object.entries(value).forEach(([property, v]) => {
+    if (property === "pens" && value.panelMode === "trend") {
+      (Array.isArray(v) ? v : []).filter(pen => pen.enabled !== false && pen.source !== "constant").forEach(pen => collectTagKeysFromValue(pen, out, visited));
+      return;
+    }
     const colorProperty = ["fillAutomation", "strokeAutomation", "backgroundAutomation", "borderColorAutomation", "textColorAutomation", "colorAutomationRules"].includes(property);
     if (v && (typeof v === "object")) collectTagKeysFromValue(v, out, visited,
       visibilityContext || property === "visibility", browserColorContext || (browserColor && colorProperty));
@@ -12238,7 +12243,8 @@ const applyTagRowsToCache = (rows) => {
       tag.quality,
       Object.prototype.hasOwnProperty.call(tag, "value"),
       Object.prototype.hasOwnProperty.call(tag, "quality"),
-      tag.polling_state
+      tag.polling_state,
+          tag.timestamp_ms
     ) || changed;
   });
   return changed;
@@ -12403,7 +12409,8 @@ const connectWebSocket = () => {
           payload.quality,
           Object.prototype.hasOwnProperty.call(payload, "value"),
           Object.prototype.hasOwnProperty.call(payload, "quality"),
-          payload.polling_state
+          payload.polling_state,
+          payload.timestamp_ms
         );
         if (changed) scheduleRuntimeRender([normalizeWsTagKey(payload.connection_id, payload.name)]);
       }
@@ -12530,7 +12537,7 @@ const getAlarmPanelIds = () => {
     if (!Array.isArray(objects)) return;
     objects.forEach((obj) => {
       if (!obj) return;
-      if (obj.type === "alarms-panel" && !["report", "data-entry"].includes(obj.panelMode) && obj.id) ids.push(String(obj.id));
+      if (obj.type === "alarms-panel" && !["report", "data-entry", "trend"].includes(obj.panelMode) && obj.id) ids.push(String(obj.id));
       if (obj.type === "group") walk(obj.children);
     });
   };
@@ -13252,7 +13259,8 @@ const loadTags = async () => {
           tag.quality,
           Object.prototype.hasOwnProperty.call(tag, "value"),
           Object.prototype.hasOwnProperty.call(tag, "quality"),
-          tag.polling_state
+          tag.polling_state,
+          tag.timestamp_ms
         );
       });
       if (!isEditMode) {
@@ -13778,6 +13786,7 @@ const readSettingsForm = () => {
   return {
     opcbridge: { host, httpPort, wsPort, writeToken },
     alarms: { host: alarmsHost, httpPort: alarmsHttpPort, wsPort: alarmsWsPort },
+    historian: { host: String(document.getElementById("settingsHistorianHost")?.value || "127.0.0.1").trim(), httpPort: Number(document.getElementById("settingsHistorianPort")?.value) || 8096 },
     hmi
   };
 };
@@ -13793,6 +13802,8 @@ const applyWriteAccessUi = () => {
 const populateSettingsForm = (config) => {
   const opc = config?.opcbridge || {};
   const alarms = config?.alarms || {};
+  if (document.getElementById("settingsHistorianHost")) document.getElementById("settingsHistorianHost").value = config?.historian?.host || "127.0.0.1";
+  if (document.getElementById("settingsHistorianPort")) document.getElementById("settingsHistorianPort").value = config?.historian?.httpPort || 8096;
   const hmi = config?.hmi || {};
   if (settingsHostInput) settingsHostInput.value = String(opc.host || "");
   if (settingsHttpPortInput) settingsHttpPortInput.value = String(Number(opc.httpPort) || "");
@@ -14834,6 +14845,11 @@ const renderObjectContentInto = (parent, obj, inheritedGroupColorOverrides = nul
 	  }
 
 	  if (obj.type === "alarms-panel") {
+        if (obj.panelMode === "trend") {
+          const trendParent = hasRotation ? (() => { const wrapper=document.createElementNS(ns,"g"); applyRotationTransform(wrapper,obj); parent.appendChild(wrapper); return wrapper; })() : parent;
+          TrendWidget.mount(trendParent,obj,{editing:isEditMode,key:pen=>normalizeTagCacheKey(pen.connection_id,pen.tag),history:requestTrendHistory});
+          return;
+        }
 	    if (obj.panelMode === "data-entry") {
 	      const x = Number(obj.x ?? 0), y = Number(obj.y ?? 0), w = Number(obj.w ?? 560), h = Number(obj.h ?? 420);
 	      const rect = document.createElementNS(ns, "rect"); rect.setAttribute("x", x); rect.setAttribute("y", y); rect.setAttribute("width", w); rect.setAttribute("height", h); rect.setAttribute("rx", obj.rx ?? 0); rect.setAttribute("fill", obj.fill || "#ffffff"); setFlatBorderStroke(rect, obj.stroke || "#000000", Number(obj.strokeWidth ?? 1), obj.borderStyle); parent.appendChild(rect);
@@ -17273,18 +17289,20 @@ const syncPropertiesFromSelection = () => {
     if (viewportBorderWidthInput) viewportBorderWidthInput.value = Number(borderCfg.width ?? 1);
   }
   if (obj.type === "rect" || obj.type === "alarms-panel") {
+    const isTrend = obj.type === "alarms-panel" && obj.panelMode === "trend";
+    renderTrendProperties(isTrend ? obj : null);
     const isReportTable = obj.type === "alarms-panel" && obj.panelMode === "report";
     const isDataEntry = obj.type === "alarms-panel" && obj.panelMode === "data-entry";
-    if (rectPropsTitle) rectPropsTitle.textContent = isDataEntry ? "Data Entry Form" : (isReportTable ? "Report Table" : (obj.type === "alarms-panel" ? "Alarms Panel" : "Rectangle"));
+    if (rectPropsTitle) rectPropsTitle.textContent = isTrend ? "Trend" : isDataEntry ? "Data Entry Form" : (isReportTable ? "Report Table" : (obj.type === "alarms-panel" ? "Alarms Panel" : "Rectangle"));
     if (alarmsPanelPropsFields) {
       const show = obj.type === "alarms-panel";
       alarmsPanelPropsFields.classList.toggle("is-hidden", !show);
       alarmsPanelPropsFields.hidden = !show;
       if (show) {
         Array.from(alarmsPanelPropsFields.children).forEach((child) => {
-          if (child === reportTablePropsFields || child === dataEntryPropsFields) return;
-          child.classList.toggle("is-hidden", isReportTable || isDataEntry);
-          child.hidden = isReportTable || isDataEntry;
+          if (child === reportTablePropsFields || child === dataEntryPropsFields || child.id === "trendPropsFields") return;
+          child.classList.toggle("is-hidden", isReportTable || isDataEntry || isTrend);
+          child.hidden = isReportTable || isDataEntry || isTrend;
         });
       }
       if (reportTablePropsFields) {
@@ -24065,7 +24083,7 @@ const bindReportTableProperty = (input, key, read = (element) => element.value) 
   input.addEventListener("change", () => {
     const activeObjects = getActiveObjects();
     const obj = selectedIndices.length === 1 ? activeObjects?.[selectedIndices[0]] : null;
-    if (!obj || obj.type !== "alarms-panel" || !["report", "data-entry"].includes(obj.panelMode)) return;
+    if (!obj || obj.type !== "alarms-panel" || !["report", "data-entry", "trend"].includes(obj.panelMode)) return;
     if (key === 'dataEntryFormId') hmiDataEntryState.values.delete(String(obj.id || obj.dataEntryFormId || 'data-entry'));
     updateRectProperty({ [key]: read(input) });
   });
@@ -34476,3 +34494,78 @@ window.addEventListener("keydown", (event) => {
   event.preventDefault();
   toggleDiagnosticsMode();
 });
+
+// Trend widgets share the panel geometry tools, but use their own native chart
+// renderer and bounded historian endpoint rather than the alarm/report services.
+async function requestTrendHistory(pen, from, to, source = "cache") {
+  const query = new URLSearchParams({source,connection_id:pen.connection_id,tag_name:pen.tag,from_ms:String(Math.floor(from)),to_ms:String(Math.floor(to))});
+  const response = await fetch(`/api/trends/query?${query}`, {cache:'no-store',signal:AbortSignal.timeout(20000)});
+  const body = await response.json();
+  if (!response.ok || body.ok === false) throw new Error(body.error || `History HTTP ${response.status}`);
+  return body;
+}
+
+function renderTrendProperties(obj) {
+  let fields = document.getElementById('trendPropsFields');
+  if (!fields) {
+    fields = document.createElement('div'); fields.id='trendPropsFields'; fields.className='prop-subgroup';
+    alarmsPanelPropsFields?.appendChild(fields);
+  }
+  fields.hidden=!obj; fields.classList.toggle('is-hidden',!obj);
+  for (let index=compactTagBindingConfigs.length-1;index>=0;index--) {
+    const config=compactTagBindingConfigs[index];
+    if (config.id.startsWith('trendPen:')) { config.cancelPending?.();compactTagBindingConfigs.splice(index,1); }
+  }
+  fields.replaceChildren();
+  if (!obj) return;
+  const config=TrendWidget.normalize(obj);
+  const patch=changes=>{ updateRectProperty(changes);renderTrendProperties(obj);renderCompactTagBindingRows(); };
+  const field=(parent,label,type,value,onchange)=>{
+    const row=document.createElement('label');row.className='prop-row';const caption=document.createElement('span');caption.textContent=label;
+    const input=document.createElement('input');input.type=type;input.value=value; if(type==='number')input.step='any';
+    input.addEventListener('change',()=>onchange(type==='number'?Number(input.value):input.value));row.append(caption,input);parent.append(row);return input;
+  };
+  field(fields,'Title','text',config.title,value=>patch({trendTitle:value}));
+  const modeRow=document.createElement('label');modeRow.className='prop-row';modeRow.textContent='Data Source';
+  const mode=document.createElement('select');mode.add(new Option('Rolling cache','cache'));mode.add(new Option('Historian','historian'));mode.value=config.source;
+  mode.onchange=()=>patch({trendSource:mode.value});modeRow.append(mode);fields.append(modeRow);
+  const rangeRow=document.createElement('label');rangeRow.className='prop-row';rangeRow.textContent='Time Window';
+  const range=document.createElement('select');
+  for(const [value,label]of [[900000,'15 minutes'],[3600000,'1 hour'],[7200000,'2 hours'],[21600000,'6 hours'],[86400000,'1 day'],[259200000,'3 days'],[604800000,'7 days']])range.add(new Option(label,String(value)));
+  if(![...range.options].some(option=>Number(option.value)===config.windowMs))range.add(new Option(`${config.windowMs/60000} minutes`,String(config.windowMs)));
+  range.value=String(config.windowMs);range.onchange=()=>patch({trendWindowMs:Number(range.value)});rangeRow.append(range);fields.append(rangeRow);
+  const rate=field(fields,'Chart Refresh (seconds)','number',config.refreshMs/1000,value=>patch({trendRefreshMs:Math.max(5,value)*1000}));rate.min='5';rate.max='3600';
+  const hint=document.createElement('p');hint.className='hint';hint.textContent=config.source==='cache'?'Save the screen to start continuous collection. The HMI service retains only the selected window, even with browsers closed.':'Historian mode requires recorded tags and lets operators select start/end dates. Each trace has its own scale.';fields.append(hint);
+  config.pens.forEach((pen,index)=>{
+    const box=document.createElement('fieldset');box.className='trend-pen-editor';const legend=document.createElement('legend');legend.textContent=`Trace ${index+1}`;box.append(legend);fields.append(box);
+    const edit=changes=>{
+      const pens=config.pens.map(p=>({...p}));pens[index]={...pens[index],...changes};
+      if(!Number.isFinite(pens[index].min)||!Number.isFinite(pens[index].max)||pens[index].max<=pens[index].min){showHmiToast('Trace maximum must be greater than its minimum.',5000);return;}
+      patch({pens});
+    };
+    field(box,'Description','text',pen.label,value=>edit({label:value}));
+    const sourceRow=document.createElement('label');sourceRow.className='prop-row';sourceRow.textContent='Source';const source=document.createElement('select');source.add(new Option('Tag','tag'));source.add(new Option('Constant line','constant'));source.value=pen.source;source.onchange=()=>edit({source:source.value,...(source.value==='constant'?{connection_id:'',tag:''}:{})});sourceRow.append(source);box.append(sourceRow);
+    if(pen.source==='constant')field(box,'Constant','number',pen.constant,value=>edit({constant:value}));
+    else registerCompactTagBinding({id:`trendPen:${index}`,container:box,buttonLabel:'Tag',modalTitle:`Trend Trace ${index+1}`,read:()=>({connection_id:pen.connection_id,tag:pen.tag}),apply:({connection_id,tag})=>edit({connection_id,tag})});
+    field(box,'Color','color',pen.color,value=>edit({color:value}));
+    field(box,'Scale Minimum','number',pen.min,value=>edit({min:value}));
+    field(box,'Scale Maximum','number',pen.max,value=>edit({max:value}));
+    const decimals=field(box,'Decimal Places','number',pen.decimals,value=>edit({decimals:Math.max(0,Math.min(6,Math.floor(value)))}));decimals.min='0';decimals.max='6';decimals.step='1';
+    const remove=document.createElement('button');remove.type='button';remove.className='panel-btn';remove.textContent='Remove Trace';remove.onclick=()=>patch({pens:config.pens.filter((_,i)=>i!==index)});box.append(remove);
+  });
+  const add=document.createElement('button');add.type='button';add.className='panel-btn';add.textContent='Add Trace';add.disabled=config.pens.length>=12;
+  add.onclick=()=>patch({pens:[...config.pens,{connection_id:'',tag:'',label:`Trace ${config.pens.length+1}`,color:TrendWidget.palette[config.pens.length%TrendWidget.palette.length],min:0,max:100,decimals:3}]});fields.append(add);
+  const refresh=document.createElement('button');refresh.type='button';refresh.className='panel-btn';refresh.textContent='Refresh Tags';refresh.setAttribute('data-refresh-tag-catalog','');fields.append(refresh);
+}
+
+function insertTrendWidget() {
+  if (!currentScreenObj || !isEditMode) return;
+  const objects=ensureActiveObjects();if(!objects)return;
+  recordHistory();
+  objects.push({type:'alarms-panel',panelMode:'trend',id:`trend${Date.now()}`,x:20,y:20,w:780,h:440,rx:0,fill:'#ffffff',stroke:'#808080',strokeWidth:1,
+    trendSource:'cache',trendTitle:'Trend',trendWindowMs:7200000,trendRefreshMs:60000,pens:[{connection_id:'',tag:'',label:'Trace 1',color:'#ff0000',min:0,max:100,decimals:3}]});
+  selectedIndices=[objects.length-1];renderScreen();syncEditorFromScreen();setDirty(true);setEditorTab('properties');updatePropertiesPanel();
+  if(!tagCatalogLoaded)void loadTags();
+}
+document.getElementById('insertTrendBtn')?.addEventListener('click',insertTrendWidget);
+window.setInterval(()=>{ if(typeof TrendWidget!=='undefined')TrendWidget.tick(); },1000);
