@@ -18149,10 +18149,13 @@ const renderSelectedReferenceProperties = (obj) => {
   const objectIds = new Set([obj?.id, obj?.importId].map((value) => String(value || "").trim()).filter(Boolean));
   const references = getReferenceHealthIssues()
     .filter((issue) => objectIds.has(String(issue?.objectImportId || "").trim()))
-    .map((issue) => ({
-      kind: `${issue.automation || issue.category || "reference"}${issue.status === "unsupported" ? " (unsupported)" : ""}`,
-      value: String(issue.source?.value || issue.message || "").trim()
-    }))
+    .map((issue) => {
+      const display = getReferenceHealthIssueDisplay(issue);
+      return {
+        kind: `${issue.automation || issue.category || "reference"}${issue.status === "unsupported" ? " (unsupported)" : ""}`,
+        value: String(display.source || display.message || "").trim()
+      };
+    })
     .filter((reference) => reference.value);
   const unique = references.filter((ref, index, all) =>
     all.findIndex((candidate) => candidate.kind === ref.kind && candidate.value === ref.value) === index
