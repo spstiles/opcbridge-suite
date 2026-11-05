@@ -2468,7 +2468,7 @@ const isEditingRectColorDynamic = () => {
 
 const isEditingLineColorDynamic = () => {
   const obj = getSelectedColorDynamicObject();
-  return Boolean(obj && ((isPathDynamicObject(obj) && !isClosedDynamicPath(obj)) || obj.type === "pipe") && isColorDynamicTab() && hasEditableColorDynamic(obj));
+  return Boolean(obj && (isPathDynamicObject(obj) || obj.type === "pipe") && isColorDynamicTab() && hasEditableColorDynamic(obj));
 };
 
 const isEditingEllipseColorDynamic = () => {

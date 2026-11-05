@@ -47,3 +47,22 @@ test('separate automation window is removed, shared control store remains', () =
   assert.match(html, /id="automationControlStore"/);
   assert.match(source, /isPathDynamicObject\(obj\) \|\| obj.type === "pipe"/);
 });
+test('color tag edits reach open and closed path rules instead of silently returning', () => {
+  const context=vm.createContext({selected:null,currentObjectDynamicTab:'color',rectColorDraft:null,
+    getSelectedColorDynamicObject:()=>context.selected,
+    isColorDynamicTab:()=>true,hasEditableColorDynamic:()=>true,
+    isPathDynamicObject:obj=>['line','polyline','spline','curve'].includes(obj.type),
+    ensureRectColorDraft:()=>{},normalizeRectColorDraft:(_obj,draft)=>draft,
+    getColorDynamicTabIndex:()=>0,getDefaultColorRuleForObject:()=>({}),
+    syncRectColorUiFromDraft:()=>{},applyRectColorDraftToObject:()=>{context.selected.saved=context.rectColorDraft;}});
+  vm.runInContext(source.slice(source.indexOf('const isEditingRectColorDynamic ='),source.indexOf('const isEditingRectRotationDynamic =')),context);
+  vm.runInContext(source.slice(source.indexOf('const isEditingAnyColorDynamic ='),source.indexOf('const applyRectColorDraftToObject =')),context);
+  for(const type of ['line','polyline','spline','curve'])for(const closed of [false,true]){
+    context.selected={type,closed};
+    context.rectColorDraft={rules:[{connection_id:'old',tag:'Old',sourceReference:'imported',status:'unresolved'}],selectedRuleIndex:0};
+    vm.runInContext('updateRectColorDraft({connection_id:"new",tag:"New",enabled:true})',context);
+    assert.equal(context.selected.saved.rules[0].tag,'New',`${type}, closed=${closed}`);
+    assert.equal(context.selected.saved.rules[0].connection_id,'new');
+    assert.equal(context.selected.saved.rules[0].status,undefined);
+  }
+});
