@@ -4440,12 +4440,14 @@ body.edit-mode:not(.status-bar-hidden) #workspace { height: calc(100% - 31px); }
 .layer-runtime-field input[type="checkbox"] { width: auto; justify-self: start; }
 .layer-runtime-note { color: #e8b86d; margin: 6px 0; font-size: 12px; }
 
-.hmi-trend { box-sizing:border-box; width:100%; height:100%; background:#fff; color:#111; border:2px ridge #aaa; font:12px Arial,sans-serif; overflow:auto; }
+.hmi-trend { box-sizing:border-box; width:100%; height:100%; background:#fff; color:#111; border:2px ridge #aaa; font:12px Arial,sans-serif; display:flex; flex-direction:column; overflow:hidden; }
 .trend-header { display:flex; align-items:center; justify-content:space-between; padding:4px 7px; min-height:26px; box-sizing:border-box; background:#aaa; color:#000066; gap:6px; }
 .trend-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .trend-actions { display:flex; gap:4px; }
 .trend-actions button { font:12px Arial,sans-serif; min-width:25px; padding:2px 6px; cursor:pointer; }
-.trend-plot svg { display:block; width:100%; }
+.hmi-trend > .trend-header, .hmi-trend > .trend-dates, .hmi-trend > .trend-range, .hmi-trend > table { flex-shrink:0; }
+.trend-plot { flex:1 1 0; min-height:0; }
+.trend-plot svg { display:block; width:100%; height:100%; }
 .trend-range { font-size:10px; text-align:center; padding:2px 4px; }
 .hmi-trend table { width:100%; border-collapse:collapse; table-layout:auto; }
 .hmi-trend th { background:#ddd; text-align:left; font-weight:normal; padding:4px; border:1px solid #aaa; }

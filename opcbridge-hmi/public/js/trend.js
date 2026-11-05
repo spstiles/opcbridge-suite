@@ -91,7 +91,7 @@
       try{recordLive(options.key(p),options.evaluate(p.expression),to,'GOOD');}catch{recordLive(options.key(p),null,to,'BAD');}
     }
     const series=new Map();
-    config.pens.filter(p=>p.enabled).forEach(p=>series.set(p,mergePoints(s.history.get(p)||[],s.end?[]:(live.get(options.key(p))||[]),from,to)));
+    config.pens.filter(p=>p.enabled).forEach(p=>series.set(p,options.editing?[]:mergePoints(s.history.get(p)||[],s.end?[]:(live.get(options.key(p))||[]),from,to)));
     host.querySelector('.trend-title').textContent=config.title;
     host.querySelector('[data-trend-pause]').textContent=s.end?'Live':'Pause';
     const plot=host.querySelector('.trend-plot');
@@ -158,15 +158,16 @@
       error.textContent='';const s=host._trend.s;s.end=to;s.rangeMs=to-from;s.lastFetch=0;draw(host);void refresh(host,true);
     };
     for(const event of ['pointerdown','mousedown','touchstart','click'])host.addEventListener(event,e=>e.stopPropagation());
-    fo.appendChild(host);parent.appendChild(fo);mounted.add(host);
+    fo.appendChild(host);parent.appendChild(fo);
+    if(!options.editing)mounted.add(host);
     // Paint immediately, even while the SVG is being built off-document, so
     // a screen redraw never exposes an empty chart. Fetch after attachment.
     draw(host);
-    setTimeout(()=>{void refresh(host);},0);
+    if(!options.editing)setTimeout(()=>{void refresh(host);},0);
     return host;
   }
   function tick(){
-    for(const host of mounted){if(!host.isConnected){mounted.delete(host);continue;}if(document.visibilityState==='hidden')continue;draw(host);void refresh(host);}
+    for(const host of mounted){if(!host.isConnected){mounted.delete(host);continue;}if(host._trend.options.editing||document.visibilityState==='hidden')continue;draw(host);void refresh(host);}
   }
   const api={normalize,points,mergePoints,chart,recordLive,mount,tick,palette,esc};
   if(typeof module==='object')module.exports=api;else root.TrendWidget=api;
