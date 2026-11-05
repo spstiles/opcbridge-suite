@@ -85,7 +85,7 @@
     return s;
   }
   function draw(host){
-    const {obj,s,options}=host._trend;if(!host.isConnected)return;
+    const {obj,s,options}=host._trend;
     const config=s.config,to=s.end||Date.now(),from=to-(s.rangeMs||config.windowMs);
     const series=new Map();
     config.pens.filter(p=>p.enabled).forEach(p=>series.set(p,mergePoints(s.history.get(p)||[],s.end?[]:(live.get(options.key(p))||[]),from,to)));
@@ -156,8 +156,10 @@
     };
     for(const event of ['pointerdown','mousedown','touchstart','click'])host.addEventListener(event,e=>e.stopPropagation());
     fo.appendChild(host);parent.appendChild(fo);mounted.add(host);
-    // The SVG parent may not yet be attached while renderScreen builds it.
-    setTimeout(()=>{draw(host);void refresh(host);},0);
+    // Paint immediately, even while the SVG is being built off-document, so
+    // a screen redraw never exposes an empty chart. Fetch after attachment.
+    draw(host);
+    setTimeout(()=>{void refresh(host);},0);
     return host;
   }
   function tick(){

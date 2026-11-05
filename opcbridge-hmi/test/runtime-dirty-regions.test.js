@@ -93,3 +93,12 @@ test('a hidden layer source triggers rebuilding while unrelated tags remain incr
   assert.equal(vm.runInContext('updateRuntimeObjects(["test:Other"])',ctx),true);
   assert.deepEqual(painted,[]);
 });
+
+
+test('trends allow incremental updates, including inside groups', () => {
+  const ctx = vm.createContext({SHARED_TOP_LEVEL_RENDER_TYPES: new Set(['alarms-panel', 'group', 'text'])});
+  load(ctx, 'isIncrementalRuntimeObject');
+  assert.equal(vm.runInContext('isIncrementalRuntimeObject({type:"alarms-panel",panelMode:"trend"})', ctx), true);
+  assert.equal(vm.runInContext('isIncrementalRuntimeObject({type:"group",children:[{type:"alarms-panel",panelMode:"trend"}]})', ctx), true);
+  assert.equal(vm.runInContext('isIncrementalRuntimeObject({type:"alarms-panel",panelMode:"alarms"})', ctx), false);
+});

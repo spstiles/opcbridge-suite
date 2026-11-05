@@ -15815,7 +15815,7 @@ const renderSharedTopLevelObject = (parent, obj) => {
 // Runtime dirty regions are stable top-level SVG hosts. A group is one region:
 // its transforms and inherited paints must be evaluated together.
 const isIncrementalRuntimeObject = (obj) => {
-  if (!obj || !SHARED_TOP_LEVEL_RENDER_TYPES.has(obj.type) || obj.type === "alarms-panel") return false;
+  if (!obj || !SHARED_TOP_LEVEL_RENDER_TYPES.has(obj.type) || (obj.type === "alarms-panel" && obj.panelMode !== "trend")) return false;
   return obj.type !== "group" || (obj.children || []).every(isIncrementalRuntimeObject);
 };
 
