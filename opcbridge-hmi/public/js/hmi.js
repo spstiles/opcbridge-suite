@@ -34567,18 +34567,21 @@ function renderTrendProperties(obj) {
     else registerCompactTagBinding({id:`trendPen:${index}`,container:box,buttonLabel:'Tag',modalTitle:`Trend Trace ${index+1}`,read:()=>({connection_id:pen.connection_id,tag:pen.tag}),apply:({connection_id,tag})=>edit({connection_id,tag})});
     const colorRow=document.createElement('div');colorRow.className='prop-row';
     const colorLabel=document.createElement('span');colorLabel.textContent='Color';
-    const colorInline=document.createElement('div');colorInline.className='prop-inline automation-tag-inline';
-    const colorInput=document.createElement('input');colorInput.type='text';colorInput.className='automation-tag-input';colorInput.value=pen.color;
+    const colorInline=document.createElement('div');colorInline.className='prop-inline';
+    const colorSwatch=document.createElement('input');colorSwatch.type='color';colorSwatch.value=pen.color;
+    colorSwatch.setAttribute('aria-label',`Trace ${index+1} color swatch`);
+    const colorInput=document.createElement('input');colorInput.type='text';colorInput.value=pen.color;colorInput.placeholder='#ff0000';
     colorInput.setAttribute('aria-label',`Trace ${index+1} color`);
     const applyColor=value=>{
-      if(!isHexColor(value)){showHmiToast('Trend traces require a solid, opaque color.',5000);colorInput.value=pen.color;return;}
+      if(!isHexColor(value)){showHmiToast('Trend traces require a solid, opaque color.',5000);colorInput.value=pen.color;colorSwatch.value=pen.color;return;}
       edit({color:value});
     };
+    colorSwatch.addEventListener('input',()=>applyColor(colorSwatch.value));
     colorInput.addEventListener('change',()=>applyColor(colorInput.value.trim()));
-    const colorButton=document.createElement('button');colorButton.type='button';colorButton.className='panel-btn';colorButton.textContent='…';
+    const colorButton=document.createElement('button');colorButton.type='button';colorButton.className='swatch-btn';colorButton.textContent='🎨';colorButton.title='Open color picker';
     colorButton.setAttribute('aria-label',`Choose trace ${index+1} color`);
     colorButton.addEventListener('click',()=>openPaintPicker({title:`Trace ${index+1} Color`,value:pen.color,fallback:pen.color,onApply:applyColor}));
-    colorInline.append(colorInput,colorButton);colorRow.append(colorLabel,colorInline);box.append(colorRow);
+    colorInline.append(colorSwatch,colorInput,colorButton);colorRow.append(colorLabel,colorInline);box.append(colorRow);
     field(box,'Scale Minimum','number',pen.min,value=>edit({min:value}));
     field(box,'Scale Maximum','number',pen.max,value=>edit({max:value}));
     const decimals=field(box,'Decimal Places','number',pen.decimals,value=>edit({decimals:Math.max(0,Math.min(6,Math.floor(value)))}));decimals.min='0';decimals.max='6';decimals.step='1';
