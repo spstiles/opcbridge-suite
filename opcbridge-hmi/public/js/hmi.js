@@ -6713,7 +6713,7 @@ const apiAuthSaveTimeout = async (timeoutMinutes) => {
   const response = await fetch("/api/auth/timeout", {
     method: "PUT",
     credentials: "same-origin",
-    headers: { "Content-Type": "application/json" },
+    headers: authFetchHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ timeoutMinutes })
   });
   if (!response.ok) {
@@ -13836,6 +13836,8 @@ const applySettingsToRuntime = async () => {
 
 const saveSettings = async (apply) => {
   if (settingsStatus) settingsStatus.textContent = apply ? "Applying…" : "Saving…";
+  let settingsSaved = false;
+  let saveStage = "settings";
   try {
     const next = readSettingsForm();
     const wa = next?.hmi?.writeAccess;
@@ -13846,9 +13848,13 @@ const saveSettings = async (apply) => {
       }
     }
     await apiSaveConfig(next);
+    settingsSaved = true;
     if (settingsScreenTimeoutInput) {
       const timeout = Math.max(0, Math.floor(Number(settingsScreenTimeoutInput.value) || 0));
-      await apiAuthSaveTimeout(timeout);
+      if (timeout !== Math.max(0, Math.floor(Number(authInfo?.timeoutMinutes) || 0))) {
+        saveStage = "login timeout";
+        await apiAuthSaveTimeout(timeout);
+      }
       authInfo = { ...(authInfo || {}), timeoutMinutes: timeout };
       if (authSession) {
         authSession.timeoutMinutes = timeout;
@@ -13858,10 +13864,11 @@ const saveSettings = async (apply) => {
     opcbridgeConfig = { ...opcbridgeConfig, ...next.opcbridge };
     alarmsConfig = { ...alarmsConfig, ...next.alarms };
     hmiUiConfig = { ...hmiUiConfig, ...next.hmi };
+    saveStage = "runtime apply";
     if (apply) await applySettingsToRuntime();
     if (settingsStatus) settingsStatus.textContent = apply ? "Applied." : "Saved.";
   } catch (error) {
-    if (settingsStatus) settingsStatus.textContent = `Save failed: ${error.message}`;
+    if (settingsStatus) settingsStatus.textContent = settingsSaved ? `Settings saved, but ${saveStage} failed: ${error.message}` : `Save failed: ${error.message}`;
   }
 };
 
