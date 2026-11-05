@@ -20161,6 +20161,17 @@ async function saveEditedAlarmFromModalReload() {
   try { await refreshAlarmsRuntimeViews(); } catch { /* ignore */ }
 }
 
+async function validateUniqueConnectionName(name, exceptId = '') {
+  const key = String(name || '').trim().toLowerCase();
+  const files = (state.connFiles || []).filter(file => !state.workspaceDeletePaths?.has?.(file.path));
+  const objects = await Promise.all(files.map(file => getConnObjForPath(file.path)));
+  for (const obj of objects) {
+    if (!obj || String(obj.id || '') === exceptId) continue;
+    const existing = String(obj.description || '').trim() || String(obj.id || '').trim();
+    if (existing.toLowerCase() === key) throw new Error(`Connection name '${name}' is already in use. Choose a unique connection name.`);
+  }
+}
+
 async function saveEditedDeviceFromModal() {
   const nodeId = String(state.pendingWorkspaceItem?.id || '');
   const node = findWorkspaceNodeById(state.workspaceTreeRoot, nodeId);
@@ -20173,6 +20184,8 @@ async function saveEditedDeviceFromModal() {
   const newId = oldId;
   const friendlyName = String(els.editDevName?.value || '').trim();
   if (!friendlyName) { setEditDevStatus('Connection name is required.'); return; }
+  try { await validateUniqueConnectionName(friendlyName, oldId); }
+  catch (err) { setEditDevStatus(err.message || String(err)); return; }
   const driver = String(els.editDevDriver?.value || '').trim() || 'ab_eip';
   const gateway = String(els.editDevGateway?.value || '').trim();
   const pathVal = String(els.editDevPath?.value || '').trim() || (isModbusDriver(driver) ? '1' : '1,0');
@@ -21083,6 +21096,8 @@ function wireWorkspaceItemModalUi() {
 async function createNewDeviceFromWorkspace() {
   const connectionName = String(els.newDevId?.value || '').trim();
   if (!connectionName) { setNewDevStatus('Connection name is required.'); return; }
+  try { await validateUniqueConnectionName(connectionName); }
+  catch (err) { setNewDevStatus(err.message || String(err)); return; }
   const connection_id = generateWorkspaceConnectionId();
 
   const driver = String(els.newDevDriver?.value || '').trim() || 'ab_eip';

@@ -3,6 +3,7 @@
 #include "idle_connection_probe.h"
 #include "active_sweep.h"
 #include "runtime_config_state.h"
+#include "connection_names.h"
 // main.cpp - AB/libplctag "OPC bridge core" with:
 //   - JSON-with-comments config for connections/tags
 //   - Multi-connection EtherNet/IP via libplctag
@@ -26142,7 +26143,12 @@ window.addEventListener("load", startAutoRefresh);
 					std::string validateError;
 					switch (kind) {
 						case ConfigFileKind::CONNECTION:
-							if (!validate_connection_json(newText, validateError)) {
+							if (validate_connection_json(newText, validateError)) {
+                                validateError = connection_name_conflict(
+                                    json::parse(strip_json_comments(newText)), fs::path(configDir), fs::path(relPath),
+                                    [](const std::string &path) { return load_json_with_comments(path); });
+                            }
+                            if (!validateError.empty()) {
 								resp["ok"] = false;
 								resp["error"] = validateError;
 								res.status = 400;

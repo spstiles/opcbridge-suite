@@ -8106,6 +8106,24 @@ const collectScreenReferenceMappings = () => {
   return Array.from(groups.values()).sort((a, b) => a.type.localeCompare(b.type) || a.current.localeCompare(b.current, undefined, { numeric: true, sensitivity: "base" }));
 };
 
+const displayMappingReference = (type, reference) => {
+  const raw = String(reference || "");
+  if (type !== "tag") return raw;
+  const separator = raw.indexOf("::");
+  if (separator <= 0) return raw;
+  const id = raw.slice(0, separator);
+  const name = getConnectionDisplayName(id);
+  // Retain an unavailable connection's ID so older mappings can still round-trip.
+  return `${name && name !== "Missing connection" ? name : id}::${raw.slice(separator + 2)}`;
+};
+
+const canonicalMappingReference = (type, reference) => {
+  const raw = String(reference || "").trim();
+  if (type !== "tag") return raw;
+  const parsed = parseMappedTagReference(raw);
+  return parsed ? formatMappedTagReference(parsed.connection_id, parsed.tag) : raw;
+};
+
 const downloadScreenReferenceMappings = () => {
   setMenuOpen(false);
   const groups = collectScreenReferenceMappings();
@@ -8117,7 +8135,7 @@ const downloadScreenReferenceMappings = () => {
   const lines = [columns.join(",")];
   groups.forEach((group) => {
     const statuses = Array.from(group.statuses);
-    const row = ["reference", group.type, group.current, "", group.occurrences.length, statuses.length === 1 ? statuses[0] : "mixed", Array.from(group.automations).sort().join(" | "), "", "", currentScreenId || currentScreenFilename || ""];
+    const row = ["reference", group.type, displayMappingReference(group.type, group.current), "", group.occurrences.length, statuses.length === 1 ? statuses[0] : "mixed", Array.from(group.automations).sort().join(" | "), "", "", currentScreenId || currentScreenFilename || ""];
     lines.push(row.map(referenceCsvEscape).join(","));
   });
   const blob = new Blob([`${lines.join("\r\n")}\r\n`], { type: "text/csv;charset=utf-8" });
@@ -8144,7 +8162,7 @@ const downloadObjectReferenceMappings = () => {
   occurrences
     .sort((a, b) => a.type.localeCompare(b.type) || a.current.localeCompare(b.current, undefined, { numeric: true, sensitivity: "base" }) || a.path.localeCompare(b.path, undefined, { numeric: true, sensitivity: "base" }))
     .forEach((occurrence) => {
-      const row = ["object", occurrence.type, occurrence.current, "", 1, occurrence.status || "unknown", occurrence.automation || "data", occurrence.objectId || "", occurrence.path || "", currentScreenId || currentScreenFilename || ""];
+      const row = ["object", occurrence.type, displayMappingReference(occurrence.type, occurrence.current), "", 1, occurrence.status || "unknown", occurrence.automation || "data", occurrence.objectId || "", occurrence.path || "", currentScreenId || currentScreenFilename || ""];
       lines.push(row.map(referenceCsvEscape).join(","));
     });
   const blob = new Blob([`${lines.join("\r\n")}\r\n`], { type: "text/csv;charset=utf-8" });
@@ -8222,11 +8240,11 @@ const openReferenceMappingPreview = (rows) => {
   const groups = collectScreenReferenceMappings();
   const byKey = new Map(groups.map((group) => [`${group.type}\u0000${group.current}`, group]));
   const findSourceGroup = (type, current, original) => {
-    const direct = byKey.get(`${type}\u0000${current}`);
+    const direct = byKey.get(`${type}\u0000${canonicalMappingReference(type, current)}`);
     if (direct) return direct;
     const candidates = [current, ...String(original || "").split(" | ")].map((value) => value.trim()).filter(Boolean);
     return groups.find((group) => group.type === type && candidates.some((candidate) =>
-      group.current === candidate || group.originals.has(candidate)
+      group.current === canonicalMappingReference(type, candidate) || group.originals.has(candidate)
     )) || null;
   };
   const proposed = [];
@@ -8252,7 +8270,7 @@ const openReferenceMappingPreview = (rows) => {
       group = matches.length ? { ...sourceGroup, occurrences: matches } : null;
     }
     const validFormat = type === "tag" ? Boolean(parsedReplacement) : type === "screen";
-    proposed.push({ type, current, replacement, replacementInput, group, scope, objectId, objectPath, validFormat, resolved: type === "tag" ? knownMappedTag(replacement) : type === "screen" ? knownMappedScreen(replacement) : false });
+    proposed.push({ type, current: sourceGroup?.current || current, replacement, replacementInput, group, scope, objectId, objectPath, validFormat, resolved: type === "tag" ? knownMappedTag(replacement) : type === "screen" ? knownMappedScreen(replacement) : false });
   });
   const applicable = proposed.filter((item) => item.group && item.validFormat);
   const affected = applicable.reduce((sum, item) => sum + item.group.occurrences.length, 0);
@@ -8266,7 +8284,7 @@ const openReferenceMappingPreview = (rows) => {
     const result = !item.group ? "Not used by this screen" : !item.validFormat ? "Invalid reference format" : item.resolved ? "Available" : "Unresolved (allowed)";
     row.className = item.group && item.validFormat ? (item.resolved ? "is-resolved" : "is-unresolved") : "is-invalid";
     const typeLabel = item.scope === "object" ? `${item.type || "?"} · object` : (item.type || "?");
-    [typeLabel, item.current, item.replacementInput, item.group?.occurrences?.length || 0, result].forEach((value) => { const cell = document.createElement("td"); cell.textContent = String(value); row.appendChild(cell); });
+    [typeLabel, displayMappingReference(item.type, item.current), displayMappingReference(item.type, item.replacement), item.group?.occurrences?.length || 0, result].forEach((value) => { const cell = document.createElement("td"); cell.textContent = String(value); row.appendChild(cell); });
     tbody.appendChild(row);
   });
   if (!proposed.length) overlay.querySelector(".reference-mapping-note").textContent = "No replacement_reference values were provided.";
