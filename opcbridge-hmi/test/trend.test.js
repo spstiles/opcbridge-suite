@@ -41,3 +41,17 @@ test('a trend-only screen does not activate alarm panel polling',()=>{
  c.currentScreenObj.objects.push({type:'alarms-panel'});
  assert.equal(vm.runInContext('screenHasAlarmsPanel()',c),true);
 });
+
+test('expression pens retain their expression and subscribe to dependencies only when enabled',()=>{
+ const fs=require('node:fs'),vm=require('node:vm');
+ const expression=require('../public/js/trend-expression');
+ const c=trend.normalize({pens:[{source:'expression',expression:'tag("PLC", "Flow") * 2'}]});
+ assert.equal(c.pens[0].source,'expression');assert.equal(c.pens[0].expression,'tag("PLC", "Flow") * 2');
+ const source=fs.readFileSync(require('node:path').join(__dirname,'../public/js/hmi.js'),'utf8');
+ const ctx=vm.createContext({normalizeWsTagKey:(a,b)=>a&&b?`${a}:${b}`:"",getBrowserColorFlashRate:()=>false,
+  extractAutomationExpressionTagKeys:(text,out)=>expression.compile(text).dependencies.forEach(d=>out.add(`${d.connection_id}:${d.tag}`))});
+ vm.runInContext(source.slice(source.indexOf('const collectTagKeysFromValue ='),source.indexOf('const collectViewportTargetsFromValue =')),ctx);
+ ctx.pens=[c.pens[0],{source:'expression',enabled:false,expression:'tag("PLC", "Unused")'}];
+ vm.runInContext("keys=new Set();collectTagKeysFromValue({panelMode:'trend',pens},keys)",ctx);
+ assert.deepEqual([...ctx.keys],['PLC:Flow']);
+});

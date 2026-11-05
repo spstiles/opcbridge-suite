@@ -6,6 +6,8 @@ In HMI edit mode, open **Widgets** on the side toolbar and choose **Trend**. Res
 - Set a title and time window (15 minutes through 7 days in the selector).
 - Add up to twelve traces, each with a description, source tag, color, independent minimum/maximum scale, and decimal precision.
 - Select tags using the ordinary Source picker. Friendly connection names and exact tag names work as elsewhere in the HMI.
+- Choose **Expression** as a trace source and click **Edit Expression…** to use the standard expression editor and tag picker. For example, `tag("Plant PLC", "Flow") * 2` or `tag("Plant PLC", "Inlet") + tag("Plant PLC", "Outlet")`. Arithmetic, comparisons, logical operators, `min`, `max`, `abs`, `round`, `floor`, `ceil`, and `quality(tag(...))` are supported. Expressions must produce a finite number (booleans plot as 0/1).
+- Expression history currently requires **Rolling cache**. The server samples the result approximately once per second, retains it across restarts, and keeps the referenced tags active with no browser open. Invalid or unavailable inputs and division by zero leave gaps. Changing the expression starts a separate series; earlier results are not recalculated. Historian mode reports that expression history is unavailable rather than deriving results from already aggregated tag buckets.
 - A **Constant line** draws a reference level without creating polling demand.
 - Chart refresh defaults to 60 seconds; current samples update between queries.
 
@@ -17,7 +19,7 @@ Each enabled trace has a colored scale. The legend shows its latest plotted valu
 
 A newly configured three-day trend starts empty and builds three days of data; it cannot reconstruct earlier values. Unsaved widgets can display current browser samples but do not start background collection. Constant lines, historian-mode widgets, and disabled traces do not create background cache demand. Remove a trace or saved screen to release its demand on the next configuration scan.
 
-Retention is rolling, not permanent historian recording. Storage uses bounded min/max/average buckets, with resolution chosen from the retention window and configured tag count. Limits are 256 distinct tags, 6,000 buckets per tag and approximately 250,000 buckets total. Longer windows have coarser buckets. This is a display cache, not a guaranteed capture of every PLC change; source polling and the one-second collector interval limit what it can observe.
+Retention is rolling, not permanent historian recording. Storage uses bounded min/max/average buckets, with resolution chosen from the retention window and configured tag count. Limits are 256 distinct input tags and 256 series (tags or expressions), 6,000 buckets per series and approximately 250,000 buckets total. Longer windows have coarser buckets. This is a display cache, not a guaranteed capture of every PLC change; source polling and the one-second collector interval limit what it can observe.
 
 The cache checkpoints atomically every 30 seconds and on normal HMI service shutdown. It restores after a restart and marks collection interruptions as gaps. A sudden power loss may lose samples since the last checkpoint. Defaults:
 

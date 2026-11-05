@@ -12,7 +12,7 @@
         return {...p,connection_id:String(p.connection_id||''),tag:String(p.tag||''),label:String(p.label||p.tag||`Trace ${i+1}`),
           color:/^#[0-9a-f]{6}$/i.test(p.color||'')?p.color:palette[i%palette.length],min,max:max>min?max:min+1,
           decimals:Math.max(0,Math.min(6,Math.floor(number(p.decimals,3)))),constant:p.source==='constant'?number(p.constant,0):null,
-          source:p.source==='constant'?'constant':'tag',enabled:p.enabled!==false};})};
+          expression:String(p.expression||''),source:p.source==='expression'?'expression':p.source==='constant'?'constant':'tag',enabled:p.enabled!==false};})};
   }
   function points(body){
     const rows=Array.isArray(body.buckets)?body.buckets:body.points||[];
@@ -87,6 +87,9 @@
   function draw(host){
     const {obj,s,options}=host._trend;
     const config=s.config,to=s.end||Date.now(),from=to-(s.rangeMs||config.windowMs);
+    if(!options.editing&&!s.end&&options.evaluate)for(const p of config.pens.filter(p=>p.enabled&&p.source==='expression')){
+      try{recordLive(options.key(p),options.evaluate(p.expression),to,'GOOD');}catch{recordLive(options.key(p),null,to,'BAD');}
+    }
     const series=new Map();
     config.pens.filter(p=>p.enabled).forEach(p=>series.set(p,mergePoints(s.history.get(p)||[],s.end?[]:(live.get(options.key(p))||[]),from,to)));
     host.querySelector('.trend-title').textContent=config.title;
@@ -113,7 +116,7 @@
     if(s.loading||(!force&&s.end&&s.lastFetch)||(!force&&now-s.lastFetch<s.config.refreshMs))return;
     s.loading=true;s.lastFetch=now;draw(host);
     const to=s.end||now,from=to-(s.rangeMs||s.config.windowMs);
-    for(const pen of s.config.pens.filter(p=>p.enabled&&p.source==='tag'&&p.connection_id&&p.tag)){
+    for(const pen of s.config.pens.filter(p=>p.enabled&&(p.source==='expression'||(p.source==='tag'&&p.connection_id&&p.tag)))){
       if(!host.isConnected||host._trend!==info||document.visibilityState==='hidden')break;
       try{
         const history=await options.history(pen,from,to,s.config.source);

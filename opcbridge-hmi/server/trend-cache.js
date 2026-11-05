@@ -3,6 +3,7 @@ const fs=require('node:fs/promises');
 const path=require('node:path');
 const crypto=require('node:crypto');
 const os=require('node:os');
+const TrendExpression=require('../public/js/trend-expression');
 const stripJsonComments=require('strip-json-comments');
 const MAX_TAGS=256, MAX_BUCKETS=250000, MAX_FILE_BYTES=96*1024*1024, DAY=86400000;
 const tagKey=(connection,name)=>JSON.stringify([connection,name]);
@@ -21,7 +22,17 @@ async function savedTrendScopes(roots){
           if(value.panelMode==='trend'&&value.trendSource!=='historian'){
             const retention=Math.max(60000,Math.min(31*DAY,Number(value.trendWindowMs)||7200000));
             for(const p of (Array.isArray(value.pens)?value.pens:[]).slice(0,12)){
-              if(p.enabled===false||p.source==='constant'||!p.connection_id||!p.tag)continue;
+              if(p.enabled===false||p.source==='constant')continue;
+              if(p.source==='expression'){
+                const expression=String(p.expression||'').trim();
+                let compiled;try{compiled=TrendExpression.compile(expression);}catch{continue;}
+                if(compiled.dependencies.some(d=>/\{alias:/i.test(d.connection_id+d.tag)))continue;
+                const key=tagKey(TrendExpression.connection,expression),old=scopes.get(key);
+                scopes.set(key,{connection_id:TrendExpression.connection,name:expression,expression,dependencies:compiled.dependencies,retention:Math.max(retention,old?.retention||0)});
+                if(scopes.size>MAX_TAGS)throw Error(`Rolling trends support at most ${MAX_TAGS} distinct series per HMI server.`);
+                continue;
+              }
+              if(!p.connection_id||!p.tag)continue;
               // Unresolved alias templates cannot be collected independently of a viewer.
               if(/\{alias:/i.test(p.connection_id+p.tag))continue;
               const key=tagKey(String(p.connection_id),String(p.tag));
@@ -65,10 +76,19 @@ class TrendCache{
     if(!response.ok)throw new Error(`OPCBridge HTTP ${response.status}`);
     const result=await response.json();if(result.ok===false)throw new Error(result.error||'OPCBridge request failed');return result;
   }
-  demand(){return {client_id:this.client,owner:'hmi-trend-cache',tags:[...this.scopes.values()].map(s=>`${s.connection_id}:${s.name}`)};}
+  inputs(){
+    const tags=new Map();
+    for(const scope of this.scopes.values())for(const d of scope.dependencies||[{connection_id:scope.connection_id,tag:scope.name}])tags.set(tagKey(d.connection_id,d.tag),{connection_id:d.connection_id,name:d.tag});
+    if(tags.size>MAX_TAGS)throw Error(`Rolling trends support at most ${MAX_TAGS} distinct input tags.`);
+    return [...tags.values()];
+  }
+  demand(){return {client_id:this.client,owner:'hmi-trend-cache',tags:this.inputs().map(s=>`${s.connection_id}:${s.name}`)};}
   async release(endpoint){if(endpoint)await this.json(`${endpoint}/polling/demand/release`,this.demand());}
   reconcile(scopes){
-    this.scopes=scopes;const perTag=Math.max(1,Math.min(6000,Math.floor(MAX_BUCKETS/Math.max(1,scopes.size))));
+    const previous=this.scopes;this.scopes=scopes;
+    try{this.inputs();}catch(error){this.scopes=previous;throw error;}
+    this.expressions=new Map([...scopes].filter(([,s])=>s.expression).map(([key,s])=>[key,TrendExpression.compile(s.expression)]));
+    const perTag=Math.max(1,Math.min(6000,Math.floor(MAX_BUCKETS/Math.max(1,scopes.size))));
     for(const key of this.entries.keys())if(!scopes.has(key))this.entries.delete(key);
     for(const [key,scope]of scopes){
       const width=Math.max(1000,Math.ceil(scope.retention/perTag/1000)*1000);
@@ -89,7 +109,18 @@ class TrendCache{
   sample(rows,at){
     const found=new Map((Array.isArray(rows)?rows:[]).map(row=>[tagKey(row.connection_id,row.name),row]));
     for(const [key,entry]of this.entries){
-      const row=found.get(key);
+      let row=found.get(key);
+      const compiled=this.expressions?.get(key);
+      if(compiled){
+        try{
+          const value=compiled.evaluate((connection,tag)=>{
+            const input=found.get(tagKey(connection,tag));
+            if(!input||input.enabled===false||input.has_snapshot===false||![1,'GOOD'].includes(input.quality)||(input.polling_state&&input.polling_state!=='active')||!['number','boolean'].includes(typeof input.value))throw Error('Expression input unavailable.');
+            return Number(input.value);
+          },(connection,tag)=>[1,'GOOD'].includes(found.get(tagKey(connection,tag))?.quality)?'GOOD':'BAD');
+          row={value,quality:1};
+        }catch{row=null;}
+      }
       const value=typeof row?.value==='boolean'?Number(row.value):row?.value;
       const good=row&&row.enabled!==false&&row.has_snapshot!==false&&(row.quality===1||row.quality==='GOOD')&&(!row.polling_state||row.polling_state==='active')&&typeof value==='number'&&Number.isFinite(value);
       if(!good&&!entry.rows.length)continue;
@@ -127,7 +158,7 @@ class TrendCache{
         await this.json(`${this.endpoint}/polling/demand/register`,this.demand());this.renewAt=now;
       }
       if(this.scopes.size){
-        const data=await this.json(`${this.endpoint}/tags/query`,{tags:[...this.scopes.values()].map(({connection_id,name})=>({connection_id,name}))});
+        const data=await this.json(`${this.endpoint}/tags/query`,{tags:this.inputs()});
         this.sample(data.tags,this.now());
       }
       this.status.error='';

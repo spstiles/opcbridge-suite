@@ -55,3 +55,19 @@ test('cache has strict per-tag storage bounds and failed checkpoint does not dis
  assert.ok(entry.rows.length<=3);
  cache.file='/dev/null/not-a-file';await cache.flush();assert.ok(cache.status.persistence_error);assert.equal(cache.entries.size,1);
 });
+
+test('expression pens collect results without a browser, demand inputs, and retain gaps and restart history',async t=>{
+ const {connection}=require('../public/js/trend-expression');
+ const f=await fixture(t),expression='tag("PLC", "Flow") * 2 + 1';
+ await f.write([{panelMode:'trend',pens:[{source:'expression',expression}]}]);
+ const cache=new TrendCache(f.options);await cache.tick();
+ assert.deepEqual(f.calls.find(c=>c.url.endsWith('/register')).body.tags,['PLC:Flow']);
+ assert.deepEqual(f.calls.find(c=>c.url.endsWith('/tags/query')).body.tags,[{connection_id:'PLC',name:'Flow'}]);
+ assert.equal(cache.query(connection,expression,f.now()-10000,f.now()).buckets[0].avg,9);
+ f.setNow(f.now()+3000);f.setFail(true);await cache.tick();
+ assert.ok(cache.query(connection,expression,f.now()-10000,f.now()).buckets.some(p=>p.avg===null));
+ f.setFail(false);await cache.stop();
+ const restored=new TrendCache(f.options);await restored.start();clearInterval(restored.timer);
+ assert.ok(restored.query(connection,expression,f.now()-10000,f.now()).buckets.some(p=>p.avg===9));
+ await restored.stop();
+});

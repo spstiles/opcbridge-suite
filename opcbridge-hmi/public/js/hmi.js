@@ -7479,7 +7479,7 @@ const collectObjectDiagnosticReferences = (obj) => {
     if (typeof value.connection_id === "string" && typeof value.tag === "string") {
       add(value.connection_id, value.tag);
     }
-    if (value.sourceType === "expression" && typeof value.expression === "string") {
+    if ((value.sourceType === "expression" || value.source === "expression") && typeof value.expression === "string") {
       extractAutomationExpressionTagReferences(value.expression).forEach((reference) =>
         add(reference.connection_id, reference.tag)
       );
@@ -7852,7 +7852,7 @@ const repairScreenTagConnections = (screen) => {
         changes += 1;
       }
     }
-    if (value.sourceType === "expression" && typeof value.expression === "string") {
+    if ((value.sourceType === "expression" || value.source === "expression") && typeof value.expression === "string") {
       const repaired = rewriteAutomationExpressionConnections(
         value.expression,
         (connection, tagName) => resolveConnectionForKnownTag(connection, tagName)
@@ -7992,7 +7992,7 @@ const collectScreenReferenceMappings = () => {
     const connection = String(value.connection_id || "").trim();
     const tag = String(value.tag || "").trim();
     const sourceReference = String(value.sourceReference || "").trim();
-    if (value.sourceType === "expression" && String(value.expression || "").trim()) {
+    if ((value.sourceType === "expression" || value.source === "expression") && String(value.expression || "").trim()) {
       const importedReferences = [...new Set(importedExpressionReferences(value.expression).map((reference) => reference.value))];
       importedReferences.forEach((current, expressionIndex) => {
         occurrences.push({
@@ -12153,7 +12153,7 @@ const collectTagKeysFromValue = (value, out, visited = new WeakSet(), visibility
     const key = normalizeWsTagKey(conn, tag);
     if (key) out.add(key);
   }
-  if (value.sourceType === "expression" && typeof value.expression === "string") {
+  if ((value.sourceType === "expression" || value.source === "expression") && typeof value.expression === "string") {
     extractAutomationExpressionTagKeys(value.expression, out);
   }
   if (value.flashEnabled && !visibilityContext && !browserColorContext) {
@@ -14847,7 +14847,12 @@ const renderObjectContentInto = (parent, obj, inheritedGroupColorOverrides = nul
 	  if (obj.type === "alarms-panel") {
         if (obj.panelMode === "trend") {
           const trendParent = hasRotation ? (() => { const wrapper=document.createElementNS(ns,"g"); applyRotationTransform(wrapper,obj); parent.appendChild(wrapper); return wrapper; })() : parent;
-          TrendWidget.mount(trendParent,obj,{editing:isEditMode,key:pen=>normalizeTagCacheKey(pen.connection_id,pen.tag),history:requestTrendHistory});
+          TrendWidget.mount(trendParent,obj,{editing:isEditMode,key:pen=>pen.source==='expression'?JSON.stringify([TrendExpression.connection,pen.expression.trim()]):normalizeTagCacheKey(pen.connection_id,pen.tag),evaluate:expression=>TrendExpression.compile(expression).evaluate((connection,tag)=>{
+            if(getBoundTagQuality(connection,tag)!=='GOOD')throw Error('Expression input unavailable.');
+            const value=tagValueCache.get(normalizeTagCacheKey(connection,tag));
+            if(!['number','boolean'].includes(typeof value))throw Error('Expression input is not numeric.');
+            return Number(value);
+          },getBoundTagQuality),history:requestTrendHistory});
           return;
         }
 	    if (obj.panelMode === "data-entry") {
@@ -34498,7 +34503,9 @@ window.addEventListener("keydown", (event) => {
 // Trend widgets share the panel geometry tools, but use their own native chart
 // renderer and bounded historian endpoint rather than the alarm/report services.
 async function requestTrendHistory(pen, from, to, source = "cache") {
-  const query = new URLSearchParams({source,connection_id:pen.connection_id,tag_name:pen.tag,from_ms:String(Math.floor(from)),to_ms:String(Math.floor(to))});
+  if(pen.source==='expression')TrendExpression.compile(pen.expression);
+  if(pen.source==='expression' && source==='historian')throw new Error('Expression history uses the rolling cache. Select Rolling cache for this trend.');
+  const query = new URLSearchParams({source,connection_id:pen.source==='expression'?TrendExpression.connection:pen.connection_id,tag_name:pen.source==='expression'?pen.expression.trim():pen.tag,from_ms:String(Math.floor(from)),to_ms:String(Math.floor(to))});
   const response = await fetch(`/api/trends/query?${query}`, {cache:'no-store',signal:AbortSignal.timeout(20000)});
   const body = await response.json();
   if (!response.ok || body.ok === false) throw new Error(body.error || `History HTTP ${response.status}`);
@@ -34544,10 +34551,34 @@ function renderTrendProperties(obj) {
       patch({pens});
     };
     field(box,'Description','text',pen.label,value=>edit({label:value}));
-    const sourceRow=document.createElement('label');sourceRow.className='prop-row';sourceRow.textContent='Source';const source=document.createElement('select');source.add(new Option('Tag','tag'));source.add(new Option('Constant line','constant'));source.value=pen.source;source.onchange=()=>edit({source:source.value,...(source.value==='constant'?{connection_id:'',tag:''}:{})});sourceRow.append(source);box.append(sourceRow);
+    const sourceRow=document.createElement('label');sourceRow.className='prop-row';sourceRow.textContent='Source';const source=document.createElement('select');source.add(new Option('Tag','tag'));source.add(new Option('Constant line','constant'));source.add(new Option('Expression','expression'));source.value=pen.source;source.onchange=()=>edit({source:source.value,...(source.value!=='tag'?{connection_id:'',tag:''}:{})});sourceRow.append(source);box.append(sourceRow);
     if(pen.source==='constant')field(box,'Constant','number',pen.constant,value=>edit({constant:value}));
+    else if(pen.source==='expression'){
+      const expressionRow=document.createElement('div');expressionRow.className='prop-row';
+      const summary=document.createElement('span');summary.textContent=formatAutomationExpressionForDisplay(pen.expression)||'No expression';
+      if(config.source==='historian'){const hint=document.createElement('p');hint.className='hint';hint.textContent='Expression pens require Rolling cache.';box.append(hint);}
+      const button=document.createElement('button');button.type='button';button.className='panel-btn';button.textContent='Edit Expression…';
+      button.onclick=()=>openAutomationNumericExpressionModal({title:`Trend Trace ${index+1} Expression`,value:pen.expression,apply:expression=>{
+        try{TrendExpression.compile(expression);}catch(error){showHmiToast(error.message,5000);return;}
+        edit({expression,connection_id:'',tag:''});
+      }});
+      expressionRow.append(summary,button);box.append(expressionRow);
+    }
     else registerCompactTagBinding({id:`trendPen:${index}`,container:box,buttonLabel:'Tag',modalTitle:`Trend Trace ${index+1}`,read:()=>({connection_id:pen.connection_id,tag:pen.tag}),apply:({connection_id,tag})=>edit({connection_id,tag})});
-    field(box,'Color','color',pen.color,value=>edit({color:value}));
+    const colorRow=document.createElement('div');colorRow.className='prop-row';
+    const colorLabel=document.createElement('span');colorLabel.textContent='Color';
+    const colorInline=document.createElement('div');colorInline.className='prop-inline automation-tag-inline';
+    const colorInput=document.createElement('input');colorInput.type='text';colorInput.className='automation-tag-input';colorInput.value=pen.color;
+    colorInput.setAttribute('aria-label',`Trace ${index+1} color`);
+    const applyColor=value=>{
+      if(!isHexColor(value)){showHmiToast('Trend traces require a solid, opaque color.',5000);colorInput.value=pen.color;return;}
+      edit({color:value});
+    };
+    colorInput.addEventListener('change',()=>applyColor(colorInput.value.trim()));
+    const colorButton=document.createElement('button');colorButton.type='button';colorButton.className='panel-btn';colorButton.textContent='…';
+    colorButton.setAttribute('aria-label',`Choose trace ${index+1} color`);
+    colorButton.addEventListener('click',()=>openPaintPicker({title:`Trace ${index+1} Color`,value:pen.color,fallback:pen.color,onApply:applyColor}));
+    colorInline.append(colorInput,colorButton);colorRow.append(colorLabel,colorInline);box.append(colorRow);
     field(box,'Scale Minimum','number',pen.min,value=>edit({min:value}));
     field(box,'Scale Maximum','number',pen.max,value=>edit({max:value}));
     const decimals=field(box,'Decimal Places','number',pen.decimals,value=>edit({decimals:Math.max(0,Math.min(6,Math.floor(value)))}));decimals.min='0';decimals.max='6';decimals.step='1';
