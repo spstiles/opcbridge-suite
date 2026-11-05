@@ -14159,9 +14159,38 @@ const appendFrameEffectPaths = (parent, x, y, w, h, { inset = false, strokeWidth
 
 const appendOutsetPaths = (parent, x, y, w, h, strokeWidth, transform) => appendFrameEffectPaths(parent, x, y, w, h, { strokeWidth, transform });
 const appendInsetPaths = (parent, x, y, w, h, strokeWidth, transform) => appendFrameEffectPaths(parent, x, y, w, h, { inset: true, strokeWidth, transform });
+const appendRaisedFramePaths = (parent, x, y, w, h, strokeWidth, color, transform) => {
+  if (!parent || ![x, y, w, h, strokeWidth].every(Number.isFinite) || w <= 0 || h <= 0 || strokeWidth <= 0) return;
+  const band = Math.min(strokeWidth, w / 2, h / 2);
+  const base = parseSolidColor(color, "#808080");
+  const tint = target => `rgb(${[base.r, base.g, base.b].map(channel => Math.round(channel + (target - channel) * 0.6)).join(",")})`;
+  const light = tint(255);
+  const dark = tint(0);
+  for (let ring = 0; ring < 2; ring++) {
+    const offset = ring * band / 2;
+    const step = band / 2;
+    const l = x + offset, t = y + offset, r = x + w - offset, b = y + h - offset;
+    const edges = [
+      [[l,t],[r,t],[r-step,t+step],[l+step,t+step]],
+      [[l,t],[l+step,t+step],[l+step,b-step],[l,b]],
+      [[l,b],[l+step,b-step],[r-step,b-step],[r,b]],
+      [[r,t],[r,b],[r-step,b-step],[r-step,t+step]]
+    ];
+    edges.forEach((points, index) => {
+      const edge = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      edge.setAttribute("d", `M ${points.map(point => point.join(" ")).join(" L ")} Z`);
+      edge.setAttribute("fill", (index < 2) !== Boolean(ring) ? light : dark);
+      edge.setAttribute("fill-opacity", base.opacity / 255);
+      edge.setAttribute("pointer-events", "none");
+      if (transform) edge.setAttribute("transform", transform);
+      parent.appendChild(edge);
+    });
+  }
+};
+
 const normalizeBorderStyle = (value) => {
   const style = String(value || "flat").trim().toLowerCase();
-  return style === "outset" || style === "inset" ? style : "flat";
+  return style === "outset" || style === "inset" || style === "frame" ? style : "flat";
 };
 const isStyledBorder = (borderStyle) => normalizeBorderStyle(borderStyle) !== "flat";
 const isTextBorderEnabled = (obj) => {
@@ -14171,10 +14200,11 @@ const isTextBorderEnabled = (obj) => {
   const width = Number(obj.borderWidth ?? 1);
   return Boolean(color && color !== "transparent" && color !== "none" && width > 0);
 };
-const appendBorderStylePaths = (parent, x, y, w, h, borderStyle, strokeWidth = 1, transform) => {
+const appendBorderStylePaths = (parent, x, y, w, h, borderStyle, strokeWidth = 1, transform, color = "#808080") => {
   const style = normalizeBorderStyle(borderStyle);
   if (style === "outset") appendOutsetPaths(parent, x, y, w, h, strokeWidth, transform);
   if (style === "inset") appendInsetPaths(parent, x, y, w, h, strokeWidth, transform);
+  if (style === "frame") appendRaisedFramePaths(parent, x, y, w, h, strokeWidth, color, transform);
 };
 const setFlatBorderStroke = (el, color, strokeWidth, borderStyle) => {
   if (!el) return;
@@ -15573,7 +15603,7 @@ const renderObjectContentInto = (parent, obj, inheritedGroupColorOverrides = nul
       }
       group.appendChild(bgRect);
       if (bounds && borderEnabled && borderColor && borderColor !== "transparent" && borderColor !== "none" && borderWidth > 0) {
-        appendBorderStylePaths(group, bounds.x, bounds.y, bounds.width, bounds.height, obj.borderStyle, borderWidth);
+        appendBorderStylePaths(group, bounds.x, bounds.y, bounds.width, bounds.height, obj.borderStyle, borderWidth, undefined, borderColor);
       }
     }
     const fillColor = getAutomationColor(obj.fillAutomation, obj.fill || "#ffffff");
