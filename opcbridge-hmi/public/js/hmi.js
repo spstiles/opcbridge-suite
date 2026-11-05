@@ -34569,3 +34569,37 @@ function insertTrendWidget() {
 }
 document.getElementById('insertTrendBtn')?.addEventListener('click',insertTrendWidget);
 window.setInterval(()=>{ if(typeof TrendWidget!=='undefined')TrendWidget.tick(); },1000);
+
+
+// Group the panel widgets in one side-toolbar menu; the items retain their
+// existing insertion handlers.
+const leftWidgetsBtn = document.getElementById('leftWidgetsBtn');
+const leftWidgetsFlyout = document.getElementById('leftWidgetsFlyout');
+const setWidgetsFlyoutOpen = open => {
+  if(!leftWidgetsBtn||!leftWidgetsFlyout)return;
+  leftWidgetsFlyout.classList.toggle('is-hidden',!open);
+  leftWidgetsBtn.setAttribute('aria-expanded',String(open));
+};
+leftWidgetsBtn?.addEventListener('click',()=>{
+  const open=leftWidgetsBtn.getAttribute('aria-expanded')!=='true';
+  leftCircleFlyout?.classList.add('is-hidden');leftCircleFlyoutOpen=false;
+  leftPolygonFlyout?.classList.add('is-hidden');leftPolygonFlyoutOpen=false;
+  toolbarDynamicsFlyout?.classList.add('is-hidden');toolbarDynamicsBtn?.setAttribute('aria-expanded','false');
+  setWidgetsFlyoutOpen(open);
+});
+leftWidgetsFlyout?.addEventListener('click',event=>{
+  if(event.target.closest('button'))setWidgetsFlyoutOpen(false);
+});
+document.addEventListener('click',event=>{
+  if(!document.getElementById('leftWidgetsWrap')?.contains(event.target))setWidgetsFlyoutOpen(false);
+});
+document.addEventListener('keydown',event=>{
+  if(leftWidgetsBtn?.getAttribute('aria-expanded')!=='true')return;
+  if(event.key==='Escape'){event.preventDefault();event.stopPropagation();setWidgetsFlyoutOpen(false);leftWidgetsBtn.focus();return;}
+  if(!['ArrowDown','ArrowUp'].includes(event.key)||!document.getElementById('leftWidgetsWrap')?.contains(event.target))return;
+  event.preventDefault();
+  const items=[...leftWidgetsFlyout.querySelectorAll('button')];
+  const current=items.indexOf(document.activeElement);
+  const next=current<0?(event.key==='ArrowDown'?0:items.length-1):(current+(event.key==='ArrowDown'?1:-1)+items.length)%items.length;
+  items[next]?.focus();
+},true);

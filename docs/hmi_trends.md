@@ -1,6 +1,6 @@
 # HMI trend widget
 
-In HMI edit mode, choose **Trend** on the toolbar. Resize and position it like other panel objects. In Properties:
+In HMI edit mode, open **Widgets** on the side toolbar and choose **Trend**. Resize and position it like other panel objects. In Properties:
 
 - Choose **Rolling cache** (the default) or **Historian** as the data source.
 - Set a title and time window (15 minutes through 7 days in the selector).

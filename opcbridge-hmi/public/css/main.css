@@ -4459,3 +4459,5 @@ body.edit-mode:not(.status-bar-hidden) #workspace { height: calc(100% - 31px); }
 .trend-dates[hidden] { display:none; }
 .trend-dates input { font-size:11px; max-width:180px; }
 .trend-dates [role=status] { color:#a12620; }
+
+#leftWidgetsFlyout { top:auto; bottom:0; }
