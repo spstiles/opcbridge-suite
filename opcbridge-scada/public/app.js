@@ -11578,6 +11578,7 @@ function renderOverviewHealth(health, metrics = null) {
       const good = (typeof info?.good_recent === 'number') ? info.good_recent : null;
       const age = (typeof info?.newest_age_ms === 'number') ? info.newest_age_ms : null;
       const readMsAvg = (typeof info?.read_ms_avg === 'number' && info.read_ms_avg > 0) ? info.read_ms_avg : null;
+      const isSubscription = String(info?.transport || '').toLowerCase().includes('subscription');
       const sweepMs = (typeof info?.expected_sweep_ms === 'number' && info.expected_sweep_ms >= 0) ? info.expected_sweep_ms : null;
       const sweepLastMs = (typeof info?.sweep_ms_last === 'number' && info.sweep_ms_last > 0) ? info.sweep_ms_last : null;
       const sweepAvg10sMs = (typeof info?.sweep_ms_avg_10s === 'number' && info.sweep_ms_avg_10s > 0) ? info.sweep_ms_avg_10s : null;
@@ -11597,7 +11598,7 @@ function renderOverviewHealth(health, metrics = null) {
       if (typeof info?.inactive_tags === 'number' && info.inactive_tags > 0) details += ` • ${info.inactive_tags} inactive`;
       if (typeof info?.waiting_tags === 'number' && info.waiting_tags > 0) details += ` • ${info.waiting_tags} waiting`;
       if (typeof info?.active_poll_work === 'number' && typeof info?.configured_poll_work === 'number') details += ` • ${info.active_poll_work}/${info.configured_poll_work} active reads`;
-      if (info?.full_sweep_available === false) {
+      if (!isSubscription && info?.full_sweep_available === false) {
         const activeSweep = info.active_sweep_ms_avg_10s ?? info.active_sweep_ms_last;
         if (typeof activeSweep === 'number') {
           const averaged = typeof info.active_sweep_ms_avg_10s === 'number';
@@ -11611,15 +11612,18 @@ function renderOverviewHealth(health, metrics = null) {
       }
       if (info?.polling_activity !== 'idle' && age != null) details += ` • newest ${age} ms`;
       if (readMsAvg != null) details += ` • read ${formatMsCompact(readMsAvg)} avg`;
-      if (sweepAvg10sMs != null) details += ` • sweep ${formatMsCompact(sweepAvg10sMs)} avg10s`;
-      else if (sweepLastMs != null) details += ` • sweep ${formatMsCompact(sweepLastMs)} last`;
-      if (sweepMs != null) details += ` • est ${formatMsCompact(sweepMs)}`;
-      if (sweepAvg60sMs != null && sweepAvg10sMs != null) details += ` • avg60s ${formatMsCompact(sweepAvg60sMs)}`;
+      if (isSubscription) details += ' • Subscription';
+      else {
+        if (sweepAvg10sMs != null) details += ` • sweep ${formatMsCompact(sweepAvg10sMs)} avg10s`;
+        else if (sweepLastMs != null) details += ` • sweep ${formatMsCompact(sweepLastMs)} last`;
+        if (sweepMs != null) details += ` • est ${formatMsCompact(sweepMs)}`;
+        if (sweepAvg60sMs != null && sweepAvg10sMs != null) details += ` • avg60s ${formatMsCompact(sweepAvg60sMs)}`;
+      }
       if (lanes != null) details += ` • lanes ${lanes}`;
       if (info?.polling_activity !== 'idle' && typeof info?.last_read_age_ms === 'number' && info.last_read_age_ms >= 0) details += ` • last read ${formatMsCompact(info.last_read_age_ms)} ago`;
       if (info?.polling_activity !== 'idle' && lastOkAgeMs != null) details += ` • last ok ${formatMsCompact(lastOkAgeMs)} ago`;
       if (info?.stalled === true) details += ` • stalled`;
-      if (info?.transport) details += ` • ${String(info.transport)}`;
+      if (info?.transport && !isSubscription) details += ` • ${String(info.transport)}`;
       if (info?.security_profile) details += ` • security profile ${String(info.security_profile)}`;
       else if (info?.security_mode) details += ` • ${String(info.security_mode)}`;
 
