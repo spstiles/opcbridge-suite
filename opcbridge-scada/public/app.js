@@ -28449,6 +28449,9 @@ async function refreshUserAuthLine({ initial = false } = {}) {
     if (rawLoggedIn) {
       state.authLoggedOutSinceMs = 0;
       state.authLastUser = { username, displayName, groups };
+      if (els.workspaceSaveStatus?.textContent === 'Session expired. Press Login to continue.') {
+        setWorkspaceSaveStatus('');
+      }
     } else if (state.authWasLoggedIn && configured &&
         Date.now() - (Number(state.authLastLogoutAtMs) || 0) > 15000) {
       const now = Date.now();
