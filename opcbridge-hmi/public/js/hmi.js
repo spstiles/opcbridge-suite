@@ -7523,7 +7523,7 @@ const buildObjectDiagnosticsText = (obj) => {
 const showDiagnosticsForPointer = (event) => {
   if (!diagnosticsModeEnabled || isEditMode || !hmiSvg) return hideDiagnosticsTooltip();
   const point = getScreenPoint(event);
-  const meta = point ? getMetaAtPoint(point) : null;
+  const meta = point ? getMetaAtPoint(point, (obj) => collectObjectDiagnosticReferences(obj).length > 0) : null;
   const obj = meta ? getObjectFromMeta(meta) : null;
   if (!obj) return hideDiagnosticsTooltip();
   const text = buildObjectDiagnosticsText(obj);
@@ -30975,7 +30975,7 @@ const getObjectFromMeta = (meta) => {
   return root;
 };
 
-const getMetaAtPoint = (point) => {
+const getMetaAtPoint = (point, acceptsObject = null) => {
   const offset = getActiveOffset();
   for (let i = renderedElementMeta.length - 1; i >= 0; i -= 1) {
     const item = renderedElementMeta[i];
@@ -30983,13 +30983,13 @@ const getMetaAtPoint = (point) => {
     if (isEditMode && !objectOnEditableLayer(getActiveObjects()?.[item.index])) continue;
     if (!isEditMode && !shouldDrawLayer(HmiLayers.layerOf(currentScreenObj, obj))) continue;
     if (!isEditMode && !shouldRenderObject(obj)) continue;
-    if (obj?.type === "line" && pointHitsLine(point, obj)) {
+    if (obj?.type === "line" && pointHitsLine(point, obj) && (!acceptsObject || acceptsObject(getObjectFromMeta(item)))) {
       return item;
     }
-    if (obj?.type === "spline" && pointHitsSpline(point, obj)) {
+    if (obj?.type === "spline" && pointHitsSpline(point, obj) && (!acceptsObject || acceptsObject(getObjectFromMeta(item)))) {
       return item;
     }
-    if (obj && ["polyline", "pipe", "polygon"].includes(obj.type) && pointHitsPathObject(point, obj, offset)) {
+    if (obj && ["polyline", "pipe", "polygon"].includes(obj.type) && pointHitsPathObject(point, obj, offset) && (!acceptsObject || acceptsObject(getObjectFromMeta(item)))) {
       return item;
     }
     let bbox = null;
@@ -31091,14 +31091,14 @@ const getMetaAtPoint = (point) => {
           Number(obj.y ?? 0),
           []
         );
-        if (child) return child;
+        if (child && (!acceptsObject || acceptsObject(getObjectFromMeta(child)))) return child;
       }
       if (!isEditMode && obj?.type === "viewport") {
         const child = findRuntimeChildMetaInViewport(obj, item.index, point);
-        if (child) return child;
+        if (child && (!acceptsObject || acceptsObject(getObjectFromMeta(child)))) return child;
         continue;
       }
-      return item;
+      if (!acceptsObject || acceptsObject(getObjectFromMeta(item))) return item;
     }
   }
   return null;

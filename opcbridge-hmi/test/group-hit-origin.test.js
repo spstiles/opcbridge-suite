@@ -76,3 +76,23 @@ test('runtime layer hidden suppresses hits; editor show keeps the layer editable
   ctx.isEditMode = true;
   assert.equal(vm.runInContext('findHitInObjectList(screen.objects, {x:1,y:1}, [], screen).path[0]', ctx), 1);
 });
+
+test('diagnostic hit testing looks past an empty overlay without changing normal clicks', () => {
+  const bound = { type: 'text', tag: 'Flow' };
+  const overlay = { type: 'group', children: [{ hidden: true }] };
+  const ctx = vm.createContext({
+    currentScreenObj: {}, isEditMode: false, groupEditStack: [],
+    HmiLayers: { layerOf: () => null }, shouldDrawLayer: () => true,
+    getActiveOffset: () => ({ x: 0, y: 0 }), getActiveObjects: () => [bound, overlay],
+    getDisplayObject: obj => obj, shouldRenderObject: () => true,
+    renderedElementMeta: [{ index: 0, type: 'text' }, { index: 1, type: 'group' }],
+    getObjectBounds: () => ({ x: 0, y: 0, width: 200, height: 200 }),
+    pointInBox: () => true, getObjectRotationDegrees: () => 0,
+    findRuntimeChildMetaInGroup: () => null,
+    getObjectFromMeta: meta => [bound, overlay][meta.index]
+  });
+  const start = source.indexOf('const getMetaAtPoint =');
+  vm.runInContext(source.slice(start, source.indexOf('\n};', start) + 3), ctx);
+  assert.equal(vm.runInContext('getMetaAtPoint({x:20,y:20}).index', ctx), 1);
+  assert.equal(vm.runInContext('getMetaAtPoint({x:20,y:20}, obj => Boolean(obj.tag)).index', ctx), 0);
+});
