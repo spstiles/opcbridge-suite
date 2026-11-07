@@ -780,7 +780,6 @@
   editDevGateway: document.getElementById('editDevGateway'),
   editDevOpcuaBrowseRow: document.getElementById('editDevOpcuaBrowseRow'),
   editDevOpcuaBrowseBtn: document.getElementById('editDevOpcuaBrowseBtn'),
-  editDevOpcuaReloadBtn: document.getElementById('editDevOpcuaReloadBtn'),
   editDevOpcuaBrowseResults: document.getElementById('editDevOpcuaBrowseResults'),
   editDevOpcuaSecurityRow: document.getElementById('editDevOpcuaSecurityRow'),
   editDevOpcuaSecurityProfile: document.getElementById('editDevOpcuaSecurityProfile'),
@@ -17745,32 +17744,10 @@ function editedRemoteOpcuaConnectionId() {
   return String(state.pendingWorkspaceItem?.connection_id || node?.meta?.connection_id || node?.meta?.id || '').trim();
 }
 
-async function reloadEditedRemoteOpcuaTags() {
-  const connectionId = editedRemoteOpcuaConnectionId();
-  if (!connectionId) return;
-  if (workspaceIsDirty() || state.runtimeSavedChangesPending) {
-    setEditDevStatus('Save & Apply or discard pending Workspace changes before reloading the saved tag selection. Edits in this dialog are not applied by Reload.');
-    return;
-  }
-  if (els.editDevOpcuaReloadBtn) els.editDevOpcuaReloadBtn.disabled = true;
-  if (els.editDevOpcuaBrowseBtn) els.editDevOpcuaBrowseBtn.disabled = true;
-  setEditDevStatus('Reloading the saved tag selection and reconnecting to the OPC UA server…');
-  try {
-    await opcbridgeReloadConnection(connectionId);
-    setEditDevStatus('Saved tag selection reloaded. The OPC UA client will reconnect and receive initial values. No Save is needed. To add or remove tags, use Browse Remote Tags.');
-  } catch (err) {
-    setEditDevStatus(`Reload failed: ${err.message || err}`);
-  } finally {
-    if (els.editDevOpcuaReloadBtn) els.editDevOpcuaReloadBtn.disabled = false;
-    if (els.editDevOpcuaBrowseBtn) els.editDevOpcuaBrowseBtn.disabled = false;
-  }
-}
-
 async function browseEditedRemoteOpcbridge() {
   const endpoint = String(els.editDevGateway?.value || '').trim();
   if (!endpoint) { setEditDevStatus('Enter the remote OPC UA endpoint first.'); return; }
   setEditDevStatus('Browsing remote OPCBridge…');
-  if (els.editDevOpcuaReloadBtn) els.editDevOpcuaReloadBtn.disabled = true;
   if (els.editDevOpcuaBrowseBtn) els.editDevOpcuaBrowseBtn.disabled = true;
   try {
     const existing = state.connObjCache?.get?.(state.pendingWorkspaceItem?.path || '') || {};
@@ -17796,7 +17773,6 @@ async function browseEditedRemoteOpcbridge() {
     setEditDevStatus(`Remote browse failed: ${err.message || err}`);
   } finally {
     if (els.editDevOpcuaBrowseBtn) els.editDevOpcuaBrowseBtn.disabled = false;
-    if (els.editDevOpcuaReloadBtn) els.editDevOpcuaReloadBtn.disabled = false;
   }
 }
 
@@ -21006,7 +20982,6 @@ function wireWorkspaceItemModalUi() {
   els.editDevCancelBtn?.addEventListener('click', close);
   els.editDevSaveBtn?.addEventListener('click', saveEditedDeviceFromModal);
   els.editDevDriver?.addEventListener('change', () => applyDeviceDriverUi('edit'));
-  els.editDevOpcuaReloadBtn?.addEventListener('click', reloadEditedRemoteOpcuaTags);
   els.editDevOpcuaBrowseBtn?.addEventListener('click', browseEditedRemoteOpcbridge);
   els.editDevOpcuaBrowseResults?.addEventListener('change', (event) => {
     const connectionToggle = event.target?.closest?.('[data-opcua-connection]');
