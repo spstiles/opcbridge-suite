@@ -17760,12 +17760,15 @@ async function browseEditedRemoteOpcbridge() {
     }, { timeoutMs: 180000 });
     const connections = Array.isArray(payload?.connections) ? payload.connections : [];
     const connectionId = editedRemoteOpcuaConnectionId();
-    const existingNodeIds = new Set((state.tagConfigAll || [])
+    const existingNodeIds = new Set((getEffectiveTagsAll() || [])
       .filter((tag) => String(tag?.connection_id || '') === connectionId)
       .map((tag) => String(tag?.plc_tag_name || ''))
       .filter(Boolean));
     renderRemoteOpcuaBrowseResults(els.editDevOpcuaBrowseResults, connections, existingNodeIds, false);
-    setEditDevStatus(`Found ${connections.length} remote connection${connections.length === 1 ? '' : 's'}. Review the selections, then click Save. Tags no longer published by the browsed source connections will be removed.`);
+    const newTagCount = connections.reduce((count, connection) => count +
+      (Array.isArray(connection.tags) ? connection.tags : []).filter((tag) =>
+        !existingNodeIds.has(String(tag?.node_id || ''))).length, 0);
+    setEditDevStatus(`Refreshed ${connections.length} remote connection${connections.length === 1 ? '' : 's'}; ${newTagCount} tag${newTagCount === 1 ? '' : 's'} not yet imported. Existing selections are preserved. Select new tags, click Save, then Save & Apply. Tags no longer published by the browsed source connections will be removed when saved.`);
   } catch (err) {
     setEditDevStatus(`Remote browse failed: ${err.message || err}`);
   } finally {
