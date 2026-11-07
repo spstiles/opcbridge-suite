@@ -26573,12 +26573,15 @@ function renderWorkspaceDetails(node) {
   const rowsToRender = (showTagCols && filterText)
     ? rawRowsToRender.filter((row) => {
         const haystack = [
-          row?.name,
+          isSystem ? displaySystemTagName(row?.name) : row?.name,
           row?.plc_tag_name,
           row?.datatype,
+          row?.scan_ms,
+          row?.enabled === false ? 'no' : 'yes',
+          row?.writable === true ? 'yes' : 'no',
           row?.connection_id
         ]
-          .map((value) => String(value || '').toLowerCase())
+          .map((value) => String(value ?? '').toLowerCase())
           .join(' ');
         return haystack.includes(filterText);
       })

@@ -7561,6 +7561,21 @@ const closeReferenceHealth = () => {
   referenceHealthOverlay = null;
 };
 
+const centerReferenceObjectInView = (obj) => {
+  if (!isEditMode || !screenWrapper || !screen) return;
+  const bounds = getObjectBounds(getDisplayObject(obj));
+  if (!bounds) return;
+  const offset = getActiveOffset();
+  const screenRect = screen.getBoundingClientRect();
+  const viewport = screenWrapper.getBoundingClientRect();
+  const scaleX = screenRect.width / lastScreenSize.width || 1;
+  const scaleY = screenRect.height / lastScreenSize.height || 1;
+  const centerX = screenRect.left + (bounds.x + offset.x + bounds.width / 2) * scaleX;
+  const centerY = screenRect.top + (bounds.y + offset.y + bounds.height / 2) * scaleY;
+  screenWrapper.scrollLeft += centerX - (viewport.left + screenWrapper.clientLeft + screenWrapper.clientWidth / 2);
+  screenWrapper.scrollTop += centerY - (viewport.top + screenWrapper.clientTop + screenWrapper.clientHeight / 2);
+};
+
 const selectReferenceIssueObject = (issue) => {
   const layer = currentScreenObj?.layers?.find(item => String(item.id) === String(issue?.objectImportId || ""));
   if (layer && isEditMode) {
@@ -7628,6 +7643,7 @@ const selectReferenceIssueObject = (issue) => {
   updatePropertiesPanel();
   updateGroupBreadcrumb();
   closeReferenceHealth();
+  requestAnimationFrame(() => centerReferenceObjectInView(match.object));
 };
 
 const openSystemReferenceIssue = (screenId, issue) => {
