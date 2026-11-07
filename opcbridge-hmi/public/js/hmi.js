@@ -7576,6 +7576,47 @@ const centerReferenceObjectInView = (obj) => {
   screenWrapper.scrollTop += centerY - (viewport.top + screenWrapper.clientTop + screenWrapper.clientHeight / 2);
 };
 
+// Ordinary drags can move existing SVG nodes instead of repainting the whole screen.
+const previewEditorDrag = (origins) => {
+  if (groupEditStack.length || !origins.length || origins.some(origin =>
+    !['xy', 'cxy'].includes(origin.mode) || !origin.previewElement?.isConnected)) return false;
+  const objects = getActiveObjects();
+  for (const origin of origins) {
+    const obj = objects?.[origin.index];
+    if (!obj) return false;
+    const dx = Number(obj.x ?? obj.cx ?? 0) - Number(origin.x);
+    const dy = Number(obj.y ?? obj.cy ?? 0) - Number(origin.y);
+    origin.previewElement.setAttribute('transform',
+      `translate(${dx} ${dy}) ${origin.previewTransform || ''}`.trim());
+  }
+  updateSelectionOverlays();
+  return true;
+};
+
+let nudgePropertiesTimer = null;
+const scheduleNudgePropertiesRefresh = () => {
+  if (nudgePropertiesTimer !== null) clearTimeout(nudgePropertiesTimer);
+  nudgePropertiesTimer = setTimeout(() => {
+    nudgePropertiesTimer = null;
+    syncEditorFromScreen();
+    updatePropertiesPanel();
+  }, 150);
+};
+
+const captureNudgePreviewOrigins = (objects, indices) => indices.map(index => {
+  const obj = objects[index];
+  const el = renderedElementMeta.find(item => item.index === index)?.el;
+  return {
+    index,
+    mode: ['line', 'polyline', 'pipe', 'polygon', 'spline', 'curve'].includes(obj?.type)
+      ? 'unsupported' : (obj?.x != null || obj?.y != null ? 'xy' : 'cxy'),
+    x: Number(obj?.x ?? obj?.cx ?? 0),
+    y: Number(obj?.y ?? obj?.cy ?? 0),
+    previewElement: el,
+    previewTransform: el?.getAttribute('transform') || ''
+  };
+});
+
 const selectReferenceIssueObject = (issue) => {
   const layer = currentScreenObj?.layers?.find(item => String(item.id) === String(issue?.objectImportId || ""));
   if (layer && isEditMode) {
@@ -21310,6 +21351,7 @@ window.addEventListener("keydown", (evt) => {
 	      }
 	    }
 	  }
+	  const previewOrigins = captureNudgePreviewOrigins(activeObjects, selectedIndices);
 	  selectedIndices.forEach((index) => {
 		    const obj = activeObjects[index];
 		    if (!obj) return;
@@ -21338,10 +21380,14 @@ window.addEventListener("keydown", (evt) => {
 	      obj.cy = snapValue(Math.round((obj.cy ?? 0) + delta.y));
 	    }
 	  });
-	  renderScreen();
-	  syncEditorFromScreen();
-	  updateSelectionOverlays();
-	  updatePropertiesPanel();
+	  if (previewEditorDrag(previewOrigins)) {
+	    scheduleNudgePropertiesRefresh();
+	  } else {
+	    renderScreen({ refreshReferenceHealth: false });
+	    syncEditorFromScreen();
+	    updateSelectionOverlays();
+	    updatePropertiesPanel();
+	  }
 	  setDirty(true);
 	});
 
@@ -32498,7 +32544,9 @@ const setTool = (nextTool) => {
           index,
           x: obj?.x ?? obj?.cx ?? 0,
           y: obj?.y ?? obj?.cy ?? 0,
-          mode: obj?.x != null || obj?.y != null ? "xy" : "cxy"
+          mode: obj?.x != null || obj?.y != null ? "xy" : "cxy",
+          previewElement: renderedElementMeta.find(item => item.index === index)?.el,
+          previewTransform: renderedElementMeta.find(item => item.index === index)?.el?.getAttribute('transform') || ''
         };
       });
       return;
@@ -32998,8 +33046,10 @@ const setTool = (nextTool) => {
           obj.cy = snapValue(Math.round(origin.y + dy));
         }
       });
-      renderScreen();
-      syncEditorFromScreen();
+      if (!previewEditorDrag(dragOrigins)) {
+        renderScreen({ refreshReferenceHealth: false });
+        syncEditorFromScreen();
+      }
       setDirty(true);
       return;
     }
@@ -33431,6 +33481,8 @@ const setTool = (nextTool) => {
 	      isDragPending = false;
 	      dragStart = null;
 	      dragOrigins = [];
+      renderScreen();
+      syncEditorFromScreen();
       hmiSvg.style.cursor = "default";
       return;
     }
