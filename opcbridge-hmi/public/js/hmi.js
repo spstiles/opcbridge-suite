@@ -8541,6 +8541,7 @@ if (!authSyncTimer) authSyncTimer = window.setInterval(() => syncAuthFromServer(
 let wsClient = null;
 let wsConnected = false;
 let wsReconnectTimer = null;
+let wsConnectTimer = null;
 let wsCurrentUrl = "";
 let wsSubscribeTimer = null;
 let tagSeedRefreshTimer = null;
@@ -12451,10 +12452,15 @@ const updateWsSubscriptions = () => {
 
 document.addEventListener("visibilitychange", () => {
   updateWsSubscriptions();
-  if (document.visibilityState !== "hidden") scheduleTagSeedRefresh();
+  if (document.visibilityState !== "hidden") {
+    connectWebSocket();
+    scheduleTagSeedRefresh();
+  }
 });
 window.addEventListener("pagehide", () => wsSendSubscribe([]));
+window.addEventListener("online", () => connectWebSocket());
 window.addEventListener("pageshow", () => {
+  connectWebSocket();
   wsLastSubscribeFingerprint = "";
   scheduleWsSubscribeRefresh();
 });
@@ -12480,13 +12486,14 @@ const connectWebSocket = () => {
     return;
   }
   wsCurrentUrl = nextUrl;
+  if (wsConnectTimer) { clearTimeout(wsConnectTimer); wsConnectTimer = null; }
 
   if (wsClient) {
     wsClient.onopen = null;
     wsClient.onclose = null;
     wsClient.onerror = null;
     wsClient.onmessage = null;
-    wsClient.close();
+    try { wsClient.close(); } catch { /* A failed handshake may already be closed. */ }
     wsClient = null;
   }
 
@@ -12503,25 +12510,34 @@ const connectWebSocket = () => {
     return;
   }
 
-  wsClient.onopen = () => {
+  const socket = wsClient;
+  const disconnected = () => {
+    if (wsClient !== socket) return;
+    if (wsConnectTimer) { clearTimeout(wsConnectTimer); wsConnectTimer = null; }
+    wsClient = null;
+    wsConnected = false;
+    wsLastSubscribeFingerprint = "";
+    updateWsStatus();
+    socket.onopen = socket.onclose = socket.onerror = socket.onmessage = null;
+    try { socket.close(); } catch { /* Reconnect even if close itself fails. */ }
+    scheduleWsReconnect();
+  };
+  // Some failed handshakes emit only error, or remain CONNECTING indefinitely.
+  wsConnectTimer = setTimeout(disconnected, 10000);
+  socket.onopen = () => {
+    if (wsClient !== socket) return;
+    if (wsConnectTimer) { clearTimeout(wsConnectTimer); wsConnectTimer = null; }
+    if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
     wsConnected = true;
+    wsLastSubscribeFingerprint = "";
     updateWsStatus();
     scheduleWsSubscribeRefresh();
   };
+  socket.onclose = disconnected;
+  socket.onerror = disconnected;
 
-  wsClient.onclose = () => {
-    wsConnected = false;
-    updateWsStatus();
-    wsLastSubscribeFingerprint = "";
-    scheduleWsReconnect();
-  };
-
-  wsClient.onerror = () => {
-    wsConnected = false;
-    updateWsStatus();
-  };
-
-  wsClient.onmessage = (event) => {
+  socket.onmessage = (event) => {
+    if (wsClient !== socket) return;
     try {
       const payload = JSON.parse(event.data);
       if (payload?.type === "tag_update") {
