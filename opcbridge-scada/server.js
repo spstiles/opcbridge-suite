@@ -259,7 +259,7 @@ const defaultConfig = {
   listen: { host: '0.0.0.0', port: 3010 },
   refresh_ms: 2000,
   opcbridge: { scheme: 'http', host: '127.0.0.1', port: 8080 },
-  alarms: { scheme: 'http', host: '127.0.0.1', port: 8085 },
+  alarms: { scheme: 'http', host: '127.0.0.1', port: 8085, wsPort: 8086 },
   hmi: { scheme: 'http', host: '127.0.0.1', port: 3000 },
   channels: [],
   device_assignments: {}
@@ -371,6 +371,7 @@ function normalizeScadaConfig(input) {
   next.alarms.scheme = normalizeScheme(next.alarms.scheme, base.alarms.scheme);
   next.alarms.host = normalizeHost(next.alarms.host, base.alarms.host);
   next.alarms.port = normalizePort(next.alarms.port, base.alarms.port);
+  next.alarms.wsPort = normalizePort(next.alarms.wsPort, base.alarms.wsPort);
 
   next.hmi.scheme = normalizeScheme(next.hmi.scheme, base.hmi.scheme);
   next.hmi.host = normalizeHost(next.hmi.host, base.hmi.host);
@@ -383,7 +384,9 @@ function normalizeScadaConfig(input) {
 }
 
 function writeConfigFile(nextConfig) {
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(nextConfig, null, 2) + '\n', 'utf8');
+  const temporary = `${CONFIG_PATH}.${process.pid}.tmp`;
+  fs.writeFileSync(temporary, JSON.stringify(nextConfig, null, 2) + '\n', 'utf8');
+  fs.renameSync(temporary, CONFIG_PATH);
 }
 
 function send(res, status, headers, body) {

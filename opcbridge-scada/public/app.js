@@ -37,6 +37,7 @@
   scadaAlarmsScheme: document.getElementById('scadaAlarmsScheme'),
   scadaAlarmsHost: document.getElementById('scadaAlarmsHost'),
   scadaAlarmsPort: document.getElementById('scadaAlarmsPort'),
+  scadaAlarmsWsPort: document.getElementById('scadaAlarmsWsPort'),
   scadaHmiScheme: document.getElementById('scadaHmiScheme'),
   scadaHmiHost: document.getElementById('scadaHmiHost'),
   scadaHmiPort: document.getElementById('scadaHmiPort'),
@@ -15417,6 +15418,7 @@ function fillScadaSettings(cfg) {
   if (els.scadaAlarmsScheme) els.scadaAlarmsScheme.value = String(cfg.alarms?.scheme || 'http');
   if (els.scadaAlarmsHost) els.scadaAlarmsHost.value = String(cfg.alarms?.host || '');
   if (els.scadaAlarmsPort) els.scadaAlarmsPort.value = String(cfg.alarms?.port ?? '');
+  if (els.scadaAlarmsWsPort) els.scadaAlarmsWsPort.value = String(cfg.alarms?.wsPort ?? 8086);
 
   if (els.scadaHmiScheme) els.scadaHmiScheme.value = String(cfg.hmi?.scheme || 'http');
   if (els.scadaHmiHost) els.scadaHmiHost.value = String(cfg.hmi?.host || '');
@@ -15448,7 +15450,8 @@ function readScadaSettingsFromForm() {
     alarms: {
       scheme: els.scadaAlarmsScheme?.value || 'http',
       host: els.scadaAlarmsHost?.value?.trim() || '127.0.0.1',
-      port: Number(els.scadaAlarmsPort?.value ?? 8085) || 8085
+      port: Number(els.scadaAlarmsPort?.value ?? 8085) || 8085,
+      wsPort: Number(els.scadaAlarmsWsPort?.value ?? 8086) || 8086
     },
     hmi: {
       scheme: els.scadaHmiScheme?.value || 'http',
@@ -16696,7 +16699,7 @@ function wireScadaSettingsUi() {
   // Keep header links up-to-date while editing.
   [
     els.scadaOpcbridgeScheme, els.scadaOpcbridgeHost, els.scadaOpcbridgePort,
-    els.scadaAlarmsScheme, els.scadaAlarmsHost, els.scadaAlarmsPort,
+    els.scadaAlarmsScheme, els.scadaAlarmsHost, els.scadaAlarmsPort, els.scadaAlarmsWsPort,
     els.scadaHmiScheme, els.scadaHmiHost, els.scadaHmiPort
   ].forEach((el) => el?.addEventListener?.('input', () => {
     refreshTopLinks();

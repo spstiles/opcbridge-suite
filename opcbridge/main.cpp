@@ -82,6 +82,9 @@
 #ifndef CPPHTTPLIB_LISTEN_BACKLOG
 #define CPPHTTPLIB_LISTEN_BACKLOG 128
 #endif
+#ifndef CPPHTTPLIB_OPENSSL_SUPPORT
+#define CPPHTTPLIB_OPENSSL_SUPPORT
+#endif
 #include "httplib.h"
 #include <unordered_map>
 #include <unordered_set>
@@ -1806,7 +1809,7 @@ static std::vector<SystemTagDef> collect_alarm_system_tags() {
             }
         }
         sourceKey = source.key();
-        httplib::Client cli(source.host, source.port);
+        httplib::Client cli(source.scheme + "://" + source.host + ":" + std::to_string(source.port));
         cli.set_connection_timeout(0, 200000);
         cli.set_read_timeout(0, 200000);
         cli.set_write_timeout(0, 200000);

@@ -50,6 +50,7 @@ const readConfig = async () => {
     raw = await fsp.readFile(CONFIG_EXAMPLE_PATH, "utf8");
   }
   const config = JSON.parse(stripJsonComments(raw));
+  config.alarms = await require("./alarm-source").readAlarmSource();
   return { raw, config };
 };
 
@@ -279,7 +280,6 @@ const auditEventsToCsv = (events) => {
 
 const writeConfig = async (nextConfig) => {
   const opcbridge = nextConfig?.opcbridge || {};
-  const alarms = nextConfig?.alarms || {};
   const hmi = nextConfig?.hmi || {};
   const defaultScreen = String(hmi.defaultScreen || "overview").trim().replace(/\.jsonc$/i, "") || "overview";
 
@@ -307,11 +307,6 @@ const writeConfig = async (nextConfig) => {
       writeToken: String(opcbridge.writeToken || "")
     },
     historian: { host: String(nextConfig?.historian?.host || "127.0.0.1"), httpPort: Number(nextConfig?.historian?.httpPort) || 8096 },
-    alarms: {
-      host: String(alarms.host || ""),
-      httpPort: Number(alarms.httpPort) || 8085,
-      wsPort: Number(alarms.wsPort) || 8086
-    },
     hmi: {
       defaultScreen,
       touchscreenMode: Boolean(hmi.touchscreenMode),
@@ -320,14 +315,11 @@ const writeConfig = async (nextConfig) => {
     }
   };
   const opcbridgeJson = JSON.stringify(cleaned.opcbridge, null, 2).replace(/\n/g, "\n  ");
-  const alarmsJson = JSON.stringify(cleaned.alarms, null, 2).replace(/\n/g, "\n  ");
   const hmiJson = JSON.stringify(cleaned.hmi, null, 2).replace(/\n/g, "\n  ");
   const historianJson = JSON.stringify(cleaned.historian, null, 2);
   const output = `{\n` +
     `  // opcbridge connection settings used by the HMI client\n` +
     `  \"opcbridge\": ${opcbridgeJson},\n` +
-    `  // opcbridge-alarms connection settings (optional)\n` +
-    `  \"alarms\": ${alarmsJson},\n` +
     `  "historian": ${historianJson},\n` +
     `  // HMI runtime settings\n` +
     `  \"hmi\": ${hmiJson}\n` +
@@ -584,6 +576,11 @@ const createApp = () => {
     } catch (error) {
       res.status(500).json({ ok: false, error: String(error) });
     }
+  });
+
+  app.get("/api/alarms/source", async (req, res) => {
+    try { res.json(await require("./alarm-source").readAlarmSource()); }
+    catch (error) { res.status(503).json({ error: "Alarm server configuration unavailable" }); }
   });
 
   app.get("/api/config", async (req, res) => {
@@ -858,7 +855,7 @@ const createApp = () => {
       const params = new URLSearchParams({ limit: String(limit) });
       const sinceMs = Number(req.query?.since_ms);
       if (Number.isFinite(sinceMs) && sinceMs > 0) params.set("since_ms", String(Math.round(sinceMs)));
-      const url = `http://${host}:${port}/alarm/api/alarms/history?${params.toString()}`;
+      const url = `${alarms.scheme || "http"}://${host}:${port}/alarm/api/alarms/history?${params.toString()}`;
       const response = await fetch(url, { headers: { Accept: "application/json" } });
       const text = await response.text();
       if (!response.ok) {
@@ -886,7 +883,7 @@ const createApp = () => {
       const params = new URLSearchParams({ rows: String(rows) });
       const sinceMs = Number(req.query?.since_ms);
       if (Number.isFinite(sinceMs) && sinceMs > 0) params.set("since_ms", String(Math.round(sinceMs)));
-      const url = `http://${host}:${port}/alarm/api/alarms/panel?${params.toString()}`;
+      const url = `${alarms.scheme || "http"}://${host}:${port}/alarm/api/alarms/panel?${params.toString()}`;
       const response = await fetch(url, { headers: { Accept: "application/json" } });
       const text = await response.text();
       if (!response.ok) {
@@ -910,7 +907,7 @@ const createApp = () => {
       const opcbridge = parsed?.opcbridge || {};
       const host = String(alarms.host || opcbridge.host || "127.0.0.1");
       const port = Number(alarms.httpPort) || 8085;
-      const url = `http://${host}:${port}/alarm/api/alarms/all`;
+      const url = `${alarms.scheme || "http"}://${host}:${port}/alarm/api/alarms/all`;
       const response = await fetch(url, { headers: { Accept: "application/json" } });
       const text = await response.text();
       if (!response.ok) {

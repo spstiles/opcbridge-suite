@@ -66,7 +66,7 @@ static std::string status_body;
 static std::string last_host;
 static int last_port=0;
 struct Client {
- Client(const std::string &host, int port) { last_host=host;last_port=port; }
+ Client(const std::string &url) { auto start=url.find("://")+3; auto colon=url.rfind(':'); last_host=url.substr(start,colon-start);last_port=std::stoi(url.substr(colon+1)); }
  void set_connection_timeout(int,int) {} void set_read_timeout(int,int) {} void set_write_timeout(int,int) {}
  std::shared_ptr<Response> Get(const char*) { return online ? std::make_shared<Response>(Response{200,status_body}) : nullptr; }
 };
@@ -80,7 +80,7 @@ code += r'''
 int main() {
  const char *source_config=std::getenv("OPCBRIDGE_ALARM_SOURCE_CONFIG");
  assert(source_config);
- {std::ofstream file(source_config);file << R"({"alarms":{"host":"192.168.100.43","httpPort":18085}})";}
+ {std::ofstream file(source_config);file << R"({"alarms":{"host":"192.168.100.43","port":18085}})";}
  Engine engine;
  engine.defined_groups = Engine::configured_groups(json::parse(R"({"groups":[{"name":"Field","sites":[{"name":"Lift Station 1"}]},{"name":"Plant","sites":[]}]})"));
  auto groups=engine.group_summaries();
@@ -99,7 +99,7 @@ int main() {
  httplib::online=false;
  std::this_thread::sleep_for(std::chrono::milliseconds(2100));
  auto retained=collect_alarm_system_tags();assert(retained.size()==34 && retained.front().value==false);
- {std::ofstream file(source_config);file << R"({"alarms":{"host":"192.168.100.45","httpPort":8085}})";}
+ {std::ofstream file(source_config);file << R"({"alarms":{"host":"192.168.100.45","port":8085}})";}
  std::this_thread::sleep_for(std::chrono::milliseconds(2100));
  assert(collect_alarm_system_tags().size()==10); // old server values must not survive a source change
  assert(httplib::last_host=="192.168.100.45");

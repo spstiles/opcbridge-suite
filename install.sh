@@ -1316,12 +1316,6 @@ install_hmi() {
     "wsPort": 8090,
     "writeToken": "${write_token}"
   },
-  // opcbridge-alarms connection settings (optional)
-  "alarms": {
-    "host": "127.0.0.1",
-    "httpPort": 8085,
-    "wsPort": 8086
-  },
   // HMI runtime settings
   "hmi": {
     "defaultScreen": "console_background",
@@ -1936,7 +1930,7 @@ install_systemd_units() {
 	[Service]
 	Type=simple
 	EnvironmentFile=${ENV_FILE}
-	Environment=OPCBRIDGE_ALARM_SOURCE_CONFIG=${PREFIX}/hmi/public/js/config.jsonc
+	Environment=OPCBRIDGE_ALARM_SOURCE_CONFIG=${CONFIG_ROOT}/scada/config.json
 	WorkingDirectory=${PREFIX}
 	ExecStart=/bin/sh -c 'exec ${PREFIX}/bin/opcbridge --config ${CONFIG_ROOT} --http --ws --ws-port \"\${OPCBRIDGE_WS_PORT:-8090}\" --opcua --opcua-port \"\${OPCBRIDGE_OPCUA_PORT:-4840}\"'
 	User=${SERVICE_USER}
@@ -2001,6 +1995,7 @@ WantedBy=multi-user.target
 	[Service]
 	Type=simple
 	EnvironmentFile=${ENV_FILE}
+	Environment=OPCBRIDGE_SCADA_CONFIG=${CONFIG_ROOT}/scada/config.json
 	Environment=HOME=${DATA_ROOT}
 	Environment=NPM_CONFIG_CACHE=${DATA_ROOT}/.npm
 	WorkingDirectory=${PREFIX}/hmi

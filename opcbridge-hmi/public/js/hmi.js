@@ -3976,9 +3976,6 @@ const settingsHostInput = document.getElementById("settingsHost");
 const settingsHttpPortInput = document.getElementById("settingsHttpPort");
 const settingsWsPortInput = document.getElementById("settingsWsPort");
 const settingsWriteTokenInput = document.getElementById("settingsWriteToken");
-const settingsAlarmsHostInput = document.getElementById("settingsAlarmsHost");
-const settingsAlarmsHttpPortInput = document.getElementById("settingsAlarmsHttpPort");
-const settingsAlarmsWsPortInput = document.getElementById("settingsAlarmsWsPort");
 const settingsDefaultScreenSelect = document.getElementById("settingsDefaultScreen");
 const settingsScreenTimeoutInput = document.getElementById("settingsScreenTimeout");
 const settingsTouchscreenModeInput = document.getElementById("settingsTouchscreenMode");
@@ -9507,7 +9504,7 @@ const getAlarmsWsUrl = () => {
   if (!host) return "";
   if (/^wss?:\/\//i.test(host)) return host;
   const port = Number(alarmsConfig?.wsPort) || 8086;
-  return `ws://${host}:${port}/?client=opcbridge-hmi-alarms`;
+  return `${alarmsConfig?.scheme === "https" ? "wss" : "ws"}://${host}:${port}/?client=opcbridge-hmi-alarms`;
 };
 
 const scheduleAlarmsWsReconnect = () => {
@@ -13802,18 +13799,9 @@ const parseJsonc = (raw) => {
 
 const loadClientConfig = async () => {
   try {
-    let parsed = null;
-    try {
-      const response = await fetch("/js/config.jsonc", { cache: "no-store" });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const raw = await response.text();
-      parsed = parseJsonc(raw);
-    } catch {
-      const response = await fetch("/js/config.jsonc.example", { cache: "no-store" });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const raw = await response.text();
-      parsed = parseJsonc(raw);
-    }
+    const response = await fetch("/api/config", { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const { config: parsed } = await response.json();
     if (parsed?.opcbridge) {
       opcbridgeConfig = {
         ...opcbridgeConfig,
@@ -13899,9 +13887,6 @@ const readSettingsForm = () => {
   const httpPort = Number(settingsHttpPortInput?.value || 0) || 8080;
   const wsPort = Number(settingsWsPortInput?.value || 0) || 8090;
   const writeToken = String(settingsWriteTokenInput?.value || "");
-  const alarmsHost = String(settingsAlarmsHostInput?.value || "").trim();
-  const alarmsHttpPort = Number(settingsAlarmsHttpPortInput?.value || 0) || 8085;
-  const alarmsWsPort = Number(settingsAlarmsWsPortInput?.value || 0) || 8086;
   const defaultScreen = String(settingsDefaultScreenSelect?.value || "").trim();
   const touchscreenMode = Boolean(settingsTouchscreenModeInput?.checked);
   const viewOnlyMode = Boolean(settingsViewOnlyModeInput?.checked);
@@ -13926,7 +13911,6 @@ const readSettingsForm = () => {
 
   return {
     opcbridge: { host, httpPort, wsPort, writeToken },
-    alarms: { host: alarmsHost, httpPort: alarmsHttpPort, wsPort: alarmsWsPort },
     historian: { host: String(document.getElementById("settingsHistorianHost")?.value || "127.0.0.1").trim(), httpPort: Number(document.getElementById("settingsHistorianPort")?.value) || 8096 },
     hmi
   };
@@ -13942,7 +13926,6 @@ const applyWriteAccessUi = () => {
 
 const populateSettingsForm = (config) => {
   const opc = config?.opcbridge || {};
-  const alarms = config?.alarms || {};
   if (document.getElementById("settingsHistorianHost")) document.getElementById("settingsHistorianHost").value = config?.historian?.host || "127.0.0.1";
   if (document.getElementById("settingsHistorianPort")) document.getElementById("settingsHistorianPort").value = config?.historian?.httpPort || 8096;
   const hmi = config?.hmi || {};
@@ -13950,9 +13933,6 @@ const populateSettingsForm = (config) => {
   if (settingsHttpPortInput) settingsHttpPortInput.value = String(Number(opc.httpPort) || "");
   if (settingsWsPortInput) settingsWsPortInput.value = String(Number(opc.wsPort) || "");
   if (settingsWriteTokenInput) settingsWriteTokenInput.value = String(opc.writeToken || "");
-  if (settingsAlarmsHostInput) settingsAlarmsHostInput.value = String(alarms.host || "");
-  if (settingsAlarmsHttpPortInput) settingsAlarmsHttpPortInput.value = String(Number(alarms.httpPort) || "");
-  if (settingsAlarmsWsPortInput) settingsAlarmsWsPortInput.value = String(Number(alarms.wsPort) || "");
   populateDefaultScreenOptions(settingsDefaultScreenSelect, String(hmi.defaultScreen || ""));
   if (settingsScreenTimeoutInput) settingsScreenTimeoutInput.value = String(Number(authInfo?.timeoutMinutes) || 0);
   if (settingsTouchscreenModeInput) settingsTouchscreenModeInput.checked = Boolean(hmi.touchscreenMode);
@@ -34817,3 +34797,15 @@ document.addEventListener('keydown',event=>{
   const next=current<0?(event.key==='ArrowDown'?0:items.length-1):(current+(event.key==='ArrowDown'?1:-1)+items.length)%items.length;
   items[next]?.focus();
 },true);
+
+// Keep the server-owned alarm endpoint in sync with Configure Server.
+window.setInterval(async () => {
+  try {
+    const response = await fetch("/api/alarms/source", { cache: "no-store" });
+    if (!response.ok) return;
+    const next = await response.json();
+    if (JSON.stringify(next) === JSON.stringify(alarmsConfig)) return;
+    alarmsConfig = next;
+    connectAlarmsWebSocket();
+  } catch { /* Retry on the next interval after a network interruption. */ }
+}, 5000);

@@ -297,15 +297,18 @@ indicator. Acknowledgment remains an operation on individual alarms; these tags
 cannot acknowledge alarms or modify their state.
 
 The core polls the alarm status API at most once every two seconds. Installed
-services follow the HMI's configured `alarms.host` and `alarms.httpPort`, including
-saved changes without restarting the core. An empty alarm host falls back to the
-HMI's `opcbridge.host`, then `127.0.0.1`; the default alarm HTTP port is 8085.
-This is the HMI setting, independently of SCADA's alarm proxy setting.
+services, HMI alarm panels, and HMI alarm summaries use the alarm endpoint in
+**SCADA → Configure Server**: scheme, host, HTTP port (8085 by default), and
+WebSocket port (8086 by default). The HMI has no separate alarm endpoint setting.
+Saved changes are picked up without restarting the core; open HMI pages refresh
+the endpoint within five seconds.
 
-The installer sets `OPCBRIDGE_ALARM_SOURCE_CONFIG` on the core service to the
-installation's `hmi/public/js/config.jsonc`. Standalone/core-only deployments
-without that configuration retain the local `127.0.0.1:8085` default. Custom
-launchers can set the same environment variable to their HMI JSONC configuration.
+The installer sets `OPCBRIDGE_ALARM_SOURCE_CONFIG` on the core service and
+`OPCBRIDGE_SCADA_CONFIG` on the HMI service to the installation's
+`scada/config.json`. Standalone/core-only deployments without that configuration
+retain the local `127.0.0.1:8085` default. Custom launchers should point both
+variables at the same Configure Server JSON configuration. Existing HMI-local
+alarm endpoint values are ignored; check Configure Server after upgrading.
 If a previously readable source configuration becomes unavailable or invalid,
 summary connectivity reports false rather than falling back to a different server.
 Changing endpoints clears the previous server's cached group values. The configured

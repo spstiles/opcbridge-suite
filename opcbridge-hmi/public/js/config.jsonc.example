@@ -5,11 +5,6 @@
     "wsPort": 8090,
     "writeToken": "OPCBRIDGE_WRITE_TOKEN"
   },
-  "alarms": {
-    "host": "OPCBRIDGE_HOST",
-    "httpPort": 8085,
-    "wsPort": 8086
-  },
   "scada": {
     "host": "127.0.0.1",
     "httpPort": 3010
