@@ -32,7 +32,8 @@ public:
             if (observed) entry.last_demand = now;
             bool poll = true;
             std::string reason;
-            if (tag.value("driver", std::string{}) != "ab_eip") reason = "unsupported_driver";
+            const auto driver = tag.value("driver", std::string{});
+            if (driver != "ab_eip" && driver != "opcua_client" && driver != "opcua-client" && driver != "remote_opcbridge") reason = "unsupported_driver";
             else if (observed) reason = entry.would_poll ? "observed_demand" : "wake_requested";
             else if (now - entry.started < startup_) reason = "startup_grace";
             else if (now - entry.last_demand < idle_) reason = "idle_grace";

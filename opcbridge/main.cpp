@@ -1,4 +1,5 @@
 #include "alarm_status_source.h"
+#include <optional>
 #include "async_poll_batch.h"
 #include "poll_sweep_estimate.h"
 #include "idle_connection_probe.h"
@@ -14590,7 +14591,8 @@ static bool connection_requests_active_polling(const ConnectionConfig &conn) {
     return g_activePollTestConnections.count(conn.id) != 0;
 }
 static bool active_poll_test_enabled(const DriverContext &driver, bool mqttMode) {
-    return !mqttMode && driver.conn.driver == "ab_eip" && connection_requests_active_polling(driver.conn);
+    return !mqttMode && (driver.conn.driver == "ab_eip" || is_opcua_client_driver_name(driver.conn.driver)) &&
+        connection_requests_active_polling(driver.conn);
 }
 
 static json active_polling_connections() {
@@ -14734,7 +14736,7 @@ static json collect_polling_demand(const std::vector<DriverContext> &drivers,
             row.ws = allClients;
             row.arrayElement = !tag.poll_source.empty();
             row.pollWork = tag.cfg.source_tag.empty() && tag.poll_source.empty() &&
-                !is_memory_tag(tag.cfg) && (tag.handle >= 0 || tag.handle_deferred);
+                !is_memory_tag(tag.cfg) && (tag.handle >= 0 || tag.handle_deferred || is_opcua_client_driver_name(driver.conn.driver));
             row.writable = tag.cfg.writable;
             row.driver = driver.conn.driver;
             row.epoch = driver.freshness_epoch;
@@ -29730,17 +29732,26 @@ window.addEventListener("load", startAutoRefresh);
 								uint64_t read_us = 0;
 							};
 							std::unordered_map<size_t, RemoteUaPrefetchResult> remoteUaPrefetch;
+                            std::unordered_map<size_t, UA_UInt32> remoteUaItems;
+                            std::vector<bool> remoteUaWanted(spec.tags.size(), true);
+                            std::vector<std::chrono::steady_clock::time_point> remoteUaItemRetry(spec.tags.size());
+                            auto remoteUaDemandSync = std::chrono::steady_clock::time_point{};
+                            auto remoteUaDemandAllows = [&](size_t idx) {
+                                return !spec.active_poll_test || g_demandSchedulerPreview.should_poll(
+                                    spec.conn.id, spec.tags[idx].cfg.logical_name, spec.freshness_epoch);
+                            };
 							struct RemoteUaSubscriptionState {
 								PollerSpec *spec = nullptr;
 								std::unordered_map<size_t, RemoteUaPrefetchResult> *pending = nullptr;
+                                std::vector<bool> *wanted = nullptr;
 							};
-							RemoteUaSubscriptionState remoteUaSubscriptionState{&spec, &remoteUaPrefetch};
+							RemoteUaSubscriptionState remoteUaSubscriptionState{&spec, &remoteUaPrefetch, &remoteUaWanted};
 							auto remoteUaDataChange = [](UA_Client *, UA_UInt32, void *subContext,
 							                            UA_UInt32, void *monContext, UA_DataValue *value) {
 								auto *state = static_cast<RemoteUaSubscriptionState*>(subContext);
 								if (!state || !state->spec || !state->pending || !monContext) return;
 								const size_t idx = static_cast<size_t>(reinterpret_cast<uintptr_t>(monContext) - 1U);
-								if (idx >= state->spec->tags.size()) return;
+								if (idx >= state->spec->tags.size() || (state->wanted && !(*state->wanted)[idx])) return;
 								RemoteUaPrefetchResult result;
 								result.ua_status = (value && value->hasStatus) ? value->status : UA_STATUSCODE_GOOD;
 								if (!value || !value->hasValue) result.ua_status = UA_STATUSCODE_BADNODATA;
@@ -29749,12 +29760,21 @@ window.addEventListener("load", startAutoRefresh);
 								                                  state->spec->tags[idx].cfg, value->value)) {
 									result.ua_status = UA_STATUSCODE_BADTYPEMISMATCH;
 								}
-								(*state->pending)[idx] = std::move(result);
+								const auto received = PollReadStamp::Clock::now();
+                                result.snapshot.poll_read = {received,received,state->spec->freshness_epoch};
+                                (*state->pending)[idx] = std::move(result);
 							};
 							auto ensureRemoteUaSubscription = [&]() -> bool {
 								if (std::chrono::steady_clock::now() < remoteUaSubscriptionRetryAfter) return false;
 								if (!ensureRemoteUaConnected()) return false;
-								if (remoteUaSubscriptionId != 0) return true;
+								const auto syncNow = std::chrono::steady_clock::now();
+                                if (remoteUaSubscriptionId != 0 && remoteUaDemandSync.time_since_epoch().count() &&
+                                    syncNow-remoteUaDemandSync < std::chrono::seconds(1)) return true;
+                                remoteUaDemandSync = syncNow;
+                                if (remoteUaSubscriptionId == 0) {
+                                    remoteUaItems.clear();
+                                    remoteUaPrefetch.clear();
+                                    std::fill(remoteUaItemRetry.begin(), remoteUaItemRetry.end(), std::chrono::steady_clock::time_point{});
 								UA_CreateSubscriptionRequest subRequest = UA_CreateSubscriptionRequest_default();
 								subRequest.requestedPublishingInterval = 250.0;
 								UA_CreateSubscriptionResponse subResponse = UA_Client_Subscriptions_create(
@@ -29771,15 +29791,74 @@ window.addEventListener("load", startAutoRefresh);
 								set_connection_runtime_issue(spec.metrics, "");
 								UA_CreateSubscriptionResponse_clear(&subResponse);
 
+                                }
+                                std::vector<size_t> createIndices;
+                                std::vector<size_t> removeIndices;
+                                std::vector<UA_UInt32> removeIds;
+                                for (size_t idx=0; idx<spec.tags.size(); ++idx) {
+                                    const bool wanted = remoteUaDemandAllows(idx);
+                                    if (wanted != remoteUaWanted[idx]) remoteUaPrefetch.erase(idx);
+                                    if (wanted != spec.tags[idx].demand_active) {
+                                        std::optional<TagSnapshot> changed;
+                                        {
+                                            std::lock_guard<std::mutex> lock(driverMutex);
+                                            if (spec.stop_requested->load() || g_configGeneration.load()!=spec.gen) return false;
+                                            for (auto &driver:drivers) {
+                                                if (driver.conn.id!=spec.conn.id || driver.freshness_epoch!=spec.freshness_epoch) continue;
+                                                TagRuntime tag; tag.cfg=spec.tags[idx].cfg;
+                                                changed=transition_poll_cache(driver,tag,tagTable,wanted);
+                                                break;
+                                            }
+                                        }
+                                        spec.tags[idx].demand_active=wanted;
+                                        if (changed) {
+                                            ws_notify_tag_update(*changed,spec.tags[idx].cfg);
+                                            if (g_uaServer) {
+                                                std::lock_guard<std::mutex> lock(uaQueueMutex);
+                                                uaQueue.push_back(UaUpdate{changed->connection_id,changed->logical_name,*changed,spec.freshness_epoch});
+                                            }
+                                        }
+                                    }
+                                    remoteUaWanted[idx] = wanted;
+                                    const auto found = remoteUaItems.find(idx);
+                                    if (!wanted && found != remoteUaItems.end()) {
+                                        removeIndices.push_back(idx); removeIds.push_back(found->second);
+                                    } else if (wanted && found == remoteUaItems.end() && syncNow >= remoteUaItemRetry[idx]) createIndices.push_back(idx);
+                                }
+                                // Reconcile only changed monitored items; existing active items stay live.
+                                const size_t deleteBatch = 250;
+                                for (size_t begin=0; begin<removeIds.size(); begin+=deleteBatch) {
+                                    if (spec.stop_requested->load() || g_configGeneration.load()!=spec.gen) return false;
+                                    UA_DeleteMonitoredItemsRequest deletion;
+                                    UA_DeleteMonitoredItemsRequest_init(&deletion);
+                                    deletion.subscriptionId = remoteUaSubscriptionId;
+                                    deletion.monitoredItemIds = removeIds.data()+begin;
+                                    deletion.monitoredItemIdsSize = std::min(deleteBatch, removeIds.size()-begin);
+                                    auto response = UA_Client_MonitoredItems_delete(remoteUaClient, deletion);
+                                    if (response.responseHeader.serviceResult == UA_STATUSCODE_GOOD) {
+                                        for (size_t i=0; i<deletion.monitoredItemIdsSize && i<response.resultsSize; ++i)
+                                            if (response.results[i] == UA_STATUSCODE_GOOD || response.results[i] == UA_STATUSCODE_BADMONITOREDITEMIDINVALID)
+                                                remoteUaItems.erase(removeIndices[begin+i]);
+                                    }
+                                    const bool lostSubscription = response.responseHeader.serviceResult == UA_STATUSCODE_BADSUBSCRIPTIONIDINVALID;
+                                    UA_DeleteMonitoredItemsResponse_clear(&response);
+                                    if (lostSubscription) {
+                                        remoteUaSubscriptionId=0;
+                                        remoteUaItems.clear(); remoteUaPrefetch.clear();
+                                        return false;
+                                    }
+                                }
+
 								const size_t createBatch = static_cast<size_t>(std::max(1, spec.conn.poll_batch_size > 0 ? spec.conn.poll_batch_size : 250));
-								for (size_t begin = 0; begin < spec.tags.size(); begin += createBatch) {
-									const size_t count = std::min(createBatch, spec.tags.size() - begin);
+								for (size_t begin = 0; begin < createIndices.size(); begin += createBatch) {
+                                    if (spec.stop_requested->load() || g_configGeneration.load()!=spec.gen) return false;
+									const size_t count = std::min(createBatch, createIndices.size() - begin);
 									std::vector<UA_MonitoredItemCreateRequest> items(count);
 									std::vector<void*> contexts(count);
 									std::vector<UA_Client_DataChangeNotificationCallback> callbacks(count, remoteUaDataChange);
 									std::vector<UA_Client_DeleteMonitoredItemCallback> deleteCallbacks(count, nullptr);
 									for (size_t i = 0; i < count; ++i) {
-										const size_t idx = begin + i;
+										const size_t idx = createIndices[begin + i];
 										std::string nodeText = trim_copy(spec.tags[idx].cfg.plc_tag_name);
 										if (nodeText.rfind("ns=", 0) != 0) nodeText = "ns=1;s=" + nodeText;
 										UA_NodeId nodeId;
@@ -29805,10 +29884,14 @@ window.addEventListener("load", startAutoRefresh);
 										for (size_t i = 0; i < count; ++i) {
 											const UA_StatusCode itemStatus = i < response.resultsSize
 												? response.results[i].statusCode : UA_STATUSCODE_BADUNEXPECTEDERROR;
-											if (itemStatus != UA_STATUSCODE_GOOD) {
+											const size_t idx = createIndices[begin+i];
+                                            if (itemStatus == UA_STATUSCODE_GOOD) {
+                                                remoteUaItems[idx] = response.results[i].monitoredItemId;
+                                            } else {
+                                                remoteUaItemRetry[idx] = syncNow + std::chrono::seconds(30);
 												RemoteUaPrefetchResult failed;
 												failed.ua_status = itemStatus;
-												remoteUaPrefetch[begin + i] = std::move(failed);
+												remoteUaPrefetch[createIndices[begin + i]] = std::move(failed);
 											}
 										}
 									}
@@ -29824,7 +29907,7 @@ window.addEventListener("load", startAutoRefresh);
 								return true;
 							};
 							auto prefetchRemoteUaDue = [&](size_t requestedIdx, std::chrono::steady_clock::time_point dueNow) {
-								if (!is_opcua_client_driver_name(spec.conn.driver) || remoteUaPrefetch.count(requestedIdx)) return;
+								if (!is_opcua_client_driver_name(spec.conn.driver) || remoteUaPrefetch.count(requestedIdx) || !remoteUaDemandAllows(requestedIdx)) return;
 								if (ensureRemoteUaSubscription()) {
 									return;
 								}
@@ -29833,7 +29916,7 @@ window.addEventListener("load", startAutoRefresh);
 								indices.reserve(std::min(maxBatch, spec.tags.size()));
 								indices.push_back(requestedIdx);
 								for (size_t i = 0; i < spec.tags.size() && indices.size() < maxBatch; ++i) {
-									if (i == requestedIdx || remoteUaPrefetch.count(i)) continue;
+									if (i == requestedIdx || remoteUaPrefetch.count(i) || !remoteUaDemandAllows(i)) continue;
 									if (spec.tags[i].next_poll <= dueNow + std::chrono::milliseconds(10)) indices.push_back(i);
 								}
 
@@ -29879,7 +29962,8 @@ window.addEventListener("load", startAutoRefresh);
 											result.ua_status = UA_STATUSCODE_BADTYPEMISMATCH;
 										}
 									}
-									remoteUaPrefetch[indices[i]] = std::move(result);
+									result.snapshot.poll_read = {started,PollReadStamp::Clock::now(),spec.freshness_epoch};
+                                    remoteUaPrefetch[indices[i]] = std::move(result);
 								}
 								for (auto &node : nodes) UA_ReadValueId_clear(&node);
 								UA_ReadResponse_clear(&response);
@@ -30006,6 +30090,7 @@ window.addEventListener("load", startAutoRefresh);
                                 }
                                 // Discard completions prefetched before a suspend/wake boundary.
                                 logixPrefetch.erase(index);
+                                if (is_opcua_client_driver_name(spec.conn.driver)) remoteUaPrefetch.erase(index);
                                 for (const auto &update : updates) {
                                     ws_notify_tag_update(update.first, update.second);
                                     if (g_uaServer) {
@@ -30104,7 +30189,7 @@ window.addEventListener("load", startAutoRefresh);
                                     t.demand_active = demanded;
                                 }
                                 if (!demanded) {
-                                    if (spec.metrics && t.handle >= 0 && spec.metrics->idle_probe.claim(t.cfg.logical_name)) {
+                                    if (!is_opcua_client_driver_name(spec.conn.driver) && spec.metrics && t.handle >= 0 && spec.metrics->idle_probe.claim(t.cfg.logical_name)) {
                                         std::shared_lock<std::shared_mutex> lifecycle;
                                         if (g_plcMutex) lifecycle = std::shared_lock<std::shared_mutex>(*g_plcMutex);
                                         auto gate = connection_plc_mutex(spec.conn.id);

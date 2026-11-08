@@ -45,5 +45,24 @@ int main() {
     demand["tags"] = json::array(); at(210);
     demand["tags"] = json::array({row("Idle")});
     assert(at(220)["tags"][0]["reason"] == "startup_grace");
+    // A UA bridge must propagate idle/wake decisions, retaining safety grace.
+    P bridge(P::Ms(100), P::Ms(50), P::Ms(25));
+    json ua{{"tags",json::array({row("Visible",true),row("Background",true),row("Imported")})}};
+    for (auto &tag:ua["tags"]) tag["driver"]="opcua_client";
+    bridge.refresh(ua,start);
+    bridge.refresh(ua,start+P::Ms(100));
+    assert(bridge.should_poll("PLC","Visible",1,start+P::Ms(100)));
+    assert(bridge.should_poll("PLC","Background",1,start+P::Ms(100)));
+    assert(!bridge.should_poll("PLC","Imported",1,start+P::Ms(100)));
+    ua["tags"][2]["observed_demand"]=true;
+    bridge.refresh(ua,start+P::Ms(110));
+    assert(bridge.should_poll("PLC","Imported",1,start+P::Ms(110)));
+    ua["tags"][2]["observed_demand"]=false;
+    bridge.refresh(ua,start+P::Ms(130));
+    assert(bridge.should_poll("PLC","Imported",1,start+P::Ms(130)));
+    bridge.refresh(ua,start+P::Ms(170));
+    assert(!bridge.should_poll("PLC","Imported",1,start+P::Ms(170)));
+    assert(bridge.should_poll("PLC","Imported",1,start+P::Ms(196))); // Stale plan fails open.
+    assert(bridge.should_poll("PLC","Imported",2,start+P::Ms(170))); // Replacement generation.
     std::cout << "Demand scheduler preview tests passed\n";
 }
