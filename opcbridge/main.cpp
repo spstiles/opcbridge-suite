@@ -1,6 +1,7 @@
 #include "alarm_status_source.h"
 #include "async_poll_batch.h"
 #include "poll_read_retry.h"
+#include "poll_diagnostics.h"
 #include "poll_sweep_estimate.h"
 #include "idle_connection_probe.h"
 #include "active_sweep.h"
@@ -1257,6 +1258,7 @@ struct BlockPollMetrics {
 };
 
 struct ConnPollMetrics {
+    PollDiagnostics diagnostics;
     // Successful server-status reads verify UA communication independently of value changes.
     std::atomic<int64_t> remote_ua_verified_ts_ms{-1};
     IdleConnectionProbe idle_probe;
@@ -23500,6 +23502,7 @@ window.addEventListener("load", startAutoRefresh);
 		                    int64_t last_err= m->last_err_ts_ms.load(std::memory_order_relaxed);
 
 		                    json j;
+		                    j["poll_diagnostics"] = m->diagnostics.snapshot();
 		                    j["reads_total"] = total;
 		                    j["reads_ok"]    = ok;
 		                    j["reads_err"]   = err;
@@ -25195,6 +25198,7 @@ window.addEventListener("load", startAutoRefresh);
 									dstatus["poll_max_reads_per_sec"] = driver.conn.poll_max_reads_per_sec;
 								}
 								dstatus["poll_lanes"] = driver.conn.poll_lanes;
+                                if (connectionMetrics) dstatus["poll_diagnostics"] = connectionMetrics->diagnostics.snapshot();
 								if (newest_age_ms >= 0) dstatus["newest_age_ms"] = newest_age_ms;
 								if (is_opcua_client_driver_name(driver.conn.driver)) {
 									dstatus["transport"] = "OPC UA subscription";
@@ -30019,6 +30023,7 @@ window.addEventListener("load", startAutoRefresh);
                             auto prefetchLogixDue = [&](size_t requested, auto dueNow) {
                                 if (!batchLogix || !demandAllows(requested) || logixPrefetch.count(requested) ||
                                     !spec.tags[requested].logix_retry.ready(dueNow)) return;
+                                PollTimingScope selection(spec.metrics ? &spec.metrics->diagnostics.batch_select : nullptr);
                                 std::vector<size_t> indices;
                                 indices.push_back(requested);
                                 for (size_t i = 0; i < spec.tags.size() && indices.size() < static_cast<size_t>(batchSize); ++i) {
@@ -30029,7 +30034,8 @@ window.addEventListener("load", startAutoRefresh);
                                         plc_tag_status(candidate.handle) != PLCTAG_STATUS_PENDING)
                                         indices.push_back(i);
                                 }
-                                async_poll_batch(indices, spec.conn.default_read_ms,
+                                selection.finish();
+                                const auto batchStats = async_poll_batch(indices, spec.conn.default_read_ms,
                                     PLCTAG_STATUS_PENDING, PLCTAG_ERR_TIMEOUT,
                                     [&](size_t i) {
                                         if (spec.active_poll_test) record_active_poll_test_read(spec.conn.id, spec.tags[i].cfg.logical_name);
@@ -30068,6 +30074,17 @@ window.addEventListener("load", startAutoRefresh);
                                         logixPrefetch.emplace(i, std::move(result));
                                     }, [&] { return spec.stop_requested->load(std::memory_order_relaxed) ||
                                         g_configGeneration.load(std::memory_order_relaxed) != spec.gen; });
+                                if (spec.metrics) {
+                                    auto &d = spec.metrics->diagnostics;
+                                    d.batches.fetch_add(1, std::memory_order_relaxed);
+                                    d.requests.fetch_add(batchStats.requests, std::memory_order_relaxed);
+                                    d.timeouts.fetch_add(batchStats.timeouts, std::memory_order_relaxed);
+                                    d.errors.fetch_add(batchStats.errors, std::memory_order_relaxed);
+                                    d.cancelled_requests.fetch_add(batchStats.cancelled_requests, std::memory_order_relaxed);
+                                    d.batch_queue.record(batchStats.queue_us);
+                                    d.batch_wait.record(batchStats.wait_us);
+                                    d.batch_capture.record(batchStats.capture_us);
+                                }
                             };
 							auto lastReadFinished = std::chrono::steady_clock::now() - minReadInterval;
 							size_t batchReads = 0;
@@ -30143,7 +30160,8 @@ window.addEventListener("load", startAutoRefresh);
 			                                prefetchRemoteUaDue(top.idx, nowSteady);
 			                            }
 			                            {
-			                                std::shared_lock<std::shared_mutex> plcLifecycleLock;
+			                                PollTimingScope lockWait(spec.metrics ? &spec.metrics->diagnostics.lock_wait : nullptr);
+                                std::shared_lock<std::shared_mutex> plcLifecycleLock;
 			                                if (g_plcMutex && !is_opcua_client_driver_name(spec.conn.driver)) {
 			                                    plcLifecycleLock = std::shared_lock<std::shared_mutex>(*g_plcMutex);
 			                                }
@@ -30153,7 +30171,8 @@ window.addEventListener("load", startAutoRefresh);
 			                                    plcConnectionLock = std::shared_lock<WriterPrioritySharedMutex>(*connectionGate);
 			                                }
 
-		                                    if (is_opcua_client_driver_name(spec.conn.driver)) {
+		                                    lockWait.finish();
+                                    if (is_opcua_client_driver_name(spec.conn.driver)) {
 			                                        UA_StatusCode uaStatus = UA_STATUSCODE_BADNOTCONNECTED;
 			                                        uint64_t readUs = 0;
 										auto prefetched = remoteUaPrefetch.find(top.idx);
@@ -30232,7 +30251,8 @@ window.addEventListener("load", startAutoRefresh);
 		                                        }
 
 		                                        if (!tagStr.empty()) {
-		                                            const auto openStarted = std::chrono::steady_clock::now();
+		                                            PollTimingScope handleOpen(spec.metrics ? &spec.metrics->diagnostics.handle_open : nullptr);
+                                            const auto openStarted = std::chrono::steady_clock::now();
 		                                            const int32_t newHandle = plc_tag_create(tagStr.c_str(), spec.conn.default_timeout_ms);
 		                                            bool pending = false;
 		                                            std::string readyErr;
@@ -30398,6 +30418,7 @@ window.addEventListener("load", startAutoRefresh);
 		                                }
 		                            }
 
+                                    PollTimingScope resultProcessing(spec.metrics ? &spec.metrics->diagnostics.result_processing : nullptr);
                                     if (logixRead) {
                                         t.logix_retry.completed(status == PLCTAG_STATUS_OK, std::chrono::steady_clock::now());
                                     }
@@ -31110,7 +31131,8 @@ window.addEventListener("load", startAutoRefresh);
 		                                mqttQueue.push_back(std::move(j));
 		                                }
 	                            }
-								if (maxReadsPerSec > 0) {
+								resultProcessing.finish();
+                                if (maxReadsPerSec > 0) {
 									const auto afterRead = std::chrono::steady_clock::now();
 									const auto nextAllowed = lastReadFinished + minReadInterval;
 									if (afterRead < nextAllowed) {
