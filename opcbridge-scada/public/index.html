@@ -193,6 +193,15 @@
             <div class="divider"></div>
 
             <div class="form-row">
+              <label>Historian Host</label>
+              <input id="scadaHistorianHost" type="text" placeholder="127.0.0.1" />
+            </div>
+            <div class="form-row">
+              <label>Historian API Port</label>
+              <input id="scadaHistorianPort" type="number" min="1" max="65535" step="1" placeholder="8096" />
+            </div>
+            <div class="divider"></div>
+            <div class="form-row">
               <label>HMI Scheme</label>
               <select id="scadaHmiScheme">
                 <option value="http">http</option>

@@ -19,7 +19,7 @@ test('history endpoint relays only bounded queries to the configured historian a
   assert.equal((await fetch(base.replace('from_ms=0','from_ms=invalid'))).status,400);
  }finally{server.closeAllConnections();await new Promise(r=>server.close(r));}
 });
-test('HMI settings retain the selected historian endpoint when written',async()=>{
+test('HMI settings cannot persist a separate historian endpoint',async()=>{
  const fs=require('node:fs'),vm=require('node:vm');
  const source=fs.readFileSync(require('node:path').join(__dirname,'../server/app.js'),'utf8');
  let written;
@@ -27,7 +27,7 @@ test('HMI settings retain the selected historian endpoint when written',async()=
  vm.runInContext(source.slice(source.indexOf('const writeConfig ='),source.indexOf('const normalizeSvgName =')),c);
  await vm.runInContext('writeConfig({historian:{host:"history-host",httpPort:12345}})',c);
  const parsed=JSON.parse(written.replace(/^\s*\/\/.*$/gm,''));
- assert.deepEqual(parsed.historian,{host:'history-host',httpPort:12345});
+ assert.equal(parsed.historian,undefined);
 });
 test('default query uses rolling cache and never calls the historian',async()=>{
  let args;

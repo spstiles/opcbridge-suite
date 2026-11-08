@@ -34,6 +34,8 @@
   scadaOpcbridgeScheme: document.getElementById('scadaOpcbridgeScheme'),
   scadaOpcbridgeHost: document.getElementById('scadaOpcbridgeHost'),
   scadaOpcbridgePort: document.getElementById('scadaOpcbridgePort'),
+  scadaHistorianHost: document.getElementById('scadaHistorianHost'),
+  scadaHistorianPort: document.getElementById('scadaHistorianPort'),
   scadaAlarmsScheme: document.getElementById('scadaAlarmsScheme'),
   scadaAlarmsHost: document.getElementById('scadaAlarmsHost'),
   scadaAlarmsPort: document.getElementById('scadaAlarmsPort'),
@@ -15420,6 +15422,8 @@ function fillScadaSettings(cfg) {
   if (els.scadaAlarmsPort) els.scadaAlarmsPort.value = String(cfg.alarms?.port ?? '');
   if (els.scadaAlarmsWsPort) els.scadaAlarmsWsPort.value = String(cfg.alarms?.wsPort ?? 8086);
 
+  if (els.scadaHistorianHost) els.scadaHistorianHost.value = String(cfg.historian?.host ?? '127.0.0.1');
+  if (els.scadaHistorianPort) els.scadaHistorianPort.value = String(cfg.historian?.port ?? 8096);
   if (els.scadaHmiScheme) els.scadaHmiScheme.value = String(cfg.hmi?.scheme || 'http');
   if (els.scadaHmiHost) els.scadaHmiHost.value = String(cfg.hmi?.host || '');
   if (els.scadaHmiPort) els.scadaHmiPort.value = String(cfg.hmi?.port ?? '');
@@ -15452,6 +15456,10 @@ function readScadaSettingsFromForm() {
       host: els.scadaAlarmsHost?.value?.trim() || '127.0.0.1',
       port: Number(els.scadaAlarmsPort?.value ?? 8085) || 8085,
       wsPort: Number(els.scadaAlarmsWsPort?.value ?? 8086) || 8086
+    },
+    historian: {
+      host: els.scadaHistorianHost?.value?.trim() || '127.0.0.1',
+      port: Number(els.scadaHistorianPort?.value ?? 8096) || 8096
     },
     hmi: {
       scheme: els.scadaHmiScheme?.value || 'http',

@@ -13911,7 +13911,6 @@ const readSettingsForm = () => {
 
   return {
     opcbridge: { host, httpPort, wsPort, writeToken },
-    historian: { host: String(document.getElementById("settingsHistorianHost")?.value || "127.0.0.1").trim(), httpPort: Number(document.getElementById("settingsHistorianPort")?.value) || 8096 },
     hmi
   };
 };
@@ -13926,8 +13925,6 @@ const applyWriteAccessUi = () => {
 
 const populateSettingsForm = (config) => {
   const opc = config?.opcbridge || {};
-  if (document.getElementById("settingsHistorianHost")) document.getElementById("settingsHistorianHost").value = config?.historian?.host || "127.0.0.1";
-  if (document.getElementById("settingsHistorianPort")) document.getElementById("settingsHistorianPort").value = config?.historian?.httpPort || 8096;
   const hmi = config?.hmi || {};
   if (settingsHostInput) settingsHostInput.value = String(opc.host || "");
   if (settingsHttpPortInput) settingsHttpPortInput.value = String(Number(opc.httpPort) || "");

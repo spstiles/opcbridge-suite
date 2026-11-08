@@ -18,4 +18,16 @@ async function readAlarmSource() {
   catch (error) { if (error.code !== "ENOENT") throw error; return normalizeAlarmSource({}); }
   return normalizeAlarmSource(JSON.parse(raw));
 }
-module.exports = { readAlarmSource, normalizeAlarmSource };
+function normalizeHistorianSource(config) {
+  const historian = config.historian || {};
+  const httpPort = Number(historian.port ?? process.env.OPCBRIDGE_HISTORIAN_API_PORT ?? 8096);
+  if (!Number.isInteger(httpPort) || httpPort < 1 || httpPort > 65535) throw new Error("Invalid historian port");
+  return {host: String(historian.host || process.env.OPCBRIDGE_HISTORIAN_API_HOST || "127.0.0.1"), httpPort};
+}
+async function readHistorianSource() {
+  let raw;
+  try { raw = await fs.readFile(configPath, "utf8"); }
+  catch (error) { if (error.code !== "ENOENT") throw error; return normalizeHistorianSource({}); }
+  return normalizeHistorianSource(JSON.parse(raw));
+}
+module.exports = { readAlarmSource, normalizeAlarmSource, readHistorianSource, normalizeHistorianSource };

@@ -13,3 +13,10 @@ test('invalid configured ports fail instead of selecting a different server', ()
   assert.throws(() => normalizeAlarmSource({alarms:{port:70000}}));
   assert.throws(() => normalizeAlarmSource({alarms:{wsPort:'bad'}}));
 });
+
+const { normalizeHistorianSource } = require('../server/alarm-source');
+test('historian endpoint comes from Configure Server', () => {
+  assert.deepEqual(normalizeHistorianSource({historian:{host:'192.168.100.43',port:9096,httpPort:9999}}),
+    {host:'192.168.100.43',httpPort:9096});
+  assert.throws(() => normalizeHistorianSource({historian:{port:70000}}));
+});

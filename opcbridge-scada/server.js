@@ -260,6 +260,7 @@ const defaultConfig = {
   refresh_ms: 2000,
   opcbridge: { scheme: 'http', host: '127.0.0.1', port: 8080 },
   alarms: { scheme: 'http', host: '127.0.0.1', port: 8085, wsPort: 8086 },
+  historian: { host: HISTORIAN_API_HOST, port: HISTORIAN_API_PORT },
   hmi: { scheme: 'http', host: '127.0.0.1', port: 3000 },
   channels: [],
   device_assignments: {}
@@ -275,6 +276,7 @@ function readConfig() {
       listen: { ...defaultConfig.listen, ...(parsed.listen || {}) },
       opcbridge: { ...defaultConfig.opcbridge, ...(parsed.opcbridge || {}) },
       alarms: { ...defaultConfig.alarms, ...(parsed.alarms || {}) },
+      historian: { ...defaultConfig.historian, ...(parsed.historian || {}) },
       hmi: { ...defaultConfig.hmi, ...(parsed.hmi || {}) }
     };
   } catch {
@@ -357,6 +359,7 @@ function normalizeScadaConfig(input) {
     listen: { ...base.listen, ...((input && input.listen) || {}) },
     opcbridge: { ...base.opcbridge, ...((input && input.opcbridge) || {}) },
     alarms: { ...base.alarms, ...((input && input.alarms) || {}) },
+    historian: { ...base.historian, ...((input && input.historian) || {}) },
     hmi: { ...base.hmi, ...((input && input.hmi) || {}) }
   };
 
@@ -372,6 +375,9 @@ function normalizeScadaConfig(input) {
   next.alarms.host = normalizeHost(next.alarms.host, base.alarms.host);
   next.alarms.port = normalizePort(next.alarms.port, base.alarms.port);
   next.alarms.wsPort = normalizePort(next.alarms.wsPort, base.alarms.wsPort);
+
+  next.historian.host = normalizeHost(next.historian.host, base.historian.host);
+  next.historian.port = normalizePort(next.historian.port, base.historian.port);
 
   next.hmi.scheme = normalizeScheme(next.hmi.scheme, base.hmi.scheme);
   next.hmi.host = normalizeHost(next.hmi.host, base.hmi.host);
@@ -1676,9 +1682,10 @@ function reporterApiRequest(method, apiPath, bodyObj = null, timeoutMs = 5000) {
 function historianApiRequest(method, apiPath, bodyObj = null, timeoutMs = 10000) {
   return new Promise((resolve) => {
     const body = bodyObj ? JSON.stringify(bodyObj) : '';
+    const historian = readConfig().historian;
     const opts = {
-      hostname: HISTORIAN_API_HOST,
-      port: HISTORIAN_API_PORT,
+      hostname: historian.host,
+      port: historian.port,
       path: apiPath,
       method,
       timeout: timeoutMs,
@@ -4313,18 +4320,18 @@ const server = http.createServer(async (req, res) => {
     const health = await historianApiRequest('GET', '/health');
     const migration = readHistorianMigrationStatus();
     if (!health.ok && (migration?.state === 'pending' || migration?.state === 'migrating')) {
-      sendJson(res, 200, { ok: true, migrating: true, migration, historian: null, api: { host: HISTORIAN_API_HOST, port: HISTORIAN_API_PORT, status: health.status } });
+      sendJson(res, 200, { ok: true, migrating: true, migration, historian: null, api: { host: readConfig().historian.host, port: readConfig().historian.port, status: health.status } });
       return;
     }
     if (!health.ok && migration?.state === 'completed') {
-      sendJson(res, 200, { ok: true, starting: true, migration, historian: null, api: { host: HISTORIAN_API_HOST, port: HISTORIAN_API_PORT, status: health.status } });
+      sendJson(res, 200, { ok: true, starting: true, migration, historian: null, api: { host: readConfig().historian.host, port: readConfig().historian.port, status: health.status } });
       return;
     }
     sendJson(res, health.ok ? 200 : 502, {
       ok: health.ok,
       historian: health.json || null,
       error: health.error || health.json?.error || null,
-      api: { host: HISTORIAN_API_HOST, port: HISTORIAN_API_PORT, status: health.status }
+      api: { host: readConfig().historian.host, port: readConfig().historian.port, status: health.status }
     });
     return;
   }
@@ -4340,7 +4347,7 @@ const server = http.createServer(async (req, res) => {
       ok: tags.ok,
       tags: Array.isArray(tags.json?.tags) ? tags.json.tags : [],
       error: tags.error || tags.json?.error || null,
-      api: { host: HISTORIAN_API_HOST, port: HISTORIAN_API_PORT, status: tags.status }
+      api: { host: readConfig().historian.host, port: readConfig().historian.port, status: tags.status }
     });
     return;
   }

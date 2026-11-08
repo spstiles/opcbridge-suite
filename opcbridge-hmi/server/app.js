@@ -51,6 +51,7 @@ const readConfig = async () => {
   }
   const config = JSON.parse(stripJsonComments(raw));
   config.alarms = await require("./alarm-source").readAlarmSource();
+  config.historian = await require("./alarm-source").readHistorianSource();
   return { raw, config };
 };
 
@@ -306,7 +307,6 @@ const writeConfig = async (nextConfig) => {
       wsPort: Number(opcbridge.wsPort) || 8090,
       writeToken: String(opcbridge.writeToken || "")
     },
-    historian: { host: String(nextConfig?.historian?.host || "127.0.0.1"), httpPort: Number(nextConfig?.historian?.httpPort) || 8096 },
     hmi: {
       defaultScreen,
       touchscreenMode: Boolean(hmi.touchscreenMode),
@@ -316,11 +316,9 @@ const writeConfig = async (nextConfig) => {
   };
   const opcbridgeJson = JSON.stringify(cleaned.opcbridge, null, 2).replace(/\n/g, "\n  ");
   const hmiJson = JSON.stringify(cleaned.hmi, null, 2).replace(/\n/g, "\n  ");
-  const historianJson = JSON.stringify(cleaned.historian, null, 2);
   const output = `{\n` +
     `  // opcbridge connection settings used by the HMI client\n` +
     `  \"opcbridge\": ${opcbridgeJson},\n` +
-    `  "historian": ${historianJson},\n` +
     `  // HMI runtime settings\n` +
     `  \"hmi\": ${hmiJson}\n` +
     `}\n`;
