@@ -1,3 +1,4 @@
+#include "alarm_status_source.h"
 #include "async_poll_batch.h"
 #include "poll_sweep_estimate.h"
 #include "idle_connection_probe.h"
@@ -1774,6 +1775,8 @@ static std::vector<SystemTagDef> collect_alarm_system_tags() {
     static std::mutex cacheMutex;
     static std::chrono::steady_clock::time_point lastPoll;
     static std::vector<SystemTagDef> cached = alarm_default_system_tags(false);
+    static std::string cachedSource;
+    static std::atomic<bool> sourceConfigSeen{false};
 
     const auto nowSteady = std::chrono::steady_clock::now();
     {
@@ -1786,8 +1789,24 @@ static std::vector<SystemTagDef> collect_alarm_system_tags() {
     }
 
     std::vector<SystemTagDef> next = alarm_default_system_tags(false);
+    std::string sourceKey;
     try {
-        httplib::Client cli("127.0.0.1", 8085);
+        AlarmStatusSource source;
+        if (const char *path = std::getenv("OPCBRIDGE_ALARM_SOURCE_CONFIG")) {
+            std::ifstream file(path);
+            if (file) {
+                sourceConfigSeen = true;
+                std::stringstream text;
+                text << file.rdbuf();
+                source = alarm_status_source(json::parse(strip_json_comments(text.str())));
+            } else if (sourceConfigSeen) {
+                throw std::runtime_error("Alarm source configuration is unavailable");
+            } else if (std::filesystem::exists(path)) {
+                throw std::runtime_error("Alarm source configuration is unreadable");
+            }
+        }
+        sourceKey = source.key();
+        httplib::Client cli(source.host, source.port);
         cli.set_connection_timeout(0, 200000);
         cli.set_read_timeout(0, 200000);
         cli.set_write_timeout(0, 200000);
@@ -1825,10 +1844,13 @@ static std::vector<SystemTagDef> collect_alarm_system_tags() {
     }
 
     std::lock_guard<std::mutex> lock(cacheMutex);
-    if (!next.front().value.get<bool>()) {
+    // Retain a last-known value only for the same endpoint. Never show another
+    // server's alarm groups while a newly selected server is unavailable.
+    if (!next.front().value.get<bool>() && !sourceKey.empty() && sourceKey == cachedSource) {
         for (const auto &row : cached)
             if (row.name.rfind("System/Alarms/Groups/", 0) == 0) next.push_back(row);
     }
+    cachedSource = sourceKey;
     cached = next;
     return cached;
 }

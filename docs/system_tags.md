@@ -296,13 +296,27 @@ Use `ActiveUnacked` instead of `Unacked` when cleared alarms should not trigger 
 indicator. Acknowledgment remains an operation on individual alarms; these tags
 cannot acknowledge alarms or modify their state.
 
-The core polls the alarm status API at most once every two seconds. Summary tags
-are available through HTTP discovery/query, WebSocket system updates, read-only
+The core polls the alarm status API at most once every two seconds. Installed
+services follow the HMI's configured `alarms.host` and `alarms.httpPort`, including
+saved changes without restarting the core. An empty alarm host falls back to the
+HMI's `opcbridge.host`, then `127.0.0.1`; the default alarm HTTP port is 8085.
+This is the HMI setting, independently of SCADA's alarm proxy setting.
+
+The installer sets `OPCBRIDGE_ALARM_SOURCE_CONFIG` on the core service to the
+installation's `hmi/public/js/config.jsonc`. Standalone/core-only deployments
+without that configuration retain the local `127.0.0.1:8085` default. Custom
+launchers can set the same environment variable to their HMI JSONC configuration.
+If a previously readable source configuration becomes unavailable or invalid,
+summary connectivity reports false rather than falling back to a different server.
+Changing endpoints clears the previous server's cached group values. The configured
+source applies to overall alarm counts and notification statistics as well as groups.
+
+Summary tags are available through HTTP discovery/query, WebSocket system updates, read-only
 OPC UA nodes, and system MQTT publication when enabled. New OPC UA variables are
 created dynamically; removed group variables are removed without a server restart.
 Clients that import OPC UA tags still need to browse/select new summary tags.
 
-If the alarm service is unavailable, the core retains the last group values and
+If the same alarm service is unavailable, the core retains its last group values and
 sets `System/Alarms/RuntimeConnected` false. Gate indicators with that connectivity
 tag to distinguish a retained value from a current summary. The pre-existing
 overall `System/Alarms/UnackedCount` retains its active-only behavior; the new group

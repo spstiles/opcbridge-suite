@@ -1936,6 +1936,7 @@ install_systemd_units() {
 	[Service]
 	Type=simple
 	EnvironmentFile=${ENV_FILE}
+	Environment=OPCBRIDGE_ALARM_SOURCE_CONFIG=${PREFIX}/hmi/public/js/config.jsonc
 	WorkingDirectory=${PREFIX}
 	ExecStart=/bin/sh -c 'exec ${PREFIX}/bin/opcbridge --config ${CONFIG_ROOT} --http --ws --ws-port \"\${OPCBRIDGE_WS_PORT:-8090}\" --opcua --opcua-port \"\${OPCBRIDGE_OPCUA_PORT:-4840}\"'
 	User=${SERVICE_USER}
