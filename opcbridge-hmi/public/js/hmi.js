@@ -10089,7 +10089,7 @@ const createInlineTextBindingRow = ({ key, binding, objectType = "text" }) => {
     connectionInput = document.createElement("select");
     connectionInput.className = "automation-tag-input";
     const bindingConnectionId = String(binding?.connection_id || "").trim();
-    setConnectionSelectValue(connectionInput, bindingConnectionId, binding.tag);
+    setConnectionSelectValue(connectionInput, bindingConnectionId, binding?.tag);
     sourceControl = connectionInput;
   }
 
