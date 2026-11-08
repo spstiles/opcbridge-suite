@@ -4463,3 +4463,20 @@ body.edit-mode:not(.status-bar-hidden) #workspace { height: calc(100% - 31px); }
 .trend-dates [role=status] { color:#a12620; }
 
 #leftWidgetsFlyout { top:auto; bottom:0; }
+
+/* Reference diagnostics must not displace the controls needed to fix an object. */
+.reference-properties-details { min-width: 0; }
+.reference-properties-details > summary { cursor: pointer; overflow-wrap: anywhere; }
+.editor-panel[data-panel="properties"] .reference-property-list {
+  max-height: min(240px, 30vh);
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  min-height: 0;
+}
+.editor-panel[data-panel="properties"] > #objectDynamicTabs {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  flex-shrink: 0;
+}

@@ -18363,10 +18363,20 @@ const renderSelectedReferenceProperties = (obj) => {
   );
   selectedReferenceHealthProps.classList.toggle("is-hidden", !obj || !unique.length);
   if (!obj || !unique.length) return;
-  const title = document.createElement("div");
+  const details = document.createElement("details");
+  details.className = "reference-properties-details";
+  details.open = unique.length <= 3;
+  const title = document.createElement("summary");
   title.className = "prop-group-title";
-  title.textContent = "References Needing Attention";
-  selectedReferenceHealthProps.appendChild(title);
+  title.textContent = `References Needing Attention (${unique.length})`;
+  details.appendChild(title);
+  const list = document.createElement("div");
+  list.className = "reference-property-list";
+  list.tabIndex = 0;
+  list.setAttribute("role", "region");
+  list.setAttribute("aria-label", "References needing attention");
+  details.appendChild(list);
+  selectedReferenceHealthProps.appendChild(details);
   unique.forEach((ref) => {
     const row = document.createElement("div");
     row.className = "prop-row";
@@ -18380,12 +18390,12 @@ const renderSelectedReferenceProperties = (obj) => {
     input.rows = Math.min(5, Math.max(2, String(ref.value).split(/\r?\n/).length));
     input.title = `Unresolved ${ref.kind}: ${ref.value}`;
     row.append(label, input);
-    selectedReferenceHealthProps.appendChild(row);
+    list.appendChild(row);
   });
   const hint = document.createElement("p");
   hint.className = "reference-property-hint";
   hint.textContent = "References remain highlighted until their current tag, expression, screen, or binding can be verified.";
-  selectedReferenceHealthProps.appendChild(hint);
+  list.appendChild(hint);
 };
 
 const updatePropertiesPanel = () => {
