@@ -18532,7 +18532,8 @@ const updatePropertiesPanel = () => {
   if (showDynamicCircle && circleProps) circleProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectLevelTab || showRectStatesTab || showRectMotionTab);
   if (showDynamicPolygon && polygonProps) polygonProps.classList.toggle("is-hidden", showRectVisibilityTab || showRectColorTab || showRectLevelTab);
   if (currentObjectDynamicTab === "click" || showAnimatorTab) {
-    [screenProps, textProps, buttonProps, groupProps, objectActionProps, viewportProps, numberInputProps, indicatorProps, rectProps, ellipseProps, circleProps, lineProps, curveProps, polylineProps, splineProps, polygonProps, barProps].forEach((panel) => panel?.classList.add("is-hidden"));
+    [screenProps, textProps, buttonProps, groupProps, viewportProps, numberInputProps, indicatorProps, rectProps, ellipseProps, circleProps, lineProps, curveProps, polylineProps, splineProps, polygonProps, barProps].forEach((panel) => panel?.classList.add("is-hidden"));
+    if (showAnimatorTab) objectActionProps?.classList.add("is-hidden");
   }
   if (showShadowTab || showDropShadowTab) {
     [textProps, buttonProps, groupProps, objectActionProps, numberInputProps, indicatorProps, rectProps, ellipseProps, circleProps, lineProps, curveProps, polylineProps, splineProps, polygonProps, barProps].forEach((panel) => panel?.classList.add("is-hidden"));

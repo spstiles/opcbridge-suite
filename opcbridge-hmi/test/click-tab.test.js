@@ -53,3 +53,25 @@ test('button action controls live outside appearance properties and retain uniqu
   assert.ok(html.includes('data-add-dynamic="click"'));
   assert.ok(html.includes('id="dynamicsAddClickMenuBtn"'));
 });
+
+test('Click keeps the non-button action editor visible while hiding appearance panels', () => {
+  const panelNames = ['screenProps', 'textProps', 'buttonProps', 'groupProps', 'objectActionProps', 'viewportProps',
+    'numberInputProps', 'indicatorProps', 'rectProps', 'ellipseProps', 'circleProps', 'lineProps', 'curveProps',
+    'polylineProps', 'splineProps', 'polygonProps', 'barProps'];
+  const ctx = vm.createContext({ currentObjectDynamicTab: 'click', showAnimatorTab: false });
+  for (const name of panelNames) {
+    const classes = new Set();
+    ctx[name] = { classes, classList: { add: value => classes.add(value) } };
+  }
+  const start = source.indexOf('  if (currentObjectDynamicTab === "click" || showAnimatorTab) {');
+  const end = source.indexOf('  if (showShadowTab || showDropShadowTab)', start);
+  const block = source.slice(start, end);
+  vm.runInContext(block, ctx);
+  assert.equal(ctx.objectActionProps.classes.has('is-hidden'), false, 'Click fields and Remove Click must stay visible');
+  assert.equal(ctx.groupProps.classes.has('is-hidden'), true);
+  assert.equal(ctx.buttonProps.classes.has('is-hidden'), true);
+  ctx.currentObjectDynamicTab = 'animator';
+  ctx.showAnimatorTab = true;
+  vm.runInContext(block, ctx);
+  assert.equal(ctx.objectActionProps.classes.has('is-hidden'), true);
+});
