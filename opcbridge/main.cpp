@@ -14638,7 +14638,7 @@ static PollingActivitySummary polling_activity_summary(const DriverContext &driv
             inactive = state != arrayInactive.end() && state->second; // Missing elements fail open.
         }
         if (!is_memory_tag(tag.cfg) && tag.cfg.source_tag.empty() && tag.poll_source.empty() &&
-            (tag.handle >= 0 || tag.handle_deferred)) {
+            (tag.handle >= 0 || tag.handle_deferred || is_opcua_client_driver_name(driver.conn.driver))) {
             ++result.configured_work;
             if (inactive) ++result.inactive_work; else ++result.active_work;
             if (!inactive) {
@@ -25115,6 +25115,10 @@ window.addEventListener("load", startAutoRefresh);
                                                     dstatus["reason"] = "PLC communication checks failed; polling idle";
                                                 }
                                             }
+                                        }
+                                        if (is_opcua_client_driver_name(driver.conn.driver) && !runtimeIssue.empty()) {
+                                            dstatus["status"] = "error";
+                                            dstatus["reason"] = runtimeIssue;
                                         }
                                         if (dstatus["status"] == "error") ++error_count; else ++ok_count;
                                     } else if (total_seen == 0) {

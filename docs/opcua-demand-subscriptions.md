@@ -39,3 +39,9 @@ for every imported tag unless another client actually requests them all.
 Do not disable production consumers solely to obtain a faster benchmark. Compare
 actual HMI updates, active monitored-item counts, and packet traffic before making
 further PLC polling changes. No live machine configuration is changed by this patch.
+
+An OPC UA client with all imported tags inactive is an intentionally idle
+connection, not a failed connection. Activity accounting includes native UA work
+even though it has no libplctag handles. Known upstream communication errors still
+report an error while idle. A connection's availability and the demand for its
+individual tag values are separate observations.
