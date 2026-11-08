@@ -16,6 +16,7 @@ int main() {
     assert(window.submit(2,1000,pending,timeout,start,capture,now).requests==0);
     assert(window.submit(0,1000,pending,timeout,start,capture,now).requests==0);
     auto stats=window.service(pending,timeout,[&](size_t i){return statuses[i];},abort,capture,false,now);
+    assert(stats.completed_requests==1);
     assert(captured==std::vector<size_t>{1});
     assert(window.contains(0) && !window.contains(1) && aborted.empty());
     // The slow request is still pending, but a freed slot admits another tag.
@@ -23,7 +24,7 @@ int main() {
     window.service(pending,timeout,[&](size_t i){return statuses[i];},abort,capture,false,now);
     assert(captured==std::vector<size_t>({1,2}));
     stats=window.service(pending,timeout,[&](size_t i){return statuses[i];},abort,capture,false,now+std::chrono::milliseconds(999));
-    assert(window.contains(0) && stats.timeouts==0);
+    assert(window.contains(0) && stats.timeouts==0 && stats.completed_requests==0);
     stats=window.service(pending,timeout,[&](size_t i){return statuses[i];},abort,capture,false,now+std::chrono::milliseconds(1000));
     assert(stats.timeouts==1 && stats.errors==1 && window.size()==0);
     assert(aborted==std::vector<size_t>{0});

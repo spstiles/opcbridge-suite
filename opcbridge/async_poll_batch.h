@@ -7,7 +7,7 @@
 #include <vector>
 
 struct AsyncPollBatchStats {
-    size_t requests = 0, timeouts = 0, errors = 0, cancelled_requests = 0;
+    size_t requests = 0, timeouts = 0, errors = 0, cancelled_requests = 0, completed_requests = 0;
     uint64_t queue_us = 0, wait_us = 0, capture_us = 0;
 };
 
@@ -23,6 +23,7 @@ AsyncPollBatchStats async_poll_batch(const std::vector<size_t>& indices, int tim
     auto captured = [&](size_t index, int rc, Clock::time_point began) {
         const auto before = Clock::now();
         capture(index, rc, began);
+        ++stats.completed_requests;
         stats.capture_us += std::chrono::duration_cast<std::chrono::microseconds>(Clock::now()-before).count();
         if (rc < 0) ++stats.errors;
         if (rc == timeout) ++stats.timeouts;

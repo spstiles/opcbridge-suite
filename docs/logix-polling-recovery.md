@@ -72,3 +72,17 @@ incremented because there is no blocking batch barrier. Use `request_elapsed`
 for submission-to-capture latency and compare requests/sec, timeout counts, and
 PLC_Second update intervals. Latency includes time until the polling lane checks
 completion; it is not a direct wire-response measurement.
+
+### Admission scheduling
+
+Completed Logix results take priority over overdue startup and admission entries.
+A full or draining window with no ready results pauses admission for one
+millisecond before checking completions again, rather than repeatedly rescheduling
+all overdue tags. Candidate selection uses a rotating cursor and examines at most
+one pass of the lane's tags per admission group. Empty completion checks do not
+increment `batch_capture.count`; this counter now represents service passes that
+actually captured results (or a submission group with immediate results).
+
+The change targets scheduler overhead and startup publication delay. Establish
+throughput with a new measurement after installation; earlier request-window
+results do not establish performance of this refinement.

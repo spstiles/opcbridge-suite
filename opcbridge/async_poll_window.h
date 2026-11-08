@@ -27,6 +27,7 @@ public:
         else {
             const auto captureBegan = Clock::now();
             capture(index, rc, now);
+            ++stats.completed_requests;
             stats.capture_us = std::chrono::duration_cast<std::chrono::microseconds>(Clock::now()-captureBegan).count();
             stats.errors = rc < 0; stats.timeouts = rc == timeoutStatus;
         }
@@ -49,6 +50,7 @@ public:
             it=pending.erase(it);
             const auto captureBegan=Clock::now();
             capture(index,rc,began);
+            ++stats.completed_requests;
             stats.capture_us += std::chrono::duration_cast<std::chrono::microseconds>(Clock::now()-captureBegan).count();
             stats.errors += rc<0; stats.timeouts += rc==timeoutStatus;
         }
