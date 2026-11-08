@@ -1,5 +1,6 @@
 #include "alarm_status_source.h"
 #include "async_poll_batch.h"
+#include "async_poll_window.h"
 #include "poll_read_retry.h"
 #include "poll_diagnostics.h"
 #include "poll_sweep_estimate.h"
@@ -30020,35 +30021,18 @@ window.addEventListener("load", startAutoRefresh);
                                     }
                                 }
                             };
-                            auto prefetchLogixDue = [&](size_t requested, auto dueNow) {
-                                if (!batchLogix || !demandAllows(requested) || logixPrefetch.count(requested) ||
-                                    !spec.tags[requested].logix_retry.ready(dueNow)) return;
-                                PollTimingScope selection(spec.metrics ? &spec.metrics->diagnostics.batch_select : nullptr);
-                                std::vector<size_t> indices;
-                                indices.push_back(requested);
-                                for (size_t i = 0; i < spec.tags.size() && indices.size() < static_cast<size_t>(batchSize); ++i) {
-                                    const auto &candidate = spec.tags[i];
-                                    if (i != requested && candidate.demand_active && demandAllows(i) && candidate.next_poll <= dueNow &&
-                                        !logixPrefetch.count(i) && candidate.handle >= 0 &&
-                                        !candidate.handle_deferred && candidate.logix_retry.ready(dueNow) &&
-                                        plc_tag_status(candidate.handle) != PLCTAG_STATUS_PENDING)
-                                        indices.push_back(i);
-                                }
-                                selection.finish();
-                                const auto batchStats = async_poll_batch(indices, spec.conn.default_read_ms,
-                                    PLCTAG_STATUS_PENDING, PLCTAG_ERR_TIMEOUT,
-                                    [&](size_t i) {
-                                        if (spec.active_poll_test) record_active_poll_test_read(spec.conn.id, spec.tags[i].cfg.logical_name);
-                                        return plc_tag_read(spec.tags[i].handle, 0);
-                                    },
-                                    [&](size_t i) { return plc_tag_status(spec.tags[i].handle); },
-                                    [&](size_t i) { plc_tag_abort(spec.tags[i].handle); },
-                                    [&](size_t i, int rc, auto began) {
+                            AsyncPollWindow logixWindow(static_cast<size_t>(batchSize));
+                            std::shared_lock<std::shared_mutex> logixLifecycle;
+                            std::shared_lock<WriterPrioritySharedMutex> logixGate;
+                            auto logixWindowBegan = std::chrono::steady_clock::time_point{};
+                            auto captureLogix = [&](size_t i, int rc, auto began) {
                                         auto &item = spec.tags[i];
                                         LogixReadResult result;
                                         result.status = rc;
                                         result.started = began;
                                         result.finished = std::chrono::steady_clock::now();
+                                        if (spec.metrics) spec.metrics->diagnostics.request_elapsed.record(
+                                            std::chrono::duration_cast<std::chrono::microseconds>(result.finished-began).count());
                                         if (rc == PLCTAG_STATUS_OK) {
                                             TagRuntime runtime;
                                             runtime.cfg = item.cfg;
@@ -30072,19 +30056,71 @@ window.addEventListener("load", startAutoRefresh);
                                             }
                                         }
                                         logixPrefetch.emplace(i, std::move(result));
-                                    }, [&] { return spec.stop_requested->load(std::memory_order_relaxed) ||
-                                        g_configGeneration.load(std::memory_order_relaxed) != spec.gen; });
-                                if (spec.metrics) {
-                                    auto &d = spec.metrics->diagnostics;
+                                        item.next_poll = std::chrono::steady_clock::now();
+                                        heap.push(HeapItem{item.next_poll, i});
+                            };
+                            auto recordWindowStats = [&](const AsyncPollBatchStats &stats, bool submitted) {
+                                if (!spec.metrics) return;
+                                auto &d = spec.metrics->diagnostics;
+                                if (submitted) {
                                     d.batches.fetch_add(1, std::memory_order_relaxed);
-                                    d.requests.fetch_add(batchStats.requests, std::memory_order_relaxed);
-                                    d.timeouts.fetch_add(batchStats.timeouts, std::memory_order_relaxed);
-                                    d.errors.fetch_add(batchStats.errors, std::memory_order_relaxed);
-                                    d.cancelled_requests.fetch_add(batchStats.cancelled_requests, std::memory_order_relaxed);
-                                    d.batch_queue.record(batchStats.queue_us);
-                                    d.batch_wait.record(batchStats.wait_us);
-                                    d.batch_capture.record(batchStats.capture_us);
+                                    d.requests.fetch_add(stats.requests, std::memory_order_relaxed);
+                                    d.batch_queue.record(stats.queue_us);
                                 }
+                                d.timeouts.fetch_add(stats.timeouts, std::memory_order_relaxed);
+                                d.errors.fetch_add(stats.errors, std::memory_order_relaxed);
+                                d.cancelled_requests.fetch_add(stats.cancelled_requests, std::memory_order_relaxed);
+                                d.batch_capture.record(stats.capture_us);
+                            };
+                            auto serviceLogixWindow = [&] {
+                                if (!batchLogix || !logixGate.owns_lock()) return;
+                                const auto stats = logixWindow.service(PLCTAG_STATUS_PENDING, PLCTAG_ERR_TIMEOUT,
+                                    [&](size_t i) { return plc_tag_status(spec.tags[i].handle); },
+                                    [&](size_t i) { plc_tag_abort(spec.tags[i].handle); }, captureLogix);
+                                recordWindowStats(stats, false);
+                                if (logixWindow.size() == 0 && logixPrefetch.empty()) {
+                                    logixGate.unlock();
+                                    if (logixLifecycle.owns_lock()) logixLifecycle.unlock();
+                                }
+                            };
+                            struct LogixWindowCleanup {
+                                std::function<void()> cancel;
+                                ~LogixWindowCleanup() { cancel(); }
+                            } logixWindowCleanup{[&] {
+                                // Destroyed before the session locks and before handle cleanup.
+                                logixWindow.cancelAll([&](size_t i) { plc_tag_abort(spec.tags[i].handle); });
+                            }};
+                            auto prefetchLogixDue = [&](size_t requested, auto dueNow) {
+                                if (!batchLogix || !demandAllows(requested) || logixPrefetch.count(requested) ||
+                                    logixWindow.contains(requested) || !spec.tags[requested].logix_retry.ready(dueNow)) return;
+                                // Stop refilling after one timeout interval, then drain and release
+                                // gates so writes/reloads cannot be starved by a continuous stream.
+                                if (dueNow-logixWindowBegan >= std::chrono::milliseconds(spec.conn.default_read_ms)) return;
+                                PollTimingScope selection(spec.metrics ? &spec.metrics->diagnostics.batch_select : nullptr);
+                                const size_t occupied = logixWindow.size() + logixPrefetch.size();
+                                if (occupied >= static_cast<size_t>(batchSize)) return;
+                                const size_t slots = static_cast<size_t>(batchSize)-occupied;
+                                std::vector<size_t> indices{requested};
+                                for (size_t i=0; i<spec.tags.size() && indices.size()<slots; ++i) {
+                                    const auto &candidate=spec.tags[i];
+                                    if (i!=requested && candidate.demand_active && demandAllows(i) && candidate.next_poll<=dueNow &&
+                                        !logixPrefetch.count(i) && !logixWindow.contains(i) && candidate.handle>=0 &&
+                                        !candidate.handle_deferred && candidate.logix_retry.ready(dueNow) &&
+                                        plc_tag_status(candidate.handle)!=PLCTAG_STATUS_PENDING) indices.push_back(i);
+                                }
+                                selection.finish();
+                                AsyncPollBatchStats total;
+                                for (size_t i:indices) {
+                                    if (spec.stop_requested->load() || g_configGeneration.load()!=spec.gen) break;
+                                    const auto stats=logixWindow.submit(i,spec.conn.default_read_ms,PLCTAG_STATUS_PENDING,PLCTAG_ERR_TIMEOUT,
+                                        [&](size_t index) {
+                                            if (spec.active_poll_test) record_active_poll_test_read(spec.conn.id,spec.tags[index].cfg.logical_name);
+                                            return plc_tag_read(spec.tags[index].handle,0);
+                                        },captureLogix);
+                                    total.requests+=stats.requests; total.queue_us+=stats.queue_us;
+                                    total.capture_us+=stats.capture_us; total.errors+=stats.errors; total.timeouts+=stats.timeouts;
+                                }
+                                if (total.requests) recordWindowStats(total,true);
                             };
 							auto lastReadFinished = std::chrono::steady_clock::now() - minReadInterval;
 							size_t batchReads = 0;
@@ -30101,6 +30137,7 @@ window.addEventListener("load", startAutoRefresh);
 								}
 								auto nowSteady = std::chrono::steady_clock::now();
 								serviceRemoteUaSubscription(nowSteady);
+                                serviceLogixWindow();
 								if (heap.empty()) {
 									std::this_thread::sleep_for(std::chrono::milliseconds(25));
 									continue;
@@ -30118,18 +30155,21 @@ window.addEventListener("load", startAutoRefresh);
 
 								heap.pop();
 								auto &t = spec.tags[top.idx];
+                                if (top.next_poll != t.next_poll) continue; // Superseded by a completion.
 
                                 const bool demanded = demandAllows(top.idx);
                                 if (demanded != t.demand_active) {
+                                    if (batchLogix) logixWindow.cancel(top.idx, [&](size_t i) { plc_tag_abort(spec.tags[i].handle); });
                                     transitionDemand(top.idx, demanded);
                                     t.demand_active = demanded;
                                 }
                                 if (!demanded) {
                                     if (spec.metrics && t.handle >= 0 && spec.metrics->idle_probe.claim(t.cfg.logical_name)) {
                                         std::shared_lock<std::shared_mutex> lifecycle;
-                                        if (g_plcMutex) lifecycle = std::shared_lock<std::shared_mutex>(*g_plcMutex);
+                                        if (g_plcMutex && !logixLifecycle.owns_lock()) lifecycle = std::shared_lock<std::shared_mutex>(*g_plcMutex);
                                         auto gate = connection_plc_mutex(spec.conn.id);
-                                        std::shared_lock<WriterPrioritySharedMutex> connectionLock(*gate);
+                                        std::shared_lock<WriterPrioritySharedMutex> connectionLock;
+                                        if (!logixGate.owns_lock()) connectionLock = std::shared_lock<WriterPrioritySharedMutex>(*gate);
                                         if (!spec.stop_requested->load() && g_configGeneration.load() == spec.gen) {
                                             const int rc = plc_tag_read(t.handle, spec.conn.default_read_ms);
                                             spec.metrics->idle_probe.completed(t.cfg.logical_name, rc == PLCTAG_STATUS_OK,
@@ -30162,12 +30202,12 @@ window.addEventListener("load", startAutoRefresh);
 			                            {
 			                                PollTimingScope lockWait(spec.metrics ? &spec.metrics->diagnostics.lock_wait : nullptr);
                                 std::shared_lock<std::shared_mutex> plcLifecycleLock;
-			                                if (g_plcMutex && !is_opcua_client_driver_name(spec.conn.driver)) {
+			                                if (g_plcMutex && !is_opcua_client_driver_name(spec.conn.driver) && !logixLifecycle.owns_lock()) {
 			                                    plcLifecycleLock = std::shared_lock<std::shared_mutex>(*g_plcMutex);
 			                                }
 			                                auto connectionGate = connection_plc_mutex(spec.conn.id);
 			                                std::shared_lock<WriterPrioritySharedMutex> plcConnectionLock;
-			                                if (!is_opcua_client_driver_name(spec.conn.driver)) {
+			                                if (!is_opcua_client_driver_name(spec.conn.driver) && !logixGate.owns_lock()) {
 			                                    plcConnectionLock = std::shared_lock<WriterPrioritySharedMutex>(*connectionGate);
 			                                }
 
@@ -30334,7 +30374,29 @@ window.addEventListener("load", startAutoRefresh);
 		                                    status = handleStatus;
 		                                } else {
 			                                publishReadyDeferredHandle(t);
-                                        prefetchLogixDue(top.idx, nowSteady);
+                                        if (batchLogix && !logixGate.owns_lock()) {
+                                            logixLifecycle = std::move(plcLifecycleLock);
+                                            logixGate = std::move(plcConnectionLock);
+                                            logixWindowBegan = std::chrono::steady_clock::now();
+                                        }
+                                        prefetchLogixDue(top.idx, std::chrono::steady_clock::now());
+                                        // A pending read is serviced at the top of the loop. Its
+                                        // completion replaces the scheduled heap entry immediately.
+                                        if (batchLogix && !logixPrefetch.count(top.idx)) {
+                                            if (!logixWindow.contains(top.idx)) {
+                                                // No slot (or the current window is draining). Retry
+                                                // admission soon instead of losing a full scan period.
+                                                t.next_poll = std::chrono::steady_clock::now() + std::chrono::milliseconds(25);
+                                                heap.push(HeapItem{t.next_poll, top.idx});
+                                            }
+                                            continue;
+                                        }
+                                        if (batchLogix) {
+                                            // Immediate completions also schedule a ready heap entry.
+                                            // Supersede it before consuming this result in this iteration.
+                                            t.next_poll = std::chrono::steady_clock::now() + std::chrono::milliseconds(scan_ms);
+                                            heap.push(HeapItem{t.next_poll, top.idx});
+                                        }
                                         auto prefetchedLogix = logixPrefetch.find(top.idx);
                                         auto t0 = std::chrono::steady_clock::now();
                                         auto t1 = t0;

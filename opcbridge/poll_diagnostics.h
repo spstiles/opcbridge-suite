@@ -35,12 +35,12 @@ struct PollTimingScope {
     PollTimingScope& operator=(const PollTimingScope&) = delete;
 };
 struct PollDiagnostics {
-    PollTiming lock_wait, handle_open, batch_select, batch_queue, batch_wait, batch_capture, result_processing;
+    PollTiming request_elapsed, lock_wait, handle_open, batch_select, batch_queue, batch_wait, batch_capture, result_processing;
     std::atomic<uint64_t> batches{0}, requests{0}, timeouts{0}, errors{0}, cancelled_requests{0};
     nlohmann::json snapshot() const {
         const auto n = batches.load(std::memory_order_relaxed);
         const auto r = requests.load(std::memory_order_relaxed);
-        return {{"lock_wait",lock_wait.snapshot()}, {"handle_open",handle_open.snapshot()},
+        return {{"request_elapsed",request_elapsed.snapshot()}, {"lock_wait",lock_wait.snapshot()}, {"handle_open",handle_open.snapshot()},
                 {"batch_select",batch_select.snapshot()}, {"batch_queue",batch_queue.snapshot()},
                 {"batch_wait",batch_wait.snapshot()}, {"batch_capture",batch_capture.snapshot()},
                 {"result_processing",result_processing.snapshot()}, {"batches",n}, {"requests",r},

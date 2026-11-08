@@ -48,3 +48,27 @@ are included in both; `cancelled_requests` identifies those shutdown/reload abor
 These batch counters exclude deferred creation and synchronous fallback reads.
 Timings can overlap across lanes and are not pure network or PLC execution times.
 No packet logging or per-tag log stream is enabled by these counters.
+
+## Bounded asynchronous request window
+
+Logix connections with unlimited reads/sec and a positive read timeout use a
+request window instead of waiting for a whole batch. Each lane admits at most
+`Batch Size` pending requests plus copied results awaiting processing. Completed
+values are copied under the handle gates, scheduled for immediate processing,
+and then returned to their configured scan interval. Other due tags can use freed
+slots while slow requests remain pending. Failed reads retain their individual
+read deadlines and retry backoff.
+
+The lane keeps lifecycle and connection gates while requests or copied results
+remain. After one read-timeout interval it stops admitting requests, drains the
+window, and releases the gates, allowing waiting writes/reloads to proceed.
+Outstanding reads are aborted before releasing the gates on shutdown or reload.
+Demand transitions abort that tag's pending read and discard its copied result.
+Startup handle creation remains unchanged.
+
+In window mode, `batches` counts admission groups and `batch_size_avg` describes
+those groups, rather than batches that drain together. `batch_wait` is no longer
+incremented because there is no blocking batch barrier. Use `request_elapsed`
+for submission-to-capture latency and compare requests/sec, timeout counts, and
+PLC_Second update intervals. Latency includes time until the polling lane checks
+completion; it is not a direct wire-response measurement.
