@@ -1,88 +1,22 @@
-# Logix polling recovery
+# Polling recovery baseline
 
-Logix tag creation and reads use per-tag retry backoff after failures: 1, 2, 4,
-8, 16, then at most 30 seconds. Successful reads reset the backoff. Healthy tags
-retain their configured scan interval. A failed tag stays visible with bad
-quality while waiting for its retry; it is not disabled or silently removed.
+The core polling implementation has been restored to commit `1c5aa4b`, the
+revision immediately before the polling experiments in this investigation.
+That revision shipped suite 0.5.87 and core 0.2.99. It is a recovery baseline,
+not a claim that this is the user's last satisfactory installation.
 
-A previous libplctag read error does not prevent the next read from starting.
-Pending operations are still excluded from a new batch. Retry backoff applies
-both with asynchronous batching and with a configured reads-per-second limit.
+This removes the experimental Logix retry policy, additional timing
+instrumentation, request window, and admission scheduler. The main source and
+asynchronous batch helper and test match that revision exactly. Shared alarm
+and historian configuration changes remain intact. Release versions can move
+forward independently of this code restoration.
 
-This reduces repeated failed-tag work. It does not eliminate a failing request's
-initial timeout, change the configured batch size, or parallelize startup handle
-creation. Verify steady-state performance after startup completes.
+No remote configuration or installation is changed by this source rollback.
+Field Ops was changed from one to two polling lanes during the investigation;
+return it to one lane when comparing with the original configuration. Other
+connection settings were not changed by these source experiments.
 
-On Field_Ops_PLC0 at 192.168.100.45, the pre-change two-lane sample intervals for
-PLC_Second were 16.541, 15.901, and 17.180 seconds. These are baseline observations,
-not measurements of the recovery change; deployment and a comparable observation
-are needed to establish its effect.
-
-## Polling diagnostics
-
-`/health` → `connections` → connection ID → `poll_diagnostics` and `/metrics`
-expose the same per-connection cumulative timings. Counters are shared across
-polling lanes and live for the lifetime of the connection metrics object. Compare
-counter differences over the same measurement window after startup, rather than
-comparing lifetime averages from connections with different startup histories.
-Snapshots use relaxed atomic reads and can be slightly inconsistent while polling
-continues. This is diagnostic telemetry, not an accounting ledger.
-
-Each timing has `count`, `total_ms`, `avg_ms`, and `max_ms`:
-
-- `lock_wait`: acquiring the lifecycle and connection gates for a tag operation.
-- `handle_open`: deferred creation and readiness checking, including failed attempts.
-- `batch_select`: choosing due, eligible tags for a Logix batch.
-- `batch_queue`: time inside the batch's nonblocking libplctag read submissions.
-- `batch_wait`: remaining batch elapsed time outside submission and capture,
-  including status checks, client/PLC waiting, polling sleeps, and loop overhead.
-- `batch_capture`: decoding and copying completed values into prefetched results.
-- `result_processing`: processing a consumed result through cache, alarms, and
-  publication queueing, excluding configured pacing sleeps. Prefetched decode is
-  reported separately in `batch_capture`.
-
-`batches`, `requests`, and `batch_size_avg` describe actual asynchronous Logix
-batches in Standard and Time-Sliced mode. `errors` and `timeouts` count batch
-completion outcomes. Canceled requests are aborted using the timeout status and
-are included in both; `cancelled_requests` identifies those shutdown/reload aborts.
-These batch counters exclude deferred creation and synchronous fallback reads.
-Timings can overlap across lanes and are not pure network or PLC execution times.
-No packet logging or per-tag log stream is enabled by these counters.
-
-## Bounded asynchronous request window
-
-Logix connections with unlimited reads/sec and a positive read timeout use a
-request window instead of waiting for a whole batch. Each lane admits at most
-`Batch Size` pending requests plus copied results awaiting processing. Completed
-values are copied under the handle gates, scheduled for immediate processing,
-and then returned to their configured scan interval. Other due tags can use freed
-slots while slow requests remain pending. Failed reads retain their individual
-read deadlines and retry backoff.
-
-The lane keeps lifecycle and connection gates while requests or copied results
-remain. After one read-timeout interval it stops admitting requests, drains the
-window, and releases the gates, allowing waiting writes/reloads to proceed.
-Outstanding reads are aborted before releasing the gates on shutdown or reload.
-Demand transitions abort that tag's pending read and discard its copied result.
-Startup handle creation remains unchanged.
-
-In window mode, `batches` counts admission groups and `batch_size_avg` describes
-those groups, rather than batches that drain together. `batch_wait` is no longer
-incremented because there is no blocking batch barrier. Use `request_elapsed`
-for submission-to-capture latency and compare requests/sec, timeout counts, and
-PLC_Second update intervals. Latency includes time until the polling lane checks
-completion; it is not a direct wire-response measurement.
-
-### Admission scheduling
-
-Completed Logix results take priority over overdue startup and admission entries.
-A full or draining window with no ready results pauses admission for one
-millisecond before checking completions again, rather than repeatedly rescheduling
-all overdue tags. Candidate selection uses a rotating cursor and examines at most
-one pass of the lane's tags per admission group. Empty completion checks do not
-increment `batch_capture.count`; this counter now represents service passes that
-actually captured results (or a submission group with immediate results).
-
-The change targets scheduler overhead and startup publication delay. Establish
-throughput with a new measurement after installation; earlier request-window
-results do not establish performance of this refinement.
+After installation, validate PLC_Second/PLC_Seconds in the actual HMI as well
+as the core cached timestamps. A recent core sample does not establish that
+browser displays receive updates promptly. Measure recovery before making
+further polling changes.
