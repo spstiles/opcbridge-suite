@@ -1,3 +1,4 @@
+#include "group_summary.h"
 #include <atomic>
 #include <algorithm>
 #include <array>
@@ -2996,6 +2997,7 @@ struct AlarmState
     bool site_enabled = true;
 
     bool active = false;
+    bool has_been_active = false;
     bool acked = false;
     bool initialized = false;
     bool return_notification_armed = false;
@@ -7688,6 +7690,7 @@ struct AlarmEngine
     std::unordered_map<std::string, AlarmRule> rules;      // by alarm_id
     std::unordered_map<std::string, AlarmState> states;    // by alarm_id
     std::unordered_map<std::string, std::vector<std::string>> rulesByTagKey; // "conn:tag" -> alarm_ids
+    std::set<std::string> defined_groups;
     int64_t global_delay_ms = 0;
 
     std::atomic<int64_t> last_tag_update_ms{0};
@@ -7800,6 +7803,7 @@ struct AlarmEngine
                 if (type == "active")
                 {
                     s.active = true;
+                    s.has_been_active = true;
                     s.acked = false;
                     s.return_notification_armed = true;
                     s.active_since_ms = ts;
@@ -7883,6 +7887,35 @@ struct AlarmEngine
             msg["event"] = ev;
             ws->broadcast(msg);
         }
+    }
+
+    static std::set<std::string> configured_groups(const json &config) {
+        std::set<std::string> result;
+        if (config.contains("groups") && config["groups"].is_array()) {
+            for (const auto &group : config["groups"]) {
+                if (!group.is_object()) continue;
+                const auto name = alarm_groups::path(group.value("name", std::string{}));
+                if (name.empty()) continue;
+                result.insert(name);
+                if (group.contains("sites") && group["sites"].is_array())
+                    for (const auto &site : group["sites"])
+                        if (site.is_object()) result.insert(alarm_groups::path(name, site.value("name", std::string{})));
+            }
+        }
+        return result;
+    }
+
+    json group_summaries() const {
+        std::lock_guard<std::mutex> lock(mu);
+        json out = json::array();
+        for (const auto &kv : alarm_groups::summarize(defined_groups, states, now_ms())) {
+            const auto &s = kv.second;
+            out.push_back({{"path", kv.first}, {"Active", s.active > 0}, {"Unacked", s.unacked > 0},
+                {"ActiveUnacked", s.active_unacked > 0}, {"AllAcknowledged", s.unacked == 0},
+                {"ActiveCount", s.active}, {"UnackedCount", s.unacked},
+                {"ActiveUnackedCount", s.active_unacked}, {"HighestActiveSeverity", s.highest}});
+        }
+        return out;
     }
 
     void load_rules_from_file(const std::string &path)
@@ -8063,6 +8096,7 @@ struct AlarmEngine
 
         {
             std::lock_guard<std::mutex> lock(mu);
+            defined_groups = configured_groups(schema2);
             rules.swap(nextRules);
             states.swap(nextStates);
             rulesByTagKey.swap(nextByKey);
@@ -8256,6 +8290,7 @@ struct AlarmEngine
                         // state without creating a new alarm event.
                         s.initialized = true;
                         s.active = true;
+                        s.has_been_active = true;
                         s.acked = false;
                         s.return_notification_armed = false;
                         s.active_since_ms = t;
@@ -8275,6 +8310,7 @@ struct AlarmEngine
 
                     s.initialized = true;
                     s.active = true;
+                    s.has_been_active = true;
                     s.acked = false;
                     s.return_notification_armed = recordEvent;
                     s.active_since_ms = t;
@@ -8376,6 +8412,7 @@ struct AlarmEngine
                 s.pending_record_event = false;
                 s.pending_since_ms = 0;
                 s.active = true;
+                s.has_been_active = true;
                 s.acked = false;
                 s.return_notification_armed = recordEvent;
                 s.active_since_ms = t;
@@ -9549,6 +9586,7 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
 
             // Carry over live state; keep rule-derived fields from the new config.
             s.active = prev.active;
+            s.has_been_active = prev.has_been_active;
             s.acked = prev.acked;
             s.initialized = prev.initialized;
             s.return_notification_armed = prev.return_notification_armed;
@@ -9561,6 +9599,7 @@ static bool fetch_rules_from_opcbridge(AlarmEngine &engine,
             s.pending_record_event = prev.pending_record_event;
             s.pending_since_ms = prev.pending_since_ms;
         }
+        engine.defined_groups = AlarmEngine::configured_groups(runtimeRoot);
         engine.rules.swap(nextRules);
         engine.states.swap(nextStates);
         engine.rulesByTagKey.swap(nextByKey);
@@ -9849,6 +9888,7 @@ int main(int argc, char **argv)
             {"port", static_cast<int>(opcuaPort)},
             {"endpoint", std::string("opc.tcp://0.0.0.0:") + std::to_string(opcuaPort)}
         };
+        j["group_summaries"] = engine.group_summaries();
         j["notifications"] = notifications.status_json();
         j["counts"] = {
             {"active", active},

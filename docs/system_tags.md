@@ -258,3 +258,60 @@ tag_name: System/Logger/DataChecks/daily_record_count/BelowLow
 type: equals
 value: true
 ```
+
+### Alarm group and site summaries
+
+The alarm runtime publishes read-only summary tags automatically for configured
+alarm classification groups and sites, plus parents of slash-separated paths.
+Notification routing/contact groups are separate and do not create these tags.
+No HMI property or trigger type is required: select connection `_system` in the
+existing tag picker, then browse `System/Alarms/Groups`.
+
+For example, group `Field` and site `Lift Station 1` expose:
+
+```text
+System/Alarms/Groups/Field/Active
+System/Alarms/Groups/Field/Lift Station 1/Active
+```
+
+Every group/site path exposes these leaves:
+
+| Leaf | Type | Meaning |
+| --- | --- | --- |
+| `Active` | `bool` | At least one active alarm. |
+| `Unacked` | `bool` | At least one previously active alarm still needs acknowledgment, including cleared alarms. |
+| `ActiveUnacked` | `bool` | At least one alarm is active and unacknowledged. |
+| `AllAcknowledged` | `bool` | No alarms in scope need acknowledgment; true for an empty group. |
+| `ActiveCount` | `int32` | Number of active alarms. |
+| `UnackedCount` | `int32` | Number needing acknowledgment, including cleared alarms. |
+| `ActiveUnackedCount` | `int32` | Number active and unacknowledged. |
+| `HighestActiveSeverity` | `int32` | Maximum numeric severity of active alarms, or zero when none. |
+
+Parent summaries include all descendants, using `/` boundaries: `Field/Station 1`
+does not include `Field/Station 10`. An alarm is counted once in each ancestor.
+Disabled alarms, disabled sites, and currently shelved alarms do not contribute.
+A newly configured alarm that has never activated does not need acknowledgment.
+Defined empty groups/sites keep zero counts and false alarm conditions.
+Use `ActiveUnacked` instead of `Unacked` when cleared alarms should not trigger an
+indicator. Acknowledgment remains an operation on individual alarms; these tags
+cannot acknowledge alarms or modify their state.
+
+The core polls the alarm status API at most once every two seconds. Summary tags
+are available through HTTP discovery/query, WebSocket system updates, read-only
+OPC UA nodes, and system MQTT publication when enabled. New OPC UA variables are
+created dynamically; removed group variables are removed without a server restart.
+Clients that import OPC UA tags still need to browse/select new summary tags.
+
+If the alarm service is unavailable, the core retains the last group values and
+sets `System/Alarms/RuntimeConnected` false. Gate indicators with that connectivity
+tag to distinguish a retained value from a current summary. The pre-existing
+overall `System/Alarms/UnackedCount` retains its active-only behavior; the new group
+`UnackedCount` deliberately includes cleared, unacknowledged alarms.
+
+Validation:
+
+```bash
+g++ -std=c++17 opcbridge-alarms/test/group-summary.test.cpp -o /tmp/alarm-group-test
+/tmp/alarm-group-test
+python3 opcbridge-alarms/test/test-group-publication.py
+```

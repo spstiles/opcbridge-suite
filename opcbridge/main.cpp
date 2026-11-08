@@ -798,6 +798,7 @@ struct UaSystemBinding {
 
 // OPC UA global state
 static UA_Server *g_uaServer = nullptr;
+static UA_NodeId g_uaAlarmSystemRoot = UA_NODEID_NULL;
 static fs::path g_opcuaRejectedCertificatesDir;
 static fs::path g_opcuaTrustedCertificatesDir;
 static std::chrono::steady_clock::time_point g_nextOpcuaRejectedSync{};
@@ -1808,12 +1809,26 @@ static std::vector<SystemTagDef> collect_alarm_system_tags() {
                 {"System/Alarms/NotificationFailures", "uint64", static_cast<uint64_t>(std::max<int64_t>(0, json_i64_at(j, {"notifications", "failures"}, 0)))},
                 {"System/Alarms/LastNotificationAgeMs", "int64", lastAttempt > 0 ? (nowMs - lastAttempt) : -1}
             };
+            if (j.contains("group_summaries") && j["group_summaries"].is_array()) {
+                for (const auto &group : j["group_summaries"]) {
+                    if (!group.is_object()) continue;
+                    const std::string prefix = "System/Alarms/Groups/" + group.value("path", std::string{}) + "/";
+                    for (const auto *key : {"Active", "Unacked", "ActiveUnacked", "AllAcknowledged"})
+                        next.push_back({prefix + key, "bool", group.value(key, false)});
+                    for (const auto *key : {"ActiveCount", "UnackedCount", "ActiveUnackedCount", "HighestActiveSeverity"})
+                        next.push_back({prefix + key, "int32", group.value(key, 0)});
+                }
+            }
         }
     } catch (...) {
         next = alarm_default_system_tags(false);
     }
 
     std::lock_guard<std::mutex> lock(cacheMutex);
+    if (!next.front().value.get<bool>()) {
+        for (const auto &row : cached)
+            if (row.name.rfind("System/Alarms/Groups/", 0) == 0) next.push_back(row);
+    }
     cached = next;
     return cached;
 }
@@ -13140,6 +13155,7 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers,
             UA_NodeId hostSysId = ua_add_folder(server, systemId, "Host");
             UA_NodeId usersSysId = ua_add_folder(server, systemId, "Users");
             UA_NodeId alarmsSysId = ua_add_folder(server, systemId, "Alarms");
+            g_uaAlarmSystemRoot = alarmsSysId;
             UA_NodeId reporterSysId = ua_add_folder(server, systemId, "Logger");
             UA_NodeId legacyReporterSysId = ua_add_folder(server, systemId, "Reporter");
             UA_NodeId historianSysId = ua_add_folder(server, systemId, "Historian");
@@ -13208,6 +13224,7 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers,
 
             if (!UA_NodeId_isNull(&alarmsSysId)) {
                 for (const auto &alarmRow : collect_alarm_system_tags()) {
+                    if (alarmRow.name.rfind("System/Alarms/Groups/", 0) == 0) continue;
                     ua_add_system_variable(server, alarmsSysId, systemBindings, alarmRow.name, alarmRow.datatype, alarmRow.value);
                 }
             }
@@ -13488,6 +13505,7 @@ void shutdown_opcua_server() {
         { std::lock_guard<std::mutex> lock(g_nativeReadMutex); g_nativeReads.clear(); }
 
         g_uaServer = nullptr;
+        g_uaAlarmSystemRoot = UA_NODEID_NULL;
         UA_NodeId_clear(&g_uaBridgeNodeId);
         g_uaBridgeNodeId = UA_NODEID_NULL;
         g_uaBindings.clear();
@@ -13662,6 +13680,56 @@ static bool ua_add_system_variable(UA_Server *server,
     return true;
 }
 
+static void ua_sync_alarm_group_nodes(const std::vector<SystemTagDef> &rows) {
+    if (!g_uaServer || UA_NodeId_isNull(&g_uaAlarmSystemRoot)) return;
+    const std::string prefix = "System/Alarms/Groups/";
+    std::unordered_set<std::string> present;
+    for (const auto &row : rows) {
+        if (row.name.rfind(prefix, 0) != 0) continue;
+        present.insert(row.name);
+        if (g_uaSystemBindingIndex.count(row.name)) continue;
+        UA_NodeId parent;
+        UA_NodeId_copy(&g_uaAlarmSystemRoot, &parent);
+        const std::string rest = row.name.substr(std::string("System/Alarms/").size());
+        std::string folderPath = "System/Alarms";
+        size_t begin = 0, slash;
+        bool ready = true;
+        while ((slash = rest.find('/', begin)) != std::string::npos) {
+            const std::string segment = rest.substr(begin, slash - begin);
+            folderPath += "/" + segment;
+            std::string id = "SystemFolder/" + folderPath;
+            UA_NodeId folder = UA_NODEID_STRING(1, const_cast<char*>(id.c_str()));
+            UA_NodeClass nodeClass;
+            if (UA_Server_readNodeClass(g_uaServer, folder, &nodeClass) != UA_STATUSCODE_GOOD) {
+                UA_ObjectAttributes attr = UA_ObjectAttributes_default;
+                attr.displayName = UA_LOCALIZEDTEXT(const_cast<char*>("en-US"), const_cast<char*>(segment.c_str()));
+                if (UA_Server_addObjectNode(g_uaServer, folder, parent,
+                    UA_NODEID_NUMERIC(0, UA_NS0ID_ORGANIZES), UA_QUALIFIEDNAME(1, const_cast<char*>(segment.c_str())),
+                    UA_NODEID_NUMERIC(0, UA_NS0ID_FOLDERTYPE), attr, nullptr, nullptr) != UA_STATUSCODE_GOOD) { ready = false; break; }
+            }
+            UA_NodeId_clear(&parent);
+            UA_NodeId_copy(&folder, &parent);
+            begin = slash + 1;
+        }
+        if (ready && ua_add_system_variable(g_uaServer, parent, g_uaSystemBindings, row.name, row.datatype, row.value))
+            g_uaSystemBindingIndex[row.name] = g_uaSystemBindings.size() - 1;
+        UA_NodeId_clear(&parent);
+    }
+    bool removed = false;
+    for (auto it = g_uaSystemBindings.begin(); it != g_uaSystemBindings.end();) {
+        if (it->name.rfind(prefix, 0) == 0 && !present.count(it->name)) {
+            UA_Server_deleteNode(g_uaServer, it->nodeId, true);
+            UA_NodeId_clear(&it->nodeId);
+            it = g_uaSystemBindings.erase(it);
+            removed = true;
+        } else ++it;
+    }
+    if (removed) {
+        g_uaSystemBindingIndex.clear();
+        for (size_t i = 0; i < g_uaSystemBindings.size(); ++i) g_uaSystemBindingIndex[g_uaSystemBindings[i].name] = i;
+    }
+}
+
 static void ua_write_system_value(const std::string &name, const json &value) {
     if (!g_uaServer) return;
     auto it = g_uaSystemBindingIndex.find(name);
@@ -13711,7 +13779,9 @@ static void update_system_opcua_values(std::vector<DriverContext> &drivers,
     for (const auto &userRow : collect_user_system_tags()) {
         ua_write_system_value(userRow.name, userRow.value);
     }
-    for (const auto &alarmRow : collect_alarm_system_tags()) {
+    const auto alarmSystemRows = collect_alarm_system_tags();
+    ua_sync_alarm_group_nodes(alarmSystemRows);
+    for (const auto &alarmRow : alarmSystemRows) {
         ua_write_system_value(alarmRow.name, alarmRow.value);
     }
     for (const auto &reporterRow : collect_reporter_system_tags()) {
