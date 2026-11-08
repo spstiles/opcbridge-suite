@@ -1676,7 +1676,7 @@ const populateVisibilityExpressionConnectionOptions = () => {
   placeholder.value = "";
   placeholder.textContent = "Select connection…";
   visibilityExprTagConnection.appendChild(placeholder);
-  sortConnectionIdsForDisplay(tagsCache.map((tag) => String(tag?.connection_id || ""))).forEach((connectionId) => {
+  tagPickerConnectionIds().forEach((connectionId) => {
     const option = document.createElement("option");
     option.value = connectionId;
     option.textContent = getConnectionDisplayName(connectionId);
@@ -1695,14 +1695,15 @@ const populateVisibilityExpressionTagOptions = (connectionId = "") => {
   placeholder.textContent = "Select tag…";
   visibilityExprTagName.appendChild(placeholder);
   const tagNames = tagsCache
-    .filter((tag) => !selectedConnectionId || String(tag?.connection_id || "") === selectedConnectionId)
+    .filter((tag) => tagPickerMatchesConnection(tag, selectedConnectionId))
     .map((tag) => String(tag?.name || ""))
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
   tagNames.forEach((tagName) => {
     const option = document.createElement("option");
     option.value = tagName;
-    option.textContent = tagName;
+    option.textContent = tagPickerName(tagPickerConnectionId(selectedConnectionId), tagName);
+    option.title = tagName;
     visibilityExprTagName.appendChild(option);
   });
   if (previous && tagNames.includes(previous)) visibilityExprTagName.value = previous;
@@ -1799,7 +1800,7 @@ const populateRectColorExpressionConnectionOptions = () => {
   placeholder.value = "";
   placeholder.textContent = "Select connection…";
   rectColorExprTagConnection.appendChild(placeholder);
-  sortConnectionIdsForDisplay(tagsCache.map((tag) => String(tag?.connection_id || ""))).forEach((connectionId) => {
+  tagPickerConnectionIds().forEach((connectionId) => {
     const option = document.createElement("option");
     option.value = connectionId;
     option.textContent = getConnectionDisplayName(connectionId);
@@ -1821,14 +1822,15 @@ const populateRectColorExpressionTagOptions = (connectionId = "") => {
   placeholder.textContent = "Select tag…";
   rectColorExprTagName.appendChild(placeholder);
   const tagNames = tagsCache
-    .filter((tag) => !selectedConnectionId || String(tag?.connection_id || "") === selectedConnectionId)
+    .filter((tag) => tagPickerMatchesConnection(tag, selectedConnectionId))
     .map((tag) => String(tag?.name || ""))
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
   tagNames.forEach((tagName) => {
     const option = document.createElement("option");
     option.value = tagName;
-    option.textContent = tagName;
+    option.textContent = tagPickerName(tagPickerConnectionId(selectedConnectionId), tagName);
+    option.title = tagName;
     rectColorExprTagName.appendChild(option);
   });
   setSelectValueSafe(rectColorExprTagName, previous || String(rule.tag || ""));
@@ -9240,13 +9242,13 @@ const renderLayerVisibilityControls = (layer, act) => {
     : { sourceType: "tag", mode: "equals", match: "1" });
   const connection = document.createElement("select");
   populateConnectionSelect(connection);
-  setConnectionSelectValue(connection, vis.connection_id || "");
+  setConnectionSelectValue(connection, vis.connection_id || "", vis.tag);
   const tag = document.createElement("select");
   const empty = document.createElement("option"); empty.value = ""; empty.textContent = "Select tag…"; tag.append(empty);
-  const names = new Set(tagsCache.filter(item => String(item.connection_id || "") === connection.value).map(item => String(item.name || "")));
+  const names = new Set(tagsCache.filter(item => tagPickerMatchesConnection(item, connection.value)).map(item => String(item.name || "")));
   if (vis.tag) names.add(vis.tag);
   for (const name of [...names].sort((a, b) => a.localeCompare(b))) {
-    const option = document.createElement("option"); option.value = name; option.textContent = name; tag.append(option);
+    const option = document.createElement("option"); option.value = name; option.textContent = tagPickerName(tagPickerConnectionId(connection.value), name); tag.append(option);
   }
   tag.value = vis.tag || "";
   field("Connection", connection); field("Tag", tag);
@@ -9274,18 +9276,18 @@ const renderLayerVisibilityControls = (layer, act) => {
     const insert = document.createElement("button"); insert.type = "button"; insert.className = "panel-btn"; insert.textContent = "Insert selected tag";
     insert.onclick = () => {
       if (!connection.value || !tag.value) { error.textContent = "Select a connection and tag first."; return; }
-      expression.setRangeText(`tag(${JSON.stringify(connection.value)}, ${JSON.stringify(tag.value)})`, expression.selectionStart, expression.selectionEnd, "end");
+      expression.setRangeText(`tag(${JSON.stringify(tagPickerConnectionId(connection.value))}, ${JSON.stringify(tag.value)})`, expression.selectionStart, expression.selectionEnd, "end");
       expression.focus(); validate();
     };
     details.append(insert); validate();
     connection.onchange = () => {
-      tag.replaceChildren(empty); tagsCache.filter(item => String(item.connection_id || "") === connection.value).forEach(item => {
-        const option = document.createElement("option"); option.value = item.name; option.textContent = item.name; tag.append(option);
+      tag.replaceChildren(empty); tagsCache.filter(item => tagPickerMatchesConnection(item, connection.value)).forEach(item => {
+        const option = document.createElement("option"); option.value = item.name; option.textContent = tagPickerName(item.connection_id, item.name); tag.append(option);
       });
     };
   } else {
-    connection.onchange = () => update({ connection_id: connection.value, tag: "" });
-    tag.onchange = () => update({ connection_id: connection.value, tag: tag.value });
+    connection.onchange = () => update({ connection_id: tagPickerConnectionId(connection.value), tag: "" });
+    tag.onchange = () => update({ connection_id: tagPickerConnectionId(connection.value), tag: tag.value });
     const comparison = field("Show when", select([["equals", "Equals"], ["threshold", "At or above"]], vis.mode === "threshold" ? "threshold" : "equals"));
     comparison.onchange = () => update({ mode: comparison.value });
     const value = document.createElement("input"); value.type = comparison.value === "threshold" ? "number" : "text";
@@ -10089,7 +10091,7 @@ const createInlineTextBindingRow = ({ key, binding, objectType = "text" }) => {
     connectionInput = document.createElement("select");
     connectionInput.className = "automation-tag-input";
     const bindingConnectionId = String(binding?.connection_id || "").trim();
-    setConnectionSelectValue(connectionInput, bindingConnectionId);
+    setConnectionSelectValue(connectionInput, bindingConnectionId, binding.tag);
     sourceControl = connectionInput;
   }
 
@@ -12569,7 +12571,7 @@ const isActiveElementWithin = (container) => {
 };
 
 const setTagBindingFieldValues = (connectionInput, tagInput, binding) => {
-  setFriendlyConnectionInputValue(connectionInput, String(binding?.connection_id || "").trim());
+  setFriendlyConnectionInputValue(connectionInput, String(binding?.connection_id || "").trim(), binding?.tag);
   setInputValueSafe(tagInput, String(binding?.tag || "").trim());
 };
 
@@ -12841,6 +12843,18 @@ const createIndicatorId = () => {
   return id;
 };
 
+// Picker-only category: option values and saved bindings retain canonical tag identities.
+const ALARM_TAG_PICKER_ID = '__alarm_status_picker';
+const isAlarmStatusTag = tag => String(tag?.connection_id || '') === '_system'
+  && String(tag?.name || '').startsWith('System/Alarms/');
+const tagPickerCategory = tag => isAlarmStatusTag(tag) ? ALARM_TAG_PICKER_ID : String(tag?.connection_id || '');
+const tagPickerConnectionId = id => id === ALARM_TAG_PICKER_ID ? '_system' : String(id || '');
+const tagPickerName = (connectionId, name) => connectionId === '_system' && String(name).startsWith('System/Alarms/')
+  ? String(name).replace(/^System\/Alarms\/(?:Groups\/)?/, '') : String(name || '');
+const tagPickerConnectionIds = () => sortConnectionIdsForDisplay(tagsCache.map(tagPickerCategory));
+const tagPickerMatchesConnection = (tag, id) => !id || tagPickerCategory(tag) === id;
+const tagPickerConnectionForBinding = (id, name) => isAlarmStatusTag({ connection_id: id, name }) ? ALARM_TAG_PICKER_ID : id;
+
 const populateTagSelect = (selectEl) => {
   if (!selectEl) return;
   const previous = selectEl.value;
@@ -12854,8 +12868,9 @@ const populateTagSelect = (selectEl) => {
     const connectionId = String(tag.connection_id || "");
     const tagName = String(tag.name || "");
     const value = `${connectionId}::${tagName}`;
-    if (!groups.has(connectionId)) groups.set(connectionId, []);
-    groups.get(connectionId).push({ value, tagName });
+    const category = tagPickerCategory(tag);
+    if (!groups.has(category)) groups.set(category, []);
+    groups.get(category).push({ value, tagName });
   });
   const tagAliases = getEffectiveScreenAliases(currentScreenObj).filter((alias) => alias.type === "tag");
   if (tagAliases.length) {
@@ -12875,7 +12890,8 @@ const populateTagSelect = (selectEl) => {
     entries.forEach((entry) => {
       const opt = document.createElement("option");
       opt.value = entry.value;
-      opt.textContent = entry.tagName || "?";
+      opt.textContent = tagPickerName(parseTagSelectValue(entry.value).connection_id, entry.tagName) || "?";
+      opt.title = entry.tagName;
       group.appendChild(opt);
     });
     selectEl.appendChild(group);
@@ -12895,7 +12911,7 @@ const populateConnectionSelect = (selectEl) => {
     }
     return;
   }
-  const connectionIds = sortConnectionIdsForDisplay(tagsCache.map((tag) => String(tag?.connection_id || "")));
+  const connectionIds = tagPickerConnectionIds();
   selectEl.innerHTML = "";
   const placeholder = document.createElement("option");
   placeholder.value = "";
@@ -12913,9 +12929,9 @@ const populateConnectionSelect = (selectEl) => {
   }
 };
 
-const setConnectionSelectValue = (selectEl, connectionId = "") => {
+const setConnectionSelectValue = (selectEl, connectionId = "", tagName = "") => {
   if (!selectEl) return;
-  const normalizedId = String(connectionId || "").trim();
+  const normalizedId = tagPickerConnectionForBinding(String(connectionId || "").trim(), tagName);
   populateConnectionSelect(selectEl);
   if (normalizedId && !Array.from(selectEl.options).some((option) => option.value === normalizedId)) {
     const unresolvedOption = document.createElement("option");
@@ -12947,7 +12963,7 @@ const populateFilteredCombinedTagSelect = (selectEl, connectionId = "") => {
   placeholder.textContent = "Select tag…";
   selectEl.appendChild(placeholder);
   const tags = tagsCache
-    .filter((tag) => !selectedConnectionId || String(tag?.connection_id || "") === selectedConnectionId)
+    .filter((tag) => tagPickerMatchesConnection(tag, selectedConnectionId) || `${tag.connection_id}::${tag.name}` === previous)
     .map((tag) => ({
       connectionId: String(tag?.connection_id || ""),
       tagName: String(tag?.name || "")
@@ -12957,7 +12973,8 @@ const populateFilteredCombinedTagSelect = (selectEl, connectionId = "") => {
   tags.forEach(({ connectionId: nextConnectionId, tagName }) => {
     const opt = document.createElement("option");
     opt.value = `${nextConnectionId}::${tagName}`;
-    opt.textContent = tagName;
+    opt.textContent = tagPickerName(nextConnectionId, tagName);
+    opt.title = tagName;
     selectEl.appendChild(opt);
   });
   selectEl.dataset.tagsVersion = nextVersion;
@@ -13189,9 +13206,9 @@ const renderTagsList = (tags) => {
 	        const tagConnectionId = String(tag.connection_id || "");
 	        const tagName = String(tag.name || "");
           if (activeCompactTagBindingId) {
-            if (tagBindingConnectionSelect) tagBindingConnectionSelect.value = tagConnectionId;
-            populateCompactTagBindingTagOptions(tagConnectionId);
-            if (tagBindingTagSelect) tagBindingTagSelect.value = tagName;
+            if (tagBindingConnectionSelect) tagBindingConnectionSelect.value = tagPickerConnectionForBinding(tagConnectionId, tagName);
+            populateCompactTagBindingTagOptions(tagBindingConnectionSelect?.value || tagConnectionId);
+            if (tagBindingTagSelect) tagBindingTagSelect.value = `${tagConnectionId}::${tagName}`;
             return;
           }
 	        if (!obj || (obj.type !== "text" && obj.type !== "bar" && obj.type !== "number-input" && obj.type !== "button" && obj.type !== "indicator")) return;
@@ -23097,7 +23114,7 @@ if (textBindingSaveBtn) {
       property: textBindingPropertySelect?.value === "quality" ? "quality" : "value",
       ...(sourceType === "expression"
         ? { expression, connection_id: "", tag: "" }
-        : { expression: "", connection_id: String(textBindingConnectionInput?.value || "").trim(), tag: String(textBindingTagInput?.value || "").trim() }),
+        : { expression: "", connection_id: tagPickerConnectionId(String(textBindingConnectionInput?.value || "").trim()), tag: String(textBindingTagInput?.value || "").trim() }),
       digits: String(textBindingDigitsInput?.value || "").trim() !== "" && Number.isFinite(Number(textBindingDigitsInput.value)) ? Number(textBindingDigitsInput.value) : "",
       padZeros: Boolean(textBindingPadZerosInput?.checked),
       decimals: Number.isFinite(Number(textBindingDecimalsInput?.value)) ? Number(textBindingDecimalsInput.value) : 0,
@@ -23171,7 +23188,7 @@ if (tagBindingSaveBtn) {
     if (!config) return;
     const selectedTagOption = tagBindingTagSelect?.selectedOptions?.[0] || null;
     const parsedSelection = parseTagSelectValue(String(tagBindingTagSelect?.value || ""));
-    const connection_id = String(selectedTagOption?.dataset?.connectionId || tagBindingConnectionSelect?.value || parsedSelection.connection_id || "").trim();
+    const connection_id = tagPickerConnectionId(String(selectedTagOption?.dataset?.connectionId || tagBindingConnectionSelect?.value || parsedSelection.connection_id || "").trim());
     const template = String(tagBindingTemplateInput?.value || "").trim();
     const tag = template || String(selectedTagOption?.dataset?.tag || parsedSelection.tag || "").trim();
     if (config.connectionInput) setFriendlyConnectionInputValue(config.connectionInput, connection_id);
@@ -23345,7 +23362,7 @@ if (buttonLabelBindTagSelect) {
   buttonLabelBindTagSelect.addEventListener("change", () => {
     const value = buttonLabelBindTagSelect.value;
     if (!value) {
-      updateButtonLabelBindProperty({ tag: "", connection_id: buttonLabelBindConnectionInput?.value?.trim() || "" });
+      updateButtonLabelBindProperty({ tag: "", connection_id: tagPickerConnectionId(buttonLabelBindConnectionInput?.value?.trim() || "") });
       return;
     }
     const [connectionId, tagName] = value.split("::");
@@ -24887,7 +24904,7 @@ if (barBindTagSelect) {
   barBindTagSelect.addEventListener("change", () => {
     const value = barBindTagSelect.value;
     if (!value) {
-      updateBarBindProperty({ tag: "", connection_id: barBindConnectionInput?.value?.trim() || "" });
+      updateBarBindProperty({ tag: "", connection_id: tagPickerConnectionId(barBindConnectionInput?.value?.trim() || "") });
       return;
     }
     const [connectionId, tagName] = value.split("::");
@@ -24927,7 +24944,7 @@ if (numberInputTagSelect) {
   numberInputTagSelect.addEventListener("change", () => {
     const value = numberInputTagSelect.value;
     if (!value) {
-      updateNumberInputBindProperty({ tag: "", connection_id: numberInputConnectionInput?.value?.trim() || "" });
+      updateNumberInputBindProperty({ tag: "", connection_id: tagPickerConnectionId(numberInputConnectionInput?.value?.trim() || "") });
       return;
     }
     const [connectionId, tagName] = value.split("::");
@@ -25284,7 +25301,7 @@ if (indicatorStrokeWidthInput) {
 if (indicatorConnectionInput) {
   indicatorConnectionInput.addEventListener("change", () => {
     const value = connectionIdFromFriendlyInput(indicatorConnectionInput);
-    updateIndicatorBindProperty({ connection_id: value });
+    updateIndicatorBindProperty({ connection_id: tagPickerConnectionId(value) });
   });
 }
 
@@ -25643,7 +25660,7 @@ if (visibilityExprTagConnection) {
 
 if (visibilityExprInsertTagBtn) {
   visibilityExprInsertTagBtn.addEventListener("click", () => {
-    const connectionId = String(visibilityExprTagConnection?.value || "").trim();
+    const connectionId = tagPickerConnectionId(String(visibilityExprTagConnection?.value || "").trim());
     const tagName = String(visibilityExprTagName?.value || "").trim();
     if (!connectionId || !tagName) return;
     insertVisibilityExpressionText(formatAutomationExpressionForDisplay(`tag(${JSON.stringify(connectionId)}, ${JSON.stringify(tagName)})`));
@@ -25744,7 +25761,7 @@ if (rectColorExprTagConnection) {
 
 if (rectColorExprInsertTagBtn) {
   rectColorExprInsertTagBtn.addEventListener("click", () => {
-    const connectionId = String(rectColorExprTagConnection?.value || "").trim();
+    const connectionId = tagPickerConnectionId(String(rectColorExprTagConnection?.value || "").trim());
     const tagName = String(rectColorExprTagName?.value || "").trim();
     if (!connectionId || !tagName) return;
     insertRectColorExpressionText(formatAutomationExpressionForDisplay(`tag(${JSON.stringify(connectionId)}, ${JSON.stringify(tagName)})`));
@@ -26008,6 +26025,7 @@ function refreshConnectionDisplayNameCache() {
 function getConnectionDisplayName(connectionId) {
   const id = String(connectionId || "").trim();
   if (!id) return "";
+  if (id === ALARM_TAG_PICKER_ID) return "Alarms";
   refreshConnectionDisplayNameCache();
   const friendly = String(connectionDisplayNameCache.get(id) || "").trim();
   if (friendly) return friendly;
@@ -26043,9 +26061,9 @@ function ensureFriendlyConnectionNames(input) {
   input.placeholder = "Connection name";
 }
 
-function setFriendlyConnectionInputValue(input, connectionId) {
+function setFriendlyConnectionInputValue(input, connectionId, tagName = "") {
   if (!input) return;
-  if (input.tagName === "SELECT") { setConnectionSelectValue(input, connectionId); return; }
+  if (input.tagName === "SELECT") { setConnectionSelectValue(input, connectionId, tagName); return; }
   const id = String(connectionId || "").trim();
   input.dataset.connectionId = id;
   input.value = getConnectionDisplayName(id);
@@ -26054,7 +26072,7 @@ function setFriendlyConnectionInputValue(input, connectionId) {
 
 function connectionIdFromFriendlyInput(input) {
   if (!input) return "";
-  if (input.tagName === "SELECT") return String(input.value || "").trim();
+  if (input.tagName === "SELECT") return tagPickerConnectionId(String(input.value || "").trim());
   const typed = String(input.value || "").trim();
   const stored = String(input.dataset.connectionId || "").trim();
   if (stored && typed.toLowerCase() === getConnectionDisplayName(stored).toLowerCase()) return stored;
@@ -26072,7 +26090,7 @@ function populateCompactTagBindingConnectionOptions() {
   placeholder.value = "";
   placeholder.textContent = "Select connection…";
   tagBindingConnectionSelect.appendChild(placeholder);
-  sortConnectionIdsForDisplay(tagsCache.map((tag) => String(tag?.connection_id || ""))).forEach((connectionId) => {
+  tagPickerConnectionIds().forEach((connectionId) => {
     const option = document.createElement("option");
     option.value = connectionId;
     option.textContent = getConnectionDisplayName(connectionId);
@@ -26097,7 +26115,8 @@ function populateCompactTagBindingTagOptions(connectionId = "") {
   const createTagOption = (connectionIdValue, tagName) => {
     const option = document.createElement("option");
     option.value = `${connectionIdValue}::${tagName}`;
-    option.textContent = tagName;
+    option.textContent = tagPickerName(connectionIdValue, tagName);
+    option.title = tagName;
     option.dataset.connectionId = connectionIdValue;
     option.dataset.tag = tagName;
     return option;
@@ -26105,22 +26124,22 @@ function populateCompactTagBindingTagOptions(connectionId = "") {
   const matchesFilter = (tagName) => !filterQuery || String(tagName || "").toLowerCase().includes(filterQuery.toLowerCase());
   if (selectedConnectionId) {
     const tagNames = tagsCache
-      .filter((tag) => String(tag?.connection_id || "") === selectedConnectionId)
+      .filter((tag) => tagPickerMatchesConnection(tag, selectedConnectionId))
       .map((tag) => String(tag?.name || ""))
       .filter((tagName) => tagName && matchesFilter(tagName))
       .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
-    tagNames.forEach((tagName) => tagBindingTagSelect.appendChild(createTagOption(selectedConnectionId, tagName)));
+    tagNames.forEach((tagName) => tagBindingTagSelect.appendChild(createTagOption(tagPickerConnectionId(selectedConnectionId), tagName)));
   } else {
-    sortConnectionIdsForDisplay(tagsCache.map((tag) => String(tag?.connection_id || ""))).forEach((tagConnectionId) => {
+    tagPickerConnectionIds().forEach((tagConnectionId) => {
       const tagNames = tagsCache
-        .filter((tag) => String(tag?.connection_id || "") === tagConnectionId)
+        .filter((tag) => tagPickerMatchesConnection(tag, tagConnectionId))
         .map((tag) => String(tag?.name || ""))
         .filter((tagName) => tagName && matchesFilter(tagName))
         .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
       if (!tagNames.length) return;
       const group = document.createElement("optgroup");
       group.label = getConnectionDisplayName(tagConnectionId);
-      tagNames.forEach((tagName) => group.appendChild(createTagOption(tagConnectionId, tagName)));
+      tagNames.forEach((tagName) => group.appendChild(createTagOption(tagPickerConnectionId(tagConnectionId), tagName)));
       tagBindingTagSelect.appendChild(group);
     });
   }
@@ -26168,8 +26187,8 @@ function openCompactTagBindingModal(id) {
       : "";
   }
   populateCompactTagBindingConnectionOptions();
-  setSelectValueSafe(tagBindingConnectionSelect, binding.connection_id || "");
-  populateCompactTagBindingTagOptions(binding.connection_id || "");
+  setSelectValueSafe(tagBindingConnectionSelect, tagPickerConnectionForBinding(binding.connection_id || "", binding.tag));
+  populateCompactTagBindingTagOptions(tagBindingConnectionSelect?.value || "");
   setSelectValueSafe(tagBindingTagSelect, formatTagSelectValue(binding.connection_id, binding.tag));
   tagBindingOverlay.classList.remove("is-hidden");
   tagBindingOverlay.setAttribute("aria-hidden", "false");
@@ -26180,7 +26199,7 @@ function renderCompactTagBindingRows() {
   compactTagBindingConfigs.forEach((config) => {
     const binding = config.read();
     if (config.editorConnectionInput) {
-      setConnectionSelectValue(config.editorConnectionInput, binding.connection_id || "");
+      setConnectionSelectValue(config.editorConnectionInput, binding.connection_id || "", binding.tag);
     }
     if (config.editorTagInput && document.activeElement !== config.editorTagInput) config.editorTagInput.value = String(binding.tag || "");
   });
@@ -26231,7 +26250,7 @@ function registerCompactTagBinding(config) {
   button.addEventListener("click", () => openCompactTagBindingModal(config.id));
 
   const readEditedBinding = () => {
-    const connection_id = String(editorConnectionInput.value || "").trim();
+    const connection_id = tagPickerConnectionId(String(editorConnectionInput.value || "").trim());
     const tag = String(editorTagInput.value || "").trim();
     return { connection_id, tag };
   };
@@ -26350,7 +26369,7 @@ function initializeCompactTagBindingRows() {
     modalTitle: "Binding Tag",
     inlineOnly: true,
     read: () => ({
-      connection_id: String(textBindingConnectionInput?.value || "").trim(),
+      connection_id: tagPickerConnectionId(String(textBindingConnectionInput?.value || "").trim()),
       tag: String(textBindingTagInput?.value || "").trim()
     }),
     apply: ({ connection_id, tag }) => setTagBindingFieldValues(textBindingConnectionInput, textBindingTagInput, { connection_id, tag })
@@ -26370,7 +26389,7 @@ function initializeCompactTagBindingRows() {
       buttonLabel: "Source",
       modalTitle: entry.title,
       read: () => ({
-        connection_id: String(entry.connectionInput?.value || "").trim(),
+        connection_id: tagPickerConnectionId(String(entry.connectionInput?.value || "").trim()),
         tag: parseTagSelectValue(entry.tagSelect?.value || "").tag
       }),
       apply: ({ connection_id, tag }) => updateAutomationProperty(entry.key, { connection_id, tag, enabled: true })
@@ -26399,7 +26418,7 @@ function initializeCompactTagBindingRows() {
     buttonLabel: "Source",
     modalTitle: "Numeric Entry Tag",
     read: () => ({
-      connection_id: String(numberInputConnectionInput?.value || "").trim(),
+      connection_id: tagPickerConnectionId(String(numberInputConnectionInput?.value || "").trim()),
       tag: parseTagSelectValue(numberInputTagSelect?.value || "").tag
     }),
     apply: ({ connection_id, tag }) => updateNumberInputBindProperty({ connection_id, tag })
@@ -26414,7 +26433,7 @@ function initializeCompactTagBindingRows() {
     buttonLabel: "Source",
     modalTitle: "Indicator Tag",
     read: () => ({
-      connection_id: String(indicatorConnectionInput?.value || "").trim(),
+      connection_id: tagPickerConnectionId(String(indicatorConnectionInput?.value || "").trim()),
       tag: parseTagSelectValue(indicatorTagSelect?.value || "").tag,
       property: getActiveObjects()?.[selectedIndices[0]]?.bindValue?.property || "value"
     }),
@@ -26430,7 +26449,7 @@ function initializeCompactTagBindingRows() {
     buttonLabel: "Source",
     modalTitle: "Bar Value Tag",
     read: () => ({
-      connection_id: String(barBindConnectionInput?.value || "").trim(),
+      connection_id: tagPickerConnectionId(String(barBindConnectionInput?.value || "").trim()),
       tag: parseTagSelectValue(barBindTagSelect?.value || "").tag
     }),
     apply: ({ connection_id, tag }) => updateBarBindProperty({ connection_id, tag })
@@ -26444,7 +26463,7 @@ function initializeCompactTagBindingRows() {
     buttonLabel: "Source",
     modalTitle: "Bar Minimum Tag",
     read: () => ({
-      connection_id: String(barMinConnectionInput?.value || "").trim(),
+      connection_id: tagPickerConnectionId(String(barMinConnectionInput?.value || "").trim()),
       tag: parseTagSelectValue(barMinTagSelect?.value || "").tag
     }),
     apply: ({ connection_id, tag }) => updateBarRangeBinding("min", { enabled: true, connection_id, tag })
@@ -26458,7 +26477,7 @@ function initializeCompactTagBindingRows() {
     buttonLabel: "Source",
     modalTitle: "Bar Maximum Tag",
     read: () => ({
-      connection_id: String(barMaxConnectionInput?.value || "").trim(),
+      connection_id: tagPickerConnectionId(String(barMaxConnectionInput?.value || "").trim()),
       tag: parseTagSelectValue(barMaxTagSelect?.value || "").tag
     }),
     apply: ({ connection_id, tag }) => updateBarRangeBinding("max", { enabled: true, connection_id, tag })

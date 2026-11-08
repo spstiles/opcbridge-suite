@@ -20,6 +20,7 @@ function setup() {
     getConnectionDisplayName: id => names[id] || id,
     resolveMappedConnectionId: () => { throw new Error('Selected IDs must not be reinterpreted as display names'); }
   });
+  vm.runInContext(source.slice(source.indexOf('const ALARM_TAG_PICKER_ID ='), source.indexOf('const populateTagSelect =')), context);
   vm.runInContext(source.slice(source.indexOf('function sortConnectionIdsForDisplay('), source.indexOf('let connectionDisplayNameCacheVersion')), context);
   vm.runInContext(source.slice(source.indexOf('const populateConnectionSelect ='), source.indexOf('const populateFilteredCombinedTagSelect =')), context);
   vm.runInContext(source.slice(source.indexOf('function ensureFriendlyConnectionNames('), source.indexOf('function populateCompactTagBindingConnectionOptions(')), context);

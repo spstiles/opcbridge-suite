@@ -29,6 +29,7 @@ test('visibility tag insertion, save and repeated reopen display names while sto
     insertVisibilityExpressionText: text => {editor.value=text;},
     updateVisibilityProperty: patch => {obj.visibility=patch;}, closeVisibilityExpressionModal:noop,
   });
+  vm.runInContext(source.slice(source.indexOf('const ALARM_TAG_PICKER_ID ='), source.indexOf('const populateTagSelect =')), c);
   vm.runInContext(slice('const decodeExpressionStringLiteral =','const extractVisibilityExpressionTagKeys ='),c);
   vm.runInContext(slice('const openVisibilityExpressionModal =','const hideRectColorExpressionInsertMenu ='),c);
   vm.runInContext(slice('if (visibilityExpressionSaveBtn) {','if (visibilityExpressionEditor) {'),c);
