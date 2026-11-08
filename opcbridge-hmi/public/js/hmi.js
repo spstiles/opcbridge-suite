@@ -7576,9 +7576,14 @@ const centerReferenceObjectInView = (obj) => {
   screenWrapper.scrollTop += centerY - (viewport.top + screenWrapper.clientTop + screenWrapper.clientHeight / 2);
 };
 
+const editorObjectElements = new Map();
+const editorObjectKey = obj => String(obj?.id || obj?.importId || "");
+const editorElementForObject = (obj, index) => editorObjectElements.get(editorObjectKey(obj))?.element
+  || (!groupEditStack.length ? renderedElementMeta.find(item => item.index === index)?.el : null);
+
 // Ordinary drags can move existing SVG nodes instead of repainting the whole screen.
 const previewEditorDrag = (origins) => {
-  if (groupEditStack.length || !origins.length || origins.some(origin =>
+  if (!origins.length || origins.some(origin =>
     !['xy', 'cxy'].includes(origin.mode) || !origin.previewElement?.isConnected)) return false;
   const objects = getActiveObjects();
   for (const origin of origins) {
@@ -7588,7 +7593,24 @@ const previewEditorDrag = (origins) => {
     const dy = Number(obj.y ?? obj.cy ?? 0) - Number(origin.y);
     origin.previewElement.setAttribute('transform',
       `translate(${dx} ${dy}) ${origin.previewTransform || ''}`.trim());
+    origin.previewElement.transform?.baseVal?.consolidate?.();
   }
+  if (groupEditStack.length) buildGroupEditMeta();
+  updateSelectionOverlays();
+  return true;
+};
+
+const redrawNudgedEditorObjects = () => {
+  const objects = getActiveObjects();
+  const entries = selectedIndices.map(index => ({ obj: objects?.[index],
+    entry: editorObjectElements.get(editorObjectKey(objects?.[index])) }));
+  if (!entries.length || entries.some(({ obj, entry }) => !obj || !entry?.element?.isConnected)) return false;
+  for (const { obj, entry } of entries) {
+    entry.element.textContent = '';
+    entry.element.removeAttribute('transform');
+    renderObjectContentInto(entry.element, getDisplayObject(obj), entry.inherited);
+  }
+  if (groupEditStack.length) buildGroupEditMeta();
   updateSelectionOverlays();
   return true;
 };
@@ -7605,7 +7627,7 @@ const scheduleNudgePropertiesRefresh = () => {
 
 const captureNudgePreviewOrigins = (objects, indices) => indices.map(index => {
   const obj = objects[index];
-  const el = renderedElementMeta.find(item => item.index === index)?.el;
+  const el = editorElementForObject(obj, index);
   return {
     index,
     mode: ['line', 'polyline', 'pipe', 'polygon', 'spline', 'curve'].includes(obj?.type)
@@ -14567,6 +14589,12 @@ const automaticReportTableDateFormat = (obj, report) => {
 };
 
 const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
+  if (isEditMode && editorObjectKey(obj)) {
+    const host = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    parent.appendChild(host);
+    editorObjectElements.set(editorObjectKey(obj), { element: host, inherited: inheritedGroupColorOverrides });
+    return renderObjectContentInto(host, obj, inheritedGroupColorOverrides);
+  }
   const rate = !isEditMode && !browserColorFlashPhase ? getBrowserColorFlashRate(obj) : null;
   if (!rate) return renderObjectContentInto(parent, obj, inheritedGroupColorOverrides);
   const previous = browserColorFlashPhase;
@@ -16458,6 +16486,7 @@ const renderScreen = ({ refreshReferenceHealth = true } = {}) => {
   nextPaintGradientId = 1;
   renderedElements = [];
   renderedElementMeta = [];
+  editorObjectElements.clear();
   const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
   hmiSvg.appendChild(defs);
 
@@ -21321,6 +21350,11 @@ window.addEventListener("keydown", (evt) => {
 	  const activeObjects = getActiveObjects();
 	  if (!activeObjects || !Array.isArray(activeObjects)) return;
 	  if (!selectedIndices.length) return;
+	  // Discard old auto-repeat events rather than replaying movement seconds later.
+	  if (evt.repeat && performance.now() - evt.timeStamp > 150) {
+	    evt.preventDefault();
+	    return;
+	  }
 	  syncSelectedPolygonVertex();
 	  evt.preventDefault();
 	  recordHistory();
@@ -21342,10 +21376,13 @@ window.addEventListener("keydown", (evt) => {
 	          y: snapValue(Math.round(Number(pt.y ?? 0) + delta.y))
 	        };
 	        obj.points = points;
-	        renderScreen();
-	        syncEditorFromScreen();
-	        updateSelectionOverlays();
-	        updatePropertiesPanel();
+	        if (redrawNudgedEditorObjects()) scheduleNudgePropertiesRefresh();
+	        else {
+	          renderScreen({ refreshReferenceHealth: false });
+	          syncEditorFromScreen();
+	          updateSelectionOverlays();
+	          updatePropertiesPanel();
+	        }
 	        setDirty(true);
 	        return;
 	      }
@@ -21380,7 +21417,7 @@ window.addEventListener("keydown", (evt) => {
 	      obj.cy = snapValue(Math.round((obj.cy ?? 0) + delta.y));
 	    }
 	  });
-	  if (previewEditorDrag(previewOrigins)) {
+	  if (previewEditorDrag(previewOrigins) || redrawNudgedEditorObjects()) {
 	    scheduleNudgePropertiesRefresh();
 	  } else {
 	    renderScreen({ refreshReferenceHealth: false });
@@ -32545,8 +32582,8 @@ const setTool = (nextTool) => {
           x: obj?.x ?? obj?.cx ?? 0,
           y: obj?.y ?? obj?.cy ?? 0,
           mode: obj?.x != null || obj?.y != null ? "xy" : "cxy",
-          previewElement: renderedElementMeta.find(item => item.index === index)?.el,
-          previewTransform: renderedElementMeta.find(item => item.index === index)?.el?.getAttribute('transform') || ''
+          previewElement: editorElementForObject(obj, index),
+          previewTransform: editorElementForObject(obj, index)?.getAttribute('transform') || ''
         };
       });
       return;

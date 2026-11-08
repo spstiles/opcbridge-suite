@@ -18,7 +18,7 @@ test('drag preview moves existing nodes with snapped positions and preserves rot
   origin.previewElement.isConnected = false;
   assert.equal(vm.runInContext('previewEditorDrag(origins)', ctx), false);
 });
-test('nested groups and nontranslation shapes use the existing renderer', () => {
+test('objects without SVG nodes and nontranslation shapes need localized repaint', () => {
   const ctx = vm.createContext({ groupEditStack: [{}], origins: [{ mode: 'xy' }] });
   vm.runInContext(helper, ctx);
   assert.equal(vm.runInContext('previewEditorDrag(origins)', ctx), false);
@@ -34,7 +34,9 @@ test('repeated arrow nudges update the model and SVG without a full-screen redra
     setAttribute: (name, value) => { transform = value; } };
   const context = vm.createContext({
     window: { addEventListener: (event, fn) => { handler = fn; } },
-    document: { activeElement: null }, isEditMode: true, selectedIndices: [0],
+    document: { activeElement: null }, performance: { now: () => 1000 },
+    editorElementForObject: () => element,
+    isEditMode: true, selectedIndices: [0],
     selectedPolygonVertex: null, groupEditStack: [],
     renderedElementMeta: [{ index: 0, el: element }],
     getActiveObjects: () => objects, syncSelectedPolygonVertex: () => {},
@@ -56,4 +58,21 @@ test('repeated arrow nudges update the model and SVG without a full-screen redra
   assert.equal(histories, 2);
   assert.equal(refreshes, 2);
   assert.equal(transform, 'translate(1 0) translate(1 0) rotate(15)');
+  handler({ key: 'ArrowRight', repeat: true, timeStamp: 0, preventDefault() {} });
+  assert.equal(objects[0].x, 102, 'stale repeat must not replay movement');
+  assert.equal(histories, 2);
+});
+
+
+test('nested-group nudges move only the child SVG node and refresh hit bounds', () => {
+  let transform, bounds = 0;
+  const origin = { index: 0, mode: 'xy', x: 10, y: 20,
+    previewElement: { isConnected: true, setAttribute: (key, value) => { transform = value; } } };
+  const context = vm.createContext({ groupEditStack: [{}],
+    getActiveObjects: () => [{ x: 11, y: 20 }],
+    buildGroupEditMeta: () => bounds++, updateSelectionOverlays: () => {}, origins: [origin] });
+  vm.runInContext(helper, context);
+  assert.equal(vm.runInContext('previewEditorDrag(origins)', context), true);
+  assert.equal(transform, 'translate(1 0)');
+  assert.equal(bounds, 1);
 });
