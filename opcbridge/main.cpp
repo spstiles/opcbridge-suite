@@ -1,5 +1,6 @@
 #include "alarm_status_source.h"
 #include "async_poll_batch.h"
+#include "poll_read_retry.h"
 #include "poll_sweep_estimate.h"
 #include "idle_connection_probe.h"
 #include "active_sweep.h"
@@ -29415,6 +29416,7 @@ window.addEventListener("load", startAutoRefresh);
 	            bool handle_pending_observed = false;
                 bool demand_active = true;
                 ModbusReadRecovery modbus_recovery;
+                PollReadRetry logix_retry;
 	            std::chrono::steady_clock::time_point next_poll;
 	            std::chrono::steady_clock::time_point handle_pending_since{};
 
@@ -29966,11 +29968,11 @@ window.addEventListener("load", startAutoRefresh);
                             };
                             std::unordered_map<size_t, LogixReadResult> logixPrefetch;
                             const std::string logixCpu = to_lower_copy(spec.conn.plc_type);
-                            const bool batchLogix = !is_modbus_connection(spec.conn) &&
-                                !is_opcua_client_driver_name(spec.conn.driver) && maxReadsPerSec == 0 &&
-                                spec.conn.default_read_ms > 0 &&
+                            const bool logixRead = !is_modbus_connection(spec.conn) &&
+                                !is_opcua_client_driver_name(spec.conn.driver) &&
                                 (logixCpu == "lgx" || logixCpu == "logix" || logixCpu == "controllogix" ||
                                  logixCpu == "clgx" || logixCpu == "compactlogix");
+                            const bool batchLogix = logixRead && maxReadsPerSec == 0 && spec.conn.default_read_ms > 0;
                             // Called only with lifecycle and connection gates held. Cache values,
                             // not handles: a writer can change a handle before publication.
                             auto demandAllows = [&](size_t index) {
@@ -30015,14 +30017,16 @@ window.addEventListener("load", startAutoRefresh);
                                 }
                             };
                             auto prefetchLogixDue = [&](size_t requested, auto dueNow) {
-                                if (!batchLogix || !demandAllows(requested) || logixPrefetch.count(requested)) return;
+                                if (!batchLogix || !demandAllows(requested) || logixPrefetch.count(requested) ||
+                                    !spec.tags[requested].logix_retry.ready(dueNow)) return;
                                 std::vector<size_t> indices;
                                 indices.push_back(requested);
                                 for (size_t i = 0; i < spec.tags.size() && indices.size() < static_cast<size_t>(batchSize); ++i) {
                                     const auto &candidate = spec.tags[i];
                                     if (i != requested && candidate.demand_active && demandAllows(i) && candidate.next_poll <= dueNow &&
                                         !logixPrefetch.count(i) && candidate.handle >= 0 &&
-                                        !candidate.handle_deferred && plc_tag_status(candidate.handle) == PLCTAG_STATUS_OK)
+                                        !candidate.handle_deferred && candidate.logix_retry.ready(dueNow) &&
+                                        plc_tag_status(candidate.handle) != PLCTAG_STATUS_PENDING)
                                         indices.push_back(i);
                                 }
                                 async_poll_batch(indices, spec.conn.default_read_ms,
@@ -30214,6 +30218,7 @@ window.addEventListener("load", startAutoRefresh);
 		                                    } else {
                                             const bool modbusRecovery = is_modbus_connection(spec.conn);
                                             if (modbusRecovery && !t.modbus_recovery.ready(nowSteady)) continue;
+                                            if (logixRead && !logixPrefetch.count(top.idx) && !t.logix_retry.ready(nowSteady)) continue;
 		                                    if (t.handle < 0 && t.handle_deferred) {
 		                                        std::string tagStr;
 		                                        try {
@@ -30303,7 +30308,9 @@ window.addEventListener("load", startAutoRefresh);
                                                     if (handleStatus == PLCTAG_STATUS_PENDING) continue;
 			                                }
 		                                t.handle_pending_observed = false;
-                                                if (!modbusRecovery && handleStatus != PLCTAG_STATUS_OK) {
+                                                // libplctag errors describe the previous operation.
+                                                // A later Logix read must be allowed to recover.
+                                                if (!modbusRecovery && !logixRead && handleStatus != PLCTAG_STATUS_OK) {
 		                                    status = handleStatus;
 		                                } else {
 			                                publishReadyDeferredHandle(t);
@@ -30391,6 +30398,9 @@ window.addEventListener("load", startAutoRefresh);
 		                                }
 		                            }
 
+                                    if (logixRead) {
+                                        t.logix_retry.completed(status == PLCTAG_STATUS_OK, std::chrono::steady_clock::now());
+                                    }
                                     if (is_modbus_connection(spec.conn) && status != PLCTAG_STATUS_OK) {
                                         t.modbus_recovery.completed(false, std::chrono::steady_clock::now());
                                     }
