@@ -1,5 +1,36 @@
 # Feature Ideas
 
+## HMI Runtime File Galleries
+
+Add named galleries of uploaded images and, optionally, PDFs, opened from an
+HMI click action such as **Open Gallery → Lift Station 1 Pictures**.
+
+Desired behavior:
+- Show the gallery in a runtime modal with Previous/Next navigation, a thumbnail
+  strip or scrollable file list, and a current-file counter.
+- Display images fitted to the available area, with zoom for inspecting details.
+- Support ordered files, titles, and captions for site photos, panel layouts,
+  wiring drawings, and operating instructions.
+- Provide **Download current file**, saving the original file at full quality
+  regardless of viewer size or zoom.
+- Let authorized logged-in users upload files directly from the gallery during
+  runtime, without entering HMI edit mode or changing the screen layout.
+- Separate view/download permission from gallery-management permission. Management
+  can cover upload, rename, reorder, caption editing, and deletion.
+- Define galleries and associate them with buttons or other click-capable objects
+  in the editor; manage gallery contents independently of screen definitions.
+
+Initial scope:
+- Ordered image galleries, thumbnails, captions, navigation, original-file
+  downloads, and permission-controlled runtime uploads.
+- Consider PDFs in the same gallery using the browser's native viewer. Confirm
+  browser/kiosk behavior and nested scrolling before committing to that approach;
+  PDF support can follow the initial image gallery.
+
+This is future work. Naming and permission details remain to be designed. Existing
+image backgrounds, popups, and viewports remain useful; this proposal adds gallery
+navigation and runtime content management rather than another basic image object.
+
 ## DXF Import for HMI Backgrounds
 
 Import existing CAD drawings such as plant layouts and process diagrams by

@@ -384,6 +384,7 @@ const textBindingExpressionRow = document.getElementById("textBindingExpressionR
 const textBindingExpressionInput = document.getElementById("textBindingExpression");
 const textBindingExpressionEditBtn = document.getElementById("textBindingExpressionEditBtn");
 const textBindingDigitsInput = document.getElementById("textBindingDigits");
+const textBindingThousandsSeparatorInput = document.getElementById("textBindingThousandsSeparator");
 const textBindingPadZerosInput = document.getElementById("textBindingPadZeros");
 const textBindingDecimalsInput = document.getElementById("textBindingDecimals");
 const textBindingMultiplierInput = document.getElementById("textBindingMultiplier");
@@ -10033,11 +10034,12 @@ const normalizeTextBinding = (bind) => {
   const padZeros = bind.padZeros === true || String(bind.padZeros || "").trim().toLowerCase() === "true";
   const decimals = Number.isFinite(Number(bind.decimals)) ? Math.max(0, Math.trunc(Number(bind.decimals))) : 0;
   const multiplier = Number.isFinite(Number(bind.multiplier)) ? Number(bind.multiplier) : 1;
-  const hasValue = Boolean((sourceType === "expression" ? expression : (connection_id || tag)) || digits !== "" || padZeros || decimals !== 0 || multiplier !== 1);
+  const thousandsSeparator = bind.thousandsSeparator === true;
+  const hasValue = Boolean((sourceType === "expression" ? expression : (connection_id || tag)) || digits !== "" || padZeros || thousandsSeparator || decimals !== 0 || multiplier !== 1);
   if (!hasValue) return null;
   return sourceType === "expression"
-    ? { sourceType, expression, digits, padZeros, decimals, multiplier }
-    : { sourceType, connection_id, tag, property: bind.property === "quality" ? "quality" : "value", digits, padZeros, decimals, multiplier };
+    ? { sourceType, expression, digits, padZeros, thousandsSeparator, decimals, multiplier }
+    : { sourceType, connection_id, tag, property: bind.property === "quality" ? "quality" : "value", digits, padZeros, thousandsSeparator, decimals, multiplier };
 };
 
 const getTextBindingsMap = (obj) => {
@@ -10203,6 +10205,7 @@ const getTextBindingSummary = (bind) => {
   parts.push(path || "(unbound)");
   if (normalized.digits !== "") parts.push(`digits=${normalized.digits}`);
   if (normalized.padZeros) parts.push("zpad");
+  if (normalized.thousandsSeparator) parts.push("1,000");
   if (normalized.decimals) parts.push(`dec=${normalized.decimals}`);
   if (normalized.multiplier !== 1) parts.push(`x${normalized.multiplier}`);
   return parts.join(" · ");
@@ -10217,7 +10220,12 @@ const formatBoundNumber = (rawValue, bind) => {
   const decimals = Number.isFinite(Number(bind?.decimals)) ? Math.max(0, Math.trunc(Number(bind.decimals))) : 0;
   const scaled = numeric * multiplier;
   const fixed = scaled.toFixed(decimals);
-  if (digits <= 0) return fixed;
+  const groupInteger = value => bind?.thousandsSeparator === true
+    ? value.replace(/\B(?=(\d{3})+(?!\d))/g, ",") : value;
+  if (digits <= 0) {
+    const [integer, fraction] = fixed.split(".");
+    return groupInteger(integer) + (fraction !== undefined ? `.${fraction}` : "");
+  }
   const [intPart, decPart] = fixed.split(".");
   const intDigits = Math.max(1, digits - decimals);
   const sign = intPart.startsWith("-") ? "-" : "";
@@ -10228,7 +10236,7 @@ const formatBoundNumber = (rawValue, bind) => {
   const fittedDecPart = decPart !== undefined
     ? decPart.slice(0, decimals)
     : undefined;
-  const paddedInt = `${sign}${fittedUnsignedInt}`;
+  const paddedInt = `${sign}${groupInteger(fittedUnsignedInt)}`;
   return fittedDecPart !== undefined ? `${paddedInt}.${fittedDecPart}` : paddedInt;
 };
 
@@ -13141,6 +13149,7 @@ const openTextBindingModal = (placeholderKey, objectType = "text") => {
   if (textBindingPadZerosInput) {
     textBindingPadZerosInput.checked = binding?.padZeros === true || String(binding?.padZeros || "").trim().toLowerCase() === "true";
   }
+  if (textBindingThousandsSeparatorInput) textBindingThousandsSeparatorInput.checked = binding?.thousandsSeparator === true;
   setInputValueSafe(textBindingDecimalsInput, Number.isFinite(Number(binding?.decimals)) ? Number(binding.decimals) : 0);
   setInputValueSafe(textBindingMultiplierInput, Number.isFinite(Number(binding?.multiplier)) ? Number(binding.multiplier) : 1);
   textBindingOverlay.classList.remove("is-hidden");
@@ -23121,6 +23130,7 @@ if (textBindingSaveBtn) {
         : { expression: "", connection_id: tagPickerConnectionId(String(textBindingConnectionInput?.value || "").trim()), tag: String(textBindingTagInput?.value || "").trim() }),
       digits: String(textBindingDigitsInput?.value || "").trim() !== "" && Number.isFinite(Number(textBindingDigitsInput.value)) ? Number(textBindingDigitsInput.value) : "",
       padZeros: Boolean(textBindingPadZerosInput?.checked),
+      thousandsSeparator: Boolean(textBindingThousandsSeparatorInput?.checked),
       decimals: Number.isFinite(Number(textBindingDecimalsInput?.value)) ? Number(textBindingDecimalsInput.value) : 0,
       multiplier: Number.isFinite(Number(textBindingMultiplierInput?.value)) ? Number(textBindingMultiplierInput.value) : 1
     };
