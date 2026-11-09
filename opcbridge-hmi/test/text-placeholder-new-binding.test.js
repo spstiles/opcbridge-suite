@@ -9,6 +9,7 @@ function setup(){
  const rows=element('div');
  const c=vm.createContext({document:{createElement:element},textBindingRows:rows,
   setConnectionSelectValue:(select,id,tag)=>{picked.push({id,tag});select.value=id;},
+  formatAutomationExpressionForDisplay:e=>e.replaceAll("connection_abc123", "Field Ops"),
   getTextBindingsMap:obj=>obj.textBindings||{},connectionIdFromFriendlyInput:el=>el.value,
   updateTextBindingProperty:()=>{},updateButtonLabelBindingProperty:()=>{},openTextBindingModal:()=>{}});
  vm.runInContext(source.slice(source.indexOf('const TEXT_PLACEHOLDER_RE ='),source.indexOf('const normalizeTextBinding =')),c);
@@ -36,4 +37,14 @@ test('existing placeholder bindings retain their connection and tag',()=>{
  vm.runInContext('renderTextBindingRows({text:"{stage}",textBindings:{stage:{connection_id:"Kraft",tag:"State"}}})',c);
  assert.deepEqual(picked,[{id:'Kraft',tag:'State'}]);
  assert.equal(rows.children[0].children[2].value,'State');
+});
+
+test('inline expression previews and tooltips display friendly names without modifying stored bindings',()=>{
+ const {c}=setup();
+ c.binding={sourceType:'expression',expression:'tag("connection_abc123", "Flow") / 694.4'};
+ const row=vm.runInContext('createInlineTextBindingRow({key:"flow",binding,objectType:"button"})',c);
+ assert.equal(row.children[2].value,'tag("Field Ops", "Flow") / 694.4');
+ assert.equal(row.children[2].title,row.children[2].value);
+ assert.equal(row.children[2].readOnly,true);
+ assert.equal(c.binding.expression,'tag("connection_abc123", "Flow") / 694.4');
 });

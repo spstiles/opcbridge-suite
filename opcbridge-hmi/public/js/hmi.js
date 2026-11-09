@@ -10099,9 +10099,9 @@ const createInlineTextBindingRow = ({ key, binding, objectType = "text" }) => {
   tagInput.type = "text";
   tagInput.className = "automation-tag-input";
   tagInput.placeholder = "tag";
-  tagInput.value = isExpression ? String(binding.expression || "") : String(binding?.tag || "");
+  tagInput.value = isExpression ? formatAutomationExpressionForDisplay(binding.expression || "") : String(binding?.tag || "");
   tagInput.readOnly = isExpression;
-  if (isExpression) tagInput.title = String(binding.expression || "");
+  if (isExpression) tagInput.title = tagInput.value;
 
   const editBtn = document.createElement("button");
   editBtn.type = "button";
@@ -10200,7 +10200,7 @@ const getTextBindingSummary = (bind) => {
   if (!normalized) return "(unbound)";
   const parts = [];
   const path = normalized.sourceType === "expression"
-    ? String(normalized.expression || "")
+    ? formatAutomationExpressionForDisplay(normalized.expression || "")
     : [getConnectionDisplayName(normalized.connection_id), normalized.tag].filter(Boolean).join(" / ");
   parts.push(path || "(unbound)");
   if (normalized.digits !== "") parts.push(`digits=${normalized.digits}`);
