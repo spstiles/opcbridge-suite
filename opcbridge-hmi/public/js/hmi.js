@@ -13143,7 +13143,7 @@ const openTextBindingModal = (placeholderKey, objectType = "text") => {
   if (textBindingSourceTypeSelect) textBindingSourceTypeSelect.value = binding?.sourceType === "expression" ? "expression" : "tag";
   if (textBindingPropertySelect) textBindingPropertySelect.value = binding?.property === "quality" ? "quality" : "value";
   setTagBindingFieldValues(textBindingConnectionInput, textBindingTagInput, binding);
-  setInputValueSafe(textBindingExpressionInput, binding?.expression || "");
+  setInputValueSafe(textBindingExpressionInput, formatAutomationExpressionForDisplay(binding?.expression || ""));
   updateTextBindingSourceUi();
   setInputValueSafe(textBindingDigitsInput, binding?.digits ?? "");
   if (textBindingPadZerosInput) {
@@ -23101,7 +23101,7 @@ textBindingExpressionEditBtn?.addEventListener("click", () => {
     title: `Text Binding {${textBindingModalKey}} Expression`,
     value: textBindingExpressionInput?.value || "",
     apply: (expression) => {
-      if (textBindingExpressionInput) textBindingExpressionInput.value = expression;
+      if (textBindingExpressionInput) textBindingExpressionInput.value = formatAutomationExpressionForDisplay(expression);
       if (textBindingSourceTypeSelect) textBindingSourceTypeSelect.value = "expression";
       updateTextBindingSourceUi();
     }
@@ -23113,7 +23113,7 @@ if (textBindingSaveBtn) {
   textBindingSaveBtn.addEventListener("click", () => {
     if (!textBindingModalKey) return;
     const sourceType = textBindingSourceTypeSelect?.value === "expression" ? "expression" : "tag";
-    const expression = String(textBindingExpressionInput?.value || "").trim();
+    const expression = normalizeAutomationExpressionConnectionReferences(String(textBindingExpressionInput?.value || "").trim());
     if (sourceType === "expression") {
       const error = getAutomationExpressionValidationError(expression);
       if (error) {
