@@ -2125,3 +2125,6 @@ body.app-viewport #tab-configure.is-active { display: flex; flex-direction: colu
   .configure-nav-group { display: none; }
   .configure-shortcut { width: auto; margin: 0; padding: 7px 10px; }
 }
+
+#tagValidationOverlay .tag-audit-controls input[type="checkbox"] { width:auto; margin-left:0; }
+#tagValidationOverlay .tag-audit-controls > label { white-space:nowrap; display:inline-flex; align-items:center; gap:6px; margin-right:10px; }

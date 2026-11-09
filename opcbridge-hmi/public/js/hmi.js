@@ -11651,7 +11651,7 @@ function selectAnimatorMountedFrame(entry, now) {
   const activeValue = config.animateWhenTrue === false ? false : true;
   const value = preview ? activeValue : hasSource ? getMultiStateSourceValue(config) : config.mode === "playback" ? activeValue : undefined;
   const qualityGood = preview || config.sourceType === "expression" || !hasSource ||
-    !isExplicitBadQuality(tagQualityCache.get(normalizeTagCacheKey(config.connection_id, config.tag)));
+    getBoundTagQuality(config.connection_id, config.tag) !== "BAD";
   return entry.clock.select(config, now, value, qualityGood);
 }
 
@@ -12176,9 +12176,16 @@ const tagQualityLabel = (quality) => {
   const text = String(quality ?? "").trim().toUpperCase();
   return text || "UNKNOWN";
 };
-const getBoundTagQuality = (connectionId, tag) => {
+// Presentation can retain the last received quality during ordinary suspension.
+// Raw quality remains separate for writes and sampled trend calculations.
+const tagLastKnownQualityCache = new Map();
+const getBoundTagQuality = (connectionId, tag, presentation = true) => {
   const key = normalizeTagCacheKey(connectionId, tag);
-  return tagQualityLabelCache.get(key) || tagQualityLabel(tagQualityCache.get(key));
+  const label = tagQualityLabelCache.get(key) || tagQualityLabel(tagQualityCache.get(key));
+  if (presentation && ["INACTIVE", "WAITING"].includes(label) && tagValueCache.has(key)) {
+    return tagLastKnownQualityCache.get(key) || label;
+  }
+  return label;
 };
 const runtimeAutomationStateCache = new WeakMap();
 const runtimeAutomationNumberCache = new WeakMap();
@@ -12188,6 +12195,7 @@ const applyTagSnapshotToCache = (key, value, quality, hasValue, hasQuality, poll
   if (!key) return false;
   let changed = false;
   const normalizedQuality = hasQuality ? normalizeTagQuality(quality) : null;
+  const pending = ["inactive", "waiting"].includes(String(pollingState || "").toLowerCase());
   if (typeof TrendWidget !== "undefined" && timestampMs != null) TrendWidget.recordLive(key, value, timestampMs, quality, pollingState);
   if (hasQuality) {
     const state = String(pollingState || "").toLowerCase();
@@ -12198,11 +12206,14 @@ const applyTagSnapshotToCache = (key, value, quality, hasValue, hasQuality, poll
     }
   }
 
+  if (hasQuality && !pending && normalizedQuality !== null) {
+    tagLastKnownQualityCache.set(key, tagQualityLabel(quality));
+  }
   if (hasQuality && tagQualityCache.get(key) !== normalizedQuality) {
     tagQualityCache.set(key, normalizedQuality);
   }
 
-  if (hasValue && !isExplicitBadQuality(normalizedQuality)) {
+  if (hasValue && !pending && !isExplicitBadQuality(normalizedQuality)) {
     if ((value === undefined || value === null) && tagValueCache.has(key)) return changed;
     if (!Object.is(tagValueCache.get(key), value)) {
       tagValueCache.set(key, value);
@@ -14997,11 +15008,11 @@ const renderObjectContentInto = (parent, obj, inheritedGroupColorOverrides = nul
         if (obj.panelMode === "trend") {
           const trendParent = hasRotation ? (() => { const wrapper=document.createElementNS(ns,"g"); applyRotationTransform(wrapper,obj); parent.appendChild(wrapper); return wrapper; })() : parent;
           TrendWidget.mount(trendParent,obj,{editing:isEditMode,key:pen=>pen.source==='expression'?JSON.stringify([TrendExpression.connection,pen.expression.trim()]):normalizeTagCacheKey(pen.connection_id,pen.tag),evaluate:expression=>TrendExpression.compile(expression).evaluate((connection,tag)=>{
-            if(getBoundTagQuality(connection,tag)!=='GOOD')throw Error('Expression input unavailable.');
+            if(getBoundTagQuality(connection,tag,false)!=='GOOD')throw Error('Expression input unavailable.');
             const value=tagValueCache.get(normalizeTagCacheKey(connection,tag));
             if(!['number','boolean'].includes(typeof value))throw Error('Expression input is not numeric.');
             return Number(value);
-          },getBoundTagQuality),history:requestTrendHistory});
+          },(connection,tag)=>getBoundTagQuality(connection,tag,false)),history:requestTrendHistory});
           return;
         }
 	    if (obj.panelMode === "data-entry") {

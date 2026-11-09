@@ -29935,3 +29935,81 @@ async function main() {
 }
 
 main();
+
+// Validation is a deliberate temporary scan, independent of the Live Tags viewport.
+let lastTagValidationResults = [];
+document.getElementById('workspaceValidateTagsBtn')?.addEventListener('click', async () => {
+  if(document.getElementById('tagValidationOverlay'))return;
+  const overlay=document.createElement('div');overlay.id='tagValidationOverlay';overlay.className='modal-overlay tag-audit-overlay';
+  overlay.innerHTML=`<section class="modal tag-audit-modal" role="dialog" aria-modal="true" aria-labelledby="tagValidationTitle">
+    <div class="modal-titlebar"><div class="modal-title" id="tagValidationTitle">Validate Tags</div><button class="btn" data-close>Close</button></div>
+    <div class="tag-audit-controls"><p>Read enabled tags in temporary batches using normal polling limits. This temporarily adds polling work. Disabled tags are skipped. A failed read may be a configuration or communication problem.</p>
+    <label>Connection <select data-connection aria-label="Connection to validate" disabled></select></label>
+    <label>Batch timeout <select data-timeout aria-label="Validation batch timeout"><option value="30000">30 seconds</option><option value="60000">60 seconds</option><option value="120000">120 seconds</option></select></label>
+    <button class="btn primary" data-run disabled>Validate Connection</button> <button class="btn" data-retry disabled>Retry Failed / Unverified</button> <button class="btn" data-cancel disabled>Cancel</button>
+    <label><input type="checkbox" data-problems checked /> Problems and untested only</label>
+    <input type="search" data-search placeholder="Filter tag, status, or details…" aria-label="Filter validation results" />
+    <div data-status role="status" aria-live="polite">Loading connections…</div>
+    </div><div class="tag-audit-results"><table class="table"><thead><tr><th>Connection</th><th>Tag</th><th>Datatype</th><th>Result</th><th>Details</th></tr></thead><tbody></tbody></table></div>
+    <div class="tag-audit-controls"><button class="btn" data-prev>Previous</button> <span data-page></span> <button class="btn" data-next>Next</button></div>
+  </section>`;
+  document.body.appendChild(overlay);
+  const q=s=>overlay.querySelector(s),select=q('[data-connection]');let index=[],runner=null,page=0,closed=false,busy=false;
+  let results=lastTagValidationResults.slice();
+  const key=t=>JSON.stringify([t.connection_id,t.name]);
+  const names={good:'Good',read_error:'Read failed',unverified:'Unverified',untested:'Untested',disabled:'Disabled'};
+  function render(){
+    const search=q('[data-search]').value.trim().toLowerCase(),cid=select.value;
+    const filtered=results.filter(t=>(!cid||t.connection_id===cid)&&(!q('[data-problems]').checked||!['good','disabled'].includes(t.status))&&(!search||`${t.name} ${names[t.status]} ${t.detail}`.toLowerCase().includes(search)));
+    const pages=Math.max(1,Math.ceil(filtered.length/100));page=Math.max(0,Math.min(page,pages-1));
+    q('tbody').innerHTML=filtered.slice(page*100,page*100+100).map(t=>`<tr><td>${escapeHtml(displayConnectionName(t.connection_id))}</td><td>${escapeHtml(t.name)}</td><td>${escapeHtml(t.datatype||'')}</td><td>${escapeHtml(names[t.status]||t.status)}</td><td>${escapeHtml(t.detail||'')}</td></tr>`).join('');
+    q('[data-page]').textContent=`${filtered.length} results · Page ${page+1} of ${pages}`;
+    q('[data-prev]').disabled=page===0;q('[data-next]').disabled=page+1>=pages;
+    q('[data-retry]').disabled=busy||runner?.running||!results.some(t=>t.connection_id===cid&&['read_error','unverified','untested'].includes(t.status));
+  }
+  function controls(running){select.disabled=running||!index.length;q('[data-run]').disabled=running||!select.value;q('[data-timeout]').disabled=running;q('[data-cancel]').disabled=!running;render();}
+  async function start(retry){
+    if(busy||runner?.running)return;
+    busy=true;controls(true);
+    const cid=select.value;
+    let rows;
+    try{
+      // Reload metadata for each scan, so newly fixed/disabled tags are respected.
+      const response=await apiGet(`/api/opcbridge/tags?connection_id=${encodeURIComponent(cid)}&limit=0`,{timeoutMs:30000});
+      if(closed)return;
+      rows=(response.tags||[]).filter(t=>t.connection_id===cid);
+      const currentKeys=new Set(rows.map(key));results=results.filter(t=>t.connection_id!==cid||currentKeys.has(key(t)));
+      if(retry){const failed=new Set(results.filter(t=>t.connection_id===cid&&['read_error','unverified','untested'].includes(t.status)).map(key));rows=rows.filter(t=>failed.has(key(t)));}
+      const scanning=new Set(rows.map(key));results=results.filter(t=>!scanning.has(key(t)));
+      const preserved=results.slice();
+      runner=new TagValidation({clientId:`scada-validation-${Date.now()}-${Math.random().toString(36).slice(2)}`,timeoutMs:Number(q('[data-timeout]').value),
+        post:(path,body)=>apiPostJson(`/api/opcbridge${path}`,body,{timeoutMs:15000}),
+        progress:update=>{
+          results=[...preserved,...update.results];lastTagValidationResults=results.slice();if(closed)return;
+          const good=update.results.filter(t=>t.status==='good').length,failed=update.results.filter(t=>['read_error','unverified'].includes(t.status)).length;
+          q('[data-status]').textContent=`${update.running?'Validating':runner.cancelled?'Cancelled':'Finished'}: ${update.checked}/${update.total} processed · ${good} good · ${failed} failed or unverified${update.error?` · ${update.error}`:''}`;
+          controls(update.running);
+        }});
+      await runner.run(rows);
+    }catch(error){if(!closed)q('[data-status]').textContent=`Validation could not start: ${error.message}`;}
+    finally{busy=false;if(!closed)controls(false);}
+  }
+  const cancel=()=>{if(runner?.running){runner.cancel();q('[data-status]').textContent='Cancelling; releasing temporary polling demand…';}};
+  const close=()=>{cancel();closed=true;overlay.remove();window.removeEventListener('pagehide',cancel);document.removeEventListener('keydown',escape,true);document.getElementById('workspaceValidateTagsBtn')?.focus();};
+  const escape=event=>{if(event.key==='Escape'){event.preventDefault();event.stopImmediatePropagation();close();}};
+  q('[data-close]').onclick=close;q('[data-cancel]').onclick=cancel;
+  q('[data-run]').onclick=()=>start(false);q('[data-retry]').onclick=()=>start(true);
+  q('[data-search]').oninput=()=>{page=0;render();};q('[data-problems]').onchange=()=>{page=0;render();};
+  select.onchange=()=>{page=0;controls(false);};q('[data-prev]').onclick=()=>{page--;render();};q('[data-next]').onclick=()=>{page++;render();};
+  document.addEventListener('keydown',escape,true);window.addEventListener('pagehide',cancel);
+  q('[data-close]').focus();
+  try{
+    const response=await apiGet('/api/opcbridge/tags?limit=0',{timeoutMs:30000});if(closed)return;
+    index=(response.tags||[]).filter(t=>t.connection_id&&!String(t.connection_id).startsWith('_'));
+    const connections=[...new Set(index.map(t=>String(t.connection_id)))].sort((a,b)=>displayConnectionName(a).localeCompare(displayConnectionName(b),undefined,{numeric:true,sensitivity:'base'}));
+    for(const cid of connections){const option=document.createElement('option');option.value=cid;option.textContent=displayConnectionName(cid);select.append(option);}
+    const current=state.liveTagFilter?.connection_id;if(connections.includes(current))select.value=current;
+    q('[data-status]').textContent=connections.length?'Ready. Choose a connection and start validation.':'No runtime connections are available to validate.';
+    controls(false);
+  }catch(error){q('[data-status]').textContent=`Could not load tags: ${error.message}`;}
+});
