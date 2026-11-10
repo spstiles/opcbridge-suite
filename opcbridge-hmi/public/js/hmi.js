@@ -8415,36 +8415,53 @@ const openReferenceMappingPreview = (rows) => {
   if (!proposed.length) overlay.querySelector(".reference-mapping-note").textContent = "No replacement_reference values were provided.";
   overlay.querySelector("[data-reference-mapping-close]")?.addEventListener("click", closeReferenceMappingPreview);
   overlay.addEventListener("click", (event) => { if (event.target === overlay) closeReferenceMappingPreview(); });
-  overlay.querySelector("[data-reference-mapping-apply]")?.addEventListener("click", () => {
-    recordHistory();
-    applicable.forEach((item) => {
-      item.group.occurrences.forEach((occurrence) => {
-        occurrence.apply(item.replacement, item.resolved);
-        if (item.scope === "object") syncObjectMappedReferenceMetadata(occurrence, item.replacement, item.resolved);
+  const applyButton = overlay.querySelector("[data-reference-mapping-apply]");
+  applyButton?.addEventListener("click", async () => {
+    if (applyButton.disabled) return;
+    applyButton.disabled = true;
+    const busyToken = showHmiBusy("Applying reference mappings", `Updating ${affected} object references…`);
+    try {
+      await waitForHmiBusyPaint();
+      recordHistory();
+      applicable.forEach((item) => {
+        item.group.occurrences.forEach((occurrence) => {
+          occurrence.apply(item.replacement, item.resolved);
+          if (item.scope === "object") syncObjectMappedReferenceMetadata(occurrence, item.replacement, item.resolved);
+        });
+        if (item.scope !== "object") syncMappedReferenceMetadata(item.type, item.current, item.replacement, item.resolved);
       });
-      if (item.scope !== "object") syncMappedReferenceMetadata(item.type, item.current, item.replacement, item.resolved);
-    });
-    setDirty(true);
-    renderScreen();
-    updateSelectionOverlays();
-    updatePropertiesPanel();
-    renderReferenceHealthBadge();
-    closeReferenceMappingPreview();
-    showHmiToast(`Applied ${applicable.length} mappings to ${affected} references.`, 7000);
-    setEditorStatusSafe(`Reference import updated ${affected} object references; ${unresolved} mappings remain unresolved.`);
+      setDirty(true);
+      renderScreen();
+      updateSelectionOverlays();
+      updatePropertiesPanel();
+      renderReferenceHealthBadge();
+      closeReferenceMappingPreview();
+      showHmiToast(`Applied ${applicable.length} mappings to ${affected} references.`, 7000);
+      setEditorStatusSafe(`Reference import updated ${affected} object references; ${unresolved} mappings remain unresolved.`);
+    } catch (error) {
+      showHmiToast(`Reference mappings could not be applied: ${error.message}`, 8000);
+    } finally {
+      hideHmiBusy(busyToken);
+      applyButton.disabled = !applicable.length;
+    }
   });
   document.body.appendChild(overlay);
 };
 
 const uploadScreenReferenceMappings = async (file) => {
   if (!file) return;
+  const busyToken = showHmiBusy("Importing reference file", `Reading ${file.name}…`);
   try {
+    await waitForHmiBusyPaint();
     const rows = parseReferenceCsv(await file.text());
     if (!rows.length || !("reference_type" in rows[0]) || !("current_reference" in rows[0]) || !("replacement_reference" in rows[0])) throw new Error("CSV must contain reference_type, current_reference, and replacement_reference columns.");
+    updateHmiBusy(busyToken, "Checking reference mappings", `Preparing ${rows.length} rows for review…`);
+    await waitForHmiBusyPaint();
     openReferenceMappingPreview(rows);
   } catch (error) {
     showHmiToast(`Reference import failed: ${error.message}`, 8000);
   } finally {
+    hideHmiBusy(busyToken);
     referenceMappingInput.value = "";
   }
 };
