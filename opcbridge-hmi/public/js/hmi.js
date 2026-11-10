@@ -6380,7 +6380,9 @@ const hasPerm = (permId) => {
 };
 
 const canWrite = () => hasPerm("opcbridge.write_tags");
-const canEdit = () => hasPerm("hmi.edit_screens");
+// Keep an existing edit session available to protect unsaved work, but cached
+// permissions alone must never authorize entering a new edit session.
+const canEdit = () => hasPerm("hmi.edit_screens") && (isEditMode || hasServerAuthSession());
 const canAdmin = () => hasPerm("auth.manage_users");
 const hasServerAuthSession = () => Boolean(authSession && authSession.serverValid !== false);
 
@@ -6469,6 +6471,8 @@ const syncLocalAuthFromStatus = (status, source = "auth-status") => {
 
   if (!serverLoggedIn) {
     if (authSession) {
+      authSession.serverValid = false;
+      saveAuthSession(authSession);
       const now = Date.now();
       if (isAuthTimeoutSuppressed()) {
         const firstMissing = !authServerLoggedOutSinceMs;
@@ -6550,7 +6554,7 @@ const isAuthTimeoutSuppressed = () => Boolean(isEditMode) || Date.now() < authEd
 
 const getAuthTouchIntervalMs = () => {
   const timeoutMinutes = getAuthTimeoutMinutes();
-  if (timeoutMinutes <= 0) return 0;
+  if (timeoutMinutes <= 0) return 30000;
   return Math.max(5000, Math.min(30000, timeoutMinutes * 60 * 1000 * 0.25));
 };
 
@@ -6580,7 +6584,8 @@ const markAuthActivity = ({ force = false } = {}) => {
   } catch {}
   const timeoutMinutes = getAuthTimeoutMinutes();
   const touchIntervalMs = getAuthTouchIntervalMs();
-  if (timeoutMinutes > 0 && (force || now - authActivityLastTouchMs > touchIntervalMs)) {
+  if (!authActivityTouchInFlight && (isAuthTimeoutSuppressed() || timeoutMinutes > 0) &&
+      (force || now - authActivityLastTouchMs > touchIntervalMs)) {
     authActivityLastTouchMs = now;
     authActivityTouchInFlight = true;
     apiAuthTouch()
@@ -6722,6 +6727,7 @@ const apiAuthTouch = async () => {
   const response = await fetch("/api/auth/touch", {
     method: "POST",
     credentials: "same-origin",
+    keepalive: true,
     headers: authFetchHeaders({ "Content-Type": "application/json" }),
     body: "{}"
   });
@@ -21085,6 +21091,12 @@ function bindScreenManager() {
 const setMode = (next) => {
   const transitionRevision = ++modeTransitionRevision;
   if (isTouchRuntimeEndpoint) next = false;
+  if (next && !isEditMode && !canEdit()) {
+    pendingEditModeAfterLogin = true;
+    openAuth();
+    if (authStatusEl) authStatusEl.textContent = "Login required for edit mode.";
+    return;
+  }
   if (!next && poseEditSession) cancelPoseEdit({ keepTool: true });
   const wasEditMode = isEditMode;
   if (wasEditMode && !next && authSession) {

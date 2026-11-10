@@ -20,7 +20,7 @@ test('Edit/Run round trip restores editor scroll and ignores stale transitions/s
     toolbar: null, editorPane: null, screenTitle: null, editorFilename: null,
     document: { body: { classList: { toggle: noop } } },
     window: { requestAnimationFrame: fn => frames.push(fn) },
-    getActiveObjects: () => [],
+    getActiveObjects: () => [], canEdit: () => true,
   };
   for (const name of ['hideDiagnosticsTooltip', 'markAuthActivity', 'clearSelectedPolygonVertex',
     'setRuntimeHistoryBase', 'initViewportHistoriesForCurrentScreen', 'applyScale', 'renderScreen',
