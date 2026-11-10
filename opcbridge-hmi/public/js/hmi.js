@@ -275,6 +275,7 @@ const objectDynamicTabs = document.getElementById("objectDynamicTabs");
 const objectDynamicTabClickBtn = document.getElementById("objectDynamicTabClickBtn");
 const buttonClickProps = document.getElementById("buttonClickProps");
 const dynamicsAddClickMenuBtn = document.getElementById("dynamicsAddClickMenuBtn");
+const usesFullClickEditor = (obj) => Boolean(obj && ["button", "text"].includes(obj.type));
 const hasClickTab = (obj) => Boolean(obj && (obj.type === "button" || obj.clickEnabled || obj.action?.type));
 const clickActionSelection = new WeakMap();
 const getEditedClickAction = (obj) => {
@@ -292,7 +293,7 @@ const renderClickActionList = (obj) => {
     const host = document.getElementById(id);
     if (!host) continue;
     host.replaceChildren();
-    if (!obj || (id === 'buttonClickActionList') !== (obj.type === 'button')) continue;
+    if (!obj || (id === 'buttonClickActionList') !== usesFullClickEditor(obj)) continue;
     const actions = HmiClickActions.list(obj.action);
     const selected = Math.min(clickActionSelection.get(obj) || 0, Math.max(0, actions.length - 1));
     const commit = (next, index) => {
@@ -16993,7 +16994,7 @@ const getSelectedActionOwner = (kind) => {
   const obj = selectedIndices.length === 1 ? objects?.[selectedIndices[0]] : null;
   if (!obj) return null;
   const owner = { ...obj, action: getEditedClickAction(obj) };
-  return kind === "button" ? (obj.type === "button" ? owner : null) : (obj.type !== "button" ? owner : null);
+  return kind === "button" ? (usesFullClickEditor(obj) ? owner : null) : (!usesFullClickEditor(obj) ? owner : null);
 };
 
 let targetAliasRenderSequence = 0;
@@ -17297,6 +17298,8 @@ const syncPropertiesFromSelection = () => {
     if (buttonStrokeWidthInput) buttonStrokeWidthInput.value = Number(obj.strokeWidth ?? 1);
     if (buttonAlignSelect) buttonAlignSelect.value = obj.align || "center";
     if (buttonValignSelect) buttonValignSelect.value = obj.valign || "middle";
+  }
+  if (usesFullClickEditor(obj)) {
     if (buttonTargetSelect) buttonTargetSelect.value = selectedAction?.screenId || "";
     if (buttonActionSelect) buttonActionSelect.value = selectedAction?.type || "navigate";
     if (buttonNavigationTargetSelect) setSelectValueSafe(buttonNavigationTargetSelect, String(selectedAction?.navigationTarget || "current"));
@@ -18481,8 +18484,9 @@ const updatePropertiesPanel = () => {
   if (textProps) textProps.classList.toggle("is-hidden", !showText);
   if (buttonProps) buttonProps.classList.toggle("is-hidden", !showButton);
   if (groupProps) groupProps.classList.toggle("is-hidden", !showGroup);
-  if (objectActionProps) objectActionProps.classList.toggle("is-hidden", !showClick || showButton || currentObjectDynamicTab !== "click");
-  buttonClickProps?.classList.toggle("is-hidden", !showButton || currentObjectDynamicTab !== "click");
+  if (objectActionProps) objectActionProps.classList.toggle("is-hidden", !showClick || usesFullClickEditor(obj) || currentObjectDynamicTab !== "click");
+  buttonClickProps?.classList.toggle("is-hidden", !showClick || !usesFullClickEditor(obj) || currentObjectDynamicTab !== "click");
+  document.getElementById("removeObjectClickBtn")?.classList.toggle("is-hidden", !showClick || showButton || currentObjectDynamicTab !== "click");
   objectDynamicTabClickBtn?.classList.toggle("is-hidden", !showClick);
   if (numberInputProps) numberInputProps.classList.toggle("is-hidden", !showNumberInput);
   if (indicatorProps) indicatorProps.classList.toggle("is-hidden", !showIndicator);
@@ -18707,7 +18711,7 @@ const updateButtonProperty = (patch) => {
   if (selectedIndices.length !== 1) return;
   const index = selectedIndices[0];
   const obj = activeObjects[index];
-  if (!obj || obj.type !== "button") return;
+  if (!obj || (obj.type !== "button" && !(obj.type === "text" && Object.prototype.hasOwnProperty.call(patch, "action")))) return;
   recordHistory();
   if (Object.prototype.hasOwnProperty.call(patch, 'action')) {
     replaceEditedClickAction(obj, patch.action);

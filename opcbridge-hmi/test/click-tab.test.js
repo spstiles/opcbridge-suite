@@ -75,3 +75,34 @@ test('Click keeps the non-button action editor visible while hiding appearance p
   vm.runInContext(block, ctx);
   assert.equal(ctx.objectActionProps.classes.has('is-hidden'), true);
 });
+
+test('text and buttons share the full Click editor while other objects retain their editor', () => {
+  const c=vm.createContext({selectedIndices:[0],getActiveObjects:()=>[c.obj],getEditedClickAction:o=>o.action||{}});
+  vm.runInContext(source.match(/^const usesFullClickEditor = .*;$/m)[0],c);
+  const start=source.indexOf('const getSelectedActionOwner =');
+  vm.runInContext(source.slice(start,source.indexOf('\n};',start)+3),c);
+  for(const type of ['text','button']){
+    c.obj={type,action:{type:'set-write',tag:'PumpCommand'}};
+    assert.equal(vm.runInContext('usesFullClickEditor(obj)',c),true);
+    assert.equal(vm.runInContext('getSelectedActionOwner("button").action.tag',c),'PumpCommand');
+    assert.equal(vm.runInContext('getSelectedActionOwner("group")',c),null);
+  }
+  c.obj={type:'group',action:{type:'navigate'}};
+  assert.equal(vm.runInContext('usesFullClickEditor(obj)',c),false);
+  assert.equal(vm.runInContext('getSelectedActionOwner("button")',c),null);
+});
+
+test('shared action updates save text writes without changing text appearance or button properties', () => {
+  const obj={type:'text',text:'Start Pump',fill:'#ffffff',fontSize:20};let recorded=0;
+  const c=vm.createContext({selectedIndices:[0],getActiveObjects:()=>[obj],recordHistory:()=>recorded++,
+    replaceEditedClickAction:(o,action)=>{o.action=action;},renderClickActionList:()=>{},renderScreen:()=>{},syncEditorFromScreen:()=>{},setDirty:()=>{},pruneInactiveTemplateBindings:()=>{}});
+  const start=source.indexOf('const updateButtonProperty =');
+  vm.runInContext(source.slice(start,source.indexOf('const updateGroupProperty =',start)),c);
+  for(const type of ['set-write','toggle-write','momentary-write','prompt-write']){
+    c.action={type,connection_id:'PLC',tag:'PumpCommand',onValue:'1',offValue:'0'};
+    vm.runInContext('updateButtonProperty({action})',c);
+    assert.equal(obj.action.type,type);assert.equal(obj.action.tag,'PumpCommand');assert.equal(obj.text,'Start Pump');assert.equal(obj.fill,'#ffffff');
+  }
+  vm.runInContext('updateButtonProperty({label:"Wrong control"})',c);
+  assert.equal(obj.label,undefined);assert.equal(recorded,4);
+});
