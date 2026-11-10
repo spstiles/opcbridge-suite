@@ -824,9 +824,10 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
       return;
     }
     if (name === "Canvas") {
-      const action = navigationFor(node, viewportNames);
       const entries = childEntries(node);
       const ownedDynamicEntries = entries.filter((entry) => entry.name.startsWith("gwx:GwxDynamicGroup"));
+      const ownedDynamicsNode = { __orderedChildren: ownedDynamicEntries };
+      const action = navigationFor(ownedDynamicsNode, viewportNames);
       // Every nested Canvas establishes a coordinate system. Even an unnamed
       // wrapper must be retained when it has visual children, otherwise groups
       // nested beneath it lose the wrapper's offset and bounds.
@@ -858,7 +859,6 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
           if (!w) w = Math.max(0, childBounds.x + childBounds.w);
           if (!h) h = Math.max(0, childBounds.y + childBounds.h);
         }
-        const ownedDynamicsNode = { __orderedChildren: ownedDynamicEntries };
         add({
           type: "group", x, y, w, h, children, importAnimatorFramesIncomplete: incompleteFrames, ...(action ? { action } : {}),
           ...sourceMetadata(name, ownedDynamicsNode, { source: { format: "graphworx64", type: name, name: node.Name || null }, importConversion: "preserved-group" })
@@ -876,12 +876,13 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
       const innerStrokeWidth = decoration.StrokeThickness == null ? 0 : Math.max(0, num(decoration.StrokeThickness));
       if (labels.length === 1 && !asArray(node.Rectangle).length) {
         const label = labels[0];
+        const action = navigationFor(node, viewportNames);
         const align = horizontalTextAlignment(label);
         const valign = verticalTextAlignment(label);
         const anchorX = align === "center" ? 0.5 : (align === "right" ? 1 : 0);
         const anchorY = valign === "middle" ? 0.5 : (valign === "bottom" ? 1 : 0);
         add({
-          type: "text", ...base,
+          type: "text", ...base, ...(action ? { action } : {}),
           x: base.x + base.w * anchorX, y: base.y + base.h * anchorY,
           autoSize: false, positionMode: "insertion-point",
           text: textFrom(label), padding: Math.max(0, decoratorStrokeWidth), wrapMode: "word",
@@ -993,7 +994,8 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
       const borderEnabled = borderWidth > 0 && !["none", "transparent", "#ffffff00"].includes(String(borderColor).toLowerCase());
       const anchorX = align === "center" ? 0.5 : (align === "right" ? 1 : 0);
       const anchorY = valign === "middle" ? 0.5 : (valign === "bottom" ? 1 : 0);
-      add({ type: "text", ...base, x: base.x + base.w * anchorX, y: base.y + base.h * anchorY, autoSize: !(base.w > 0 && base.h > 0), positionMode: "insertion-point", text, padding, wrapMode: text.includes("\n") ? "explicit" : "word", fontSize: num(node.FontSize, 14), fill: dynamicColorFallback(node, "Foreground", color(node.Foreground, "#000000")), background, borderEnabled, borderColor, borderWidth, borderStyle: "flat", bold: String(node.FontWeight).toLowerCase() === "bold", align, valign, ...sourceMetadata(name, node) });
+      const action = navigationFor(node, viewportNames);
+      add({ type: "text", ...base, ...(action ? { action } : {}), x: base.x + base.w * anchorX, y: base.y + base.h * anchorY, autoSize: !(base.w > 0 && base.h > 0), positionMode: "insertion-point", text, padding, wrapMode: text.includes("\n") ? "explicit" : "word", fontSize: num(node.FontSize, 14), fill: dynamicColorFallback(node, "Foreground", color(node.Foreground, "#000000")), background, borderEnabled, borderColor, borderWidth, borderStyle: "flat", bold: String(node.FontWeight).toLowerCase() === "bold", align, valign, ...sourceMetadata(name, node) });
     }
     else if (name === "gwxctl:GwxPipeControl") {
       const rawPoints = String(node.Vertices || "").trim().split(/\s+/).map((pair) => pair.split(",").map(Number)).filter((pair) => pair.length === 2 && pair.every(Number.isFinite));

@@ -756,3 +756,40 @@ test('process-point state rows inherit their parent binding and EqualZero import
   const other=flattenObjects(different.screen.objects).find(o=>o.multiStateAutomation);
   assert.ok(other.externalReferences.some(ref=>ref.automation==='GwxProcessPointStateItem'&&ref.status==='unsupported'));
 });
+
+test('reset writes on text survive plain and decorated labels without becoming parent actions', () => {
+  for(const decorated of [false,true]){
+    const label=`<Label Name="FaultReset" Width="202" Height="45">
+      <gwx:GwxDynamicGroup.GwxDynamicGroup><gwx:GwxDynamicGroup><gwx:GwxDynamicGroup.DynamicsList>
+        <gwx:GwxPick ExecuteOnDown="True" ExecuteOnUp="True" DataSource="ac:Lift_Station_03/Fault_Reset_Button/Status">
+          <gwx:GwxPick.CommandParameters><gwxcmd:WriteValueCommand OnDownValue="1" OnUpValue="0" /></gwx:GwxPick.CommandParameters>
+        </gwx:GwxPick>
+      </gwx:GwxDynamicGroup.DynamicsList></gwx:GwxDynamicGroup></gwx:GwxDynamicGroup.GwxDynamicGroup>
+      <TextBlock Text="FAULT RESET" /></Label>`;
+    const visual=decorated?`<mwt:ClassicBorderDecorator BorderStyle="AltRaised" BorderThickness="2,2,2,2" Width="202" Height="45">${label}</mwt:ClassicBorderDecorator>`:label;
+    const xml=`<Canvas Width="800" Height="600" xmlns:gwx="gwx" xmlns:gwxcmd="gwxcmd" xmlns:mwt="mwt">${visual}</Canvas>`;
+    const result=convertGraphWorx(xml);
+    const all=flattenObjects(result.screen.objects),text=all.find(o=>o.type==='text'&&o.text==='FAULT RESET');
+    assert.ok(text);
+    assert.equal(text.action.type,'momentary-write');
+    assert.equal(text.action.tag,'ac:Lift_Station_03/Fault_Reset_Button/Status');
+    assert.equal(text.action.sourceReference,text.action.tag);
+    assert.equal(text.action.connection_id,'');assert.equal(text.action.status,'unresolved');
+    assert.equal(text.action.onValue,'1');assert.equal(text.action.offValue,'0');
+    assert.ok(text.externalReferences.some(ref=>ref.automation==='pick/write'&&ref.source.value===text.action.tag));
+    assert.equal(all.filter(o=>o.action?.type==='momentary-write').length,1);
+    if(decorated)assert.equal(text.borderStyle,'outset');
+  }
+});
+
+test('text click import retains set-value writes and screen navigation', () => {
+  const xml=`<Canvas Width="800" Height="600" xmlns:gwx="gwx" xmlns:gwxcmd="gwxcmd">
+    <Label Name="SetReset"><gwx:GwxPick ExecuteOnUp="True" DataSource="ac:Reset"><gwxcmd:WriteValueCommand OnUpValue="1" /></gwx:GwxPick><TextBlock Text="RESET" /></Label>
+    <Label Name="OpenScreen"><gwx:GwxPick><gwxcmd:LoadDisplayCommand FileName="Overview.gdfx" /></gwx:GwxPick><TextBlock Text="OVERVIEW" /></Label>
+  </Canvas>`;
+  const texts=flattenObjects(convertGraphWorx(xml).screen.objects).filter(o=>o.type==='text');
+  assert.equal(texts.find(o=>o.text==='RESET').action.type,'set-write');
+  assert.equal(texts.find(o=>o.text==='RESET').action.onValue,'1');
+  assert.equal(texts.find(o=>o.text==='OVERVIEW').action.type,'navigate');
+  assert.equal(texts.find(o=>o.text==='OVERVIEW').action.sourceScreen,'Overview.gdfx');
+});
