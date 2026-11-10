@@ -791,6 +791,8 @@ struct UaTagBinding {
     bool retired = false;
     bool physical_read_gate = false;
     PollReadGate read_gate;
+    // Callback-backed writable nodes retain measured data independently of requests.
+    std::shared_ptr<UA_DataValue> ua_value;
 };
 
 struct UaSystemBinding {
@@ -5711,44 +5713,32 @@ static bool accept_startup_handle(int32_t handle,
 static UA_StatusCode ua_write_snapshot(UA_Server*, const UA_NodeId&, const TagSnapshot&, UA_StatusCode);
 static UA_StatusCode ua_snapshot_status(const UaTagBinding&, const TagSnapshot&);
 
-static void opcua_onWrite(UA_Server *server,
+static UA_StatusCode opcua_onWrite(UA_Server *server,
                           const UA_NodeId *sessionId,
                           void *sessionContext,
                           const UA_NodeId *nodeId,
                           void *nodeContext,
                           const UA_NumericRange *range,
                           const UA_DataValue *data) {
-    (void)server;
     (void)sessionContext;
-    (void)nodeId;
-    (void)range;
-
-    // Ignore writes coming from our own internal UA_Server_writeValue calls
-    if (g_suppressOpcUaWriteCallback) {
-        return;
-    }
-
-    // (Optional, keep this too if you added it)
-    // Ignore server-internal writes (just in case)
-    if (!sessionId || UA_NodeId_isNull(sessionId)) {
-        return;
-    }
 
     auto *binding = static_cast<UaTagBinding*>(nodeContext);
-    if (!binding) {
-        std::cerr << "OPC UA write: nodeContext is null, ignoring\n";
-        return;
+    if (!binding || !binding->ua_value) return UA_STATUSCODE_BADINTERNALERROR;
+    // Poll updates only replace the stored measurement. They never write a PLC.
+    if (g_suppressOpcUaWriteCallback || !sessionId || UA_NodeId_isNull(sessionId)) {
+        UA_DataValue next;
+        UA_DataValue_init(&next);
+        const auto status = UA_DataValue_copy(data, &next);
+        if (status != UA_STATUSCODE_GOOD) return status;
+        UA_DataValue_clear(binding->ua_value.get());
+        *binding->ua_value = next;
+        return UA_STATUSCODE_GOOD;
     }
-    if (!binding->writable) {
-        std::cerr << "OPC UA write: tag [" << binding->conn_id << "]."
-                  << binding->logical_name << " is not writable, ignoring\n";
-        return;
-    }
-
-    if (!g_mqttDrivers || !g_mqttTagTable || !g_mqttDriverMutex) {
-        std::cerr << "OPC UA write: missing driver context.\n";
-        return;
-    }
+    if (!binding->writable || binding->retired) return UA_STATUSCODE_BADNOTWRITABLE;
+    if (range) return UA_STATUSCODE_BADINDEXRANGEINVALID;
+    if (!data->hasValue) return UA_STATUSCODE_BADTYPEMISMATCH;
+    if (!g_mqttDrivers || !g_mqttTagTable || !g_mqttDriverMutex)
+        return UA_STATUSCODE_BADINTERNALERROR;
 
     const UA_Variant &var = data->value;
     std::string valueStr;
@@ -5781,16 +5771,17 @@ static void opcua_onWrite(UA_Server *server,
     } else {
         std::cerr << "OPC UA write: unsupported UA variant type for ["
                   << binding->conn_id << "]." << binding->logical_name << "\n";
-        return;
+        return UA_STATUSCODE_BADTYPEMISMATCH;
     }
 
+    std::string writeError;
     const bool ok = write_tag_by_name(
         *g_mqttDrivers,
         binding->conn_id,
         binding->logical_name,
         valueStr,
         *g_mqttTagTable,
-        *g_mqttDriverMutex
+        *g_mqttDriverMutex, &writeError
     );
 
     TagSnapshot cachedWriteResult;
@@ -5803,15 +5794,47 @@ static void opcua_onWrite(UA_Server *server,
             haveCachedWriteResult = true;
         }
     }
-    // The UA library initially stores the client's requested value. Replace it
-    // within this callback with cache evidence (or waiting), before another read.
+    // Publish cache evidence (or waiting), never the unconfirmed request.
     if (haveCachedWriteResult)
         ua_write_snapshot(server, *nodeId, cachedWriteResult, ua_snapshot_status(*binding, cachedWriteResult));
     if (!ok) {
         std::cerr << "OPC UA write: write_tag_by_name failed for ["
-                  << binding->conn_id << "]." << binding->logical_name << "\n";
-        return;
+                  << binding->conn_id << "]." << binding->logical_name << ": " << writeError << "\n";
+        return UA_STATUSCODE_BADNOCOMMUNICATION;
     }
+    return UA_STATUSCODE_GOOD;
+}
+
+static UA_StatusCode opcua_readWritable(UA_Server*, const UA_NodeId*, void*,
+        const UA_NodeId*, void *context, UA_Boolean sourceTimestamp,
+        const UA_NumericRange *range, UA_DataValue *value) {
+    auto *binding = static_cast<UaTagBinding*>(context);
+    if (!binding || !binding->ua_value) return UA_STATUSCODE_BADINTERNALERROR;
+    if (range) return UA_STATUSCODE_BADINDEXRANGEINVALID;
+    const auto status = UA_DataValue_copy(binding->ua_value.get(), value);
+    if (!sourceTimestamp) value->hasSourceTimestamp = false;
+    return status;
+}
+
+static UA_StatusCode ua_install_write_source(UA_Server *server, UaTagBinding &binding) {
+    // Capture the current value before changing backend. On reload, the existing
+    // callback supplies it; the value storage also survives binding moves.
+    UA_ReadValueId item;
+    UA_ReadValueId_init(&item);
+    item.nodeId = binding.nodeId;
+    item.attributeId = UA_ATTRIBUTEID_VALUE;
+    auto current = UA_Server_read(server, &item, UA_TIMESTAMPSTORETURN_BOTH);
+    binding.ua_value = std::shared_ptr<UA_DataValue>(UA_DataValue_new(), UA_DataValue_delete);
+    if (!binding.ua_value) {
+        UA_DataValue_clear(&current);
+        return UA_STATUSCODE_BADOUTOFMEMORY;
+    }
+    *binding.ua_value = current;
+    UA_Server_setNodeContext(server, binding.nodeId, &binding);
+    UA_CallbackValueSource source{};
+    source.read = opcua_readWritable;
+    source.write = opcua_onWrite;
+    return UA_Server_setVariableNode_callbackValueSource(server, binding.nodeId, source);
 }
 
 void update_snapshot_from_plc(TagSnapshot &snap,
@@ -12734,11 +12757,7 @@ static bool ua_add_tag_variable_node(UA_Server *server,
     bindings.push_back(std::move(b));
     UaTagBinding *bindingPtr = &bindings.back();
     if (bindingPtr->writable) {
-        UA_Server_setNodeContext(server, varId, bindingPtr);
-        UA_ValueCallback cb;
-        cb.onRead = nullptr;
-        cb.onWrite = opcua_onWrite;
-        UA_Server_setVariableNode_valueCallback(server, varId, cb);
+        ua_install_write_source(server, *bindingPtr);
     }
     return true;
 }
@@ -12836,11 +12855,14 @@ static bool sync_opcua_connection_nodes(DriverContext &driver,
                 ? (UA_ACCESSLEVELMASK_READ | UA_ACCESSLEVELMASK_WRITE)
                 : UA_ACCESSLEVELMASK_READ;
             UA_Server_writeAccessLevel(g_uaServer, binding.nodeId, access);
-            UA_Server_setNodeContext(g_uaServer, binding.nodeId, binding.writable ? &binding : nullptr);
-            UA_ValueCallback cb;
-            cb.onRead = nullptr;
-            cb.onWrite = binding.writable ? opcua_onWrite : nullptr;
-            UA_Server_setVariableNode_valueCallback(g_uaServer, binding.nodeId, cb);
+            if (binding.writable) {
+                ua_install_write_source(g_uaServer, binding);
+            } else {
+                UA_ValueCallback cb{};
+                UA_Server_setVariableNode_valueCallback(g_uaServer, binding.nodeId, cb);
+                UA_Server_setNodeContext(g_uaServer, binding.nodeId, nullptr);
+                binding.ua_value.reset();
+            }
             sync.updated++;
             continue;
         }
@@ -13473,11 +13495,7 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers,
             ua_restart_read_gate(server, *bindingPtr, driver, tag);
 
             if (bindingPtr->writable) {
-                UA_Server_setNodeContext(server, varId, bindingPtr);
-                UA_ValueCallback cb;
-                cb.onRead  = nullptr;
-                cb.onWrite = opcua_onWrite;
-                UA_Server_setVariableNode_valueCallback(server, varId, cb);
+                ua_install_write_source(server, *bindingPtr);
             }
 
             // Build lookup key
@@ -13508,11 +13526,7 @@ bool init_opcua_server(uint16_t port, std::vector<DriverContext> &drivers,
         auto &b = g_uaBindings[i];
         g_uaBindingIndex[ua_key(b.conn_id, b.logical_name)] = i;
         if (b.writable) {
-            UA_Server_setNodeContext(server, b.nodeId, &b);
-            UA_ValueCallback cb;
-            cb.onRead = nullptr;
-            cb.onWrite = opcua_onWrite;
-            UA_Server_setVariableNode_valueCallback(server, b.nodeId, cb);
+            ua_install_write_source(server, b);
         }
     }
     g_uaSystemBindingIndex.clear();

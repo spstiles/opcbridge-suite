@@ -22604,7 +22604,7 @@ const getAuditContextForWrite = (connectionId, tagName, audit = {}) => {
   return context;
 };
 
-const apiWriteTag = async ({ connection_id, tag, value, audit = {} }) => {
+const apiWriteTag = async ({ connection_id, tag, value, audit = {}, keepalive = false }) => {
   if (isViewOnlyRuntime()) {
     throw new Error("Writes are disabled in view-only mode.");
   }
@@ -22613,6 +22613,7 @@ const apiWriteTag = async ({ connection_id, tag, value, audit = {} }) => {
   if (!connectionId || !tagName) throw new Error("Missing connection_id or tag.");
   const response = await fetch("/api/opc/write", {
     method: "POST",
+    keepalive,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ connection_id: connectionId, tag: tagName, value, audit: getAuditContextForWrite(connectionId, tagName, audit) })
   });
@@ -34429,8 +34430,45 @@ if (viewportToolBtn) {
   });
 }
 
+// Serialize the complete press/release pair, including a second click while the
+// first write is still in flight. A failed press may have reached the server, so
+// its release must still be attempted.
+const createMomentaryWriter = (write, reportError) => {
+  let active = null;
+  let pending = Promise.resolve();
+  const enqueue = (action, object, pressed) => {
+    pending = pending.then(() => write({
+      connection_id: action.connection_id, tag: action.tag,
+      value: pressed ? action.onValue : action.offValue,
+      keepalive: true,
+      audit: { action: pressed ? "momentary-write-press" : "momentary-write-release",
+        object_id: object?.id || "", object_label: object?.label || "" }
+    })).catch(error => reportError(error));
+    return pending;
+  };
+  const release = (pointerId) => {
+    if (!active || (pointerId != null && active.pointerId !== pointerId)) return pending;
+    const { action, object } = active;
+    active = null;
+    return enqueue(action, object, false);
+  };
+  return {
+    press(pointerId, action, object) {
+      // Never overwrite a held command without scheduling its reset first.
+      release(null);
+      const captured = { ...action };
+      active = { pointerId, action: captured, object };
+      return enqueue(captured, object, true);
+    },
+    release
+  };
+};
+
 if (hmiSvg) {
-  let momentaryPress = null;
+  const momentaryWriter = createMomentaryWriter(apiWriteTag, error => {
+    console.error("[momentary-write] write failed:", error);
+  });
+  const releaseMomentary = pointerId => momentaryWriter.release(pointerId);
 
   hmiSvg.addEventListener("pointermove", showDiagnosticsForPointer);
   hmiSvg.addEventListener("pointerleave", hideDiagnosticsTooltip);
@@ -34452,39 +34490,17 @@ if (hmiSvg) {
 	    insertLibraryItemAt(kind, point);
 	  });
 
-		  const releaseMomentary = async (pointerId) => {
-		    if (!momentaryPress) return;
-		    if (isViewOnlyRuntime()) {
-		      momentaryPress = null;
-		      return;
-		    }
-	    if (pointerId != null && momentaryPress.pointerId !== pointerId) return;
-		    const { action, object } = momentaryPress;
-		    momentaryPress = null;
-		    try {
-		      await apiWriteTag({ connection_id: action.connection_id, tag: action.tag, value: action.offValue, audit: { action: "momentary-write-release", object_id: object?.id || "", object_label: object?.label || "" } });
-    } catch (error) {
-      console.error("[momentary-write] release failed:", error);
-    }
-  };
-
-		  hmiSvg.addEventListener("pointerdown", async (event) => {
-		    if (isEditMode) return;
-		    beginRuntimePointerInteraction();
-		    if (isViewOnlyRuntime()) return;
-		    const point = getScreenPoint(event);
-		    if (!point) return;
-	    const hitMeta = getMetaAtPoint(point);
-	    if (!hitMeta) return;
+  hmiSvg.addEventListener("pointerdown", (event) => {
+    if (isEditMode || event.button !== 0) return;
+    beginRuntimePointerInteraction();
+    if (isViewOnlyRuntime()) return;
+    const point = getScreenPoint(event);
+    if (!point) return;
+    const hitMeta = getMetaAtPoint(point);
+    if (!hitMeta) return;
     const obj = getObjectFromMeta(hitMeta);
     if (obj?.action?.type !== "momentary-write") return;
-    const action = obj.action || {};
-	    momentaryPress = { pointerId: event.pointerId, action, object: obj };
-    try {
-	      await apiWriteTag({ connection_id: action.connection_id, tag: action.tag, value: action.onValue, audit: { action: "momentary-write-press", object_id: obj?.id || "", object_label: obj?.label || "" } });
-    } catch (error) {
-      console.error("[momentary-write] press failed:", error);
-    }
+    momentaryWriter.press(event.pointerId, obj.action, obj);
   });
 
   hmiSvg.addEventListener("pointerup", (event) => {
@@ -34505,6 +34521,15 @@ if (hmiSvg) {
     setGroupHotspotHover(null);
     hmiSvg.style.cursor = "default";
     releaseMomentary(null);
+  });
+
+  // Release even if pointerup occurs outside the SVG or the browser loses focus.
+  window.addEventListener("pointerup", event => releaseMomentary(event.pointerId));
+  window.addEventListener("pointercancel", event => releaseMomentary(event.pointerId));
+  window.addEventListener("blur", () => releaseMomentary(null));
+  window.addEventListener("pagehide", () => releaseMomentary(null));
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) releaseMomentary(null);
   });
 
 	  hmiSvg.addEventListener("click", (event) => {
