@@ -52,3 +52,41 @@ test('both prepared color states share the browser timeline and restore render c
   assert.equal(animations[1].on, false);
   assert.equal(ctx.browserColorFlashPhase, null);
 });
+
+test('flashing alarm falls through to running or base color for tag and expression rules', () => {
+  for (const sourceType of ['tag','expression']) {
+    const ctx=vm.createContext({isEditMode:false,browserColorFlashPhase:{rate:'slow',on:true},
+      getColorAutomationRules:c=>c?.rules||[],tagValueCache:new Map(),normalizeTagCacheKey:(c,t)=>`${c}:${t}`,
+      coerceTagBoolean:Boolean,getStableAutomationState:value=>Boolean(value),getMultiStateVisualOverrides:()=>null,
+      evaluateAutomationExpression:name=>ctx.tagValueCache.get(`PLC:${name}`)});
+    for(const name of ['isColorRuleFlashActive','getAutomationColor','getActiveAutomationOverrideColor','getGroupColorOverrides'])load(ctx,name);
+    ctx.config={rules:[
+      {enabled:true,sourceType,connection_id:'PLC',tag:'Alarm',expression:'Alarm',onColor:'red',flashEnabled:true,flashRate:'slow'},
+      {enabled:true,sourceType,connection_id:'PLC',tag:'Running',expression:'Running',onColor:'green'}
+    ]};
+    const color=()=>vm.runInContext('getAutomationColor(config,"gray")',ctx);
+    const override=()=>vm.runInContext('getActiveAutomationOverrideColor(config)',ctx);
+    ctx.tagValueCache.set('PLC:Alarm',true);ctx.tagValueCache.set('PLC:Running',true);
+    assert.equal(color(),'red');assert.equal(override(),'red');
+    ctx.browserColorFlashPhase.on=false;
+    assert.equal(color(),'green');assert.equal(override(),'green');
+    assert.equal(vm.runInContext('getGroupColorOverrides({type:"group",fillAutomation:config,strokeAutomation:config,textColorAutomation:config,backgroundAutomation:config,borderColorAutomation:config}).fillColor',ctx),'green');
+    ctx.tagValueCache.set('PLC:Running',false);
+    assert.equal(color(),'gray');assert.equal(override(),null);
+    ctx.browserColorFlashPhase.on=true;
+    assert.equal(color(),'red');assert.equal(override(),'red');
+    ctx.tagValueCache.set('PLC:Alarm',false);ctx.tagValueCache.set('PLC:Running',true);
+    assert.equal(color(),'green');assert.equal(override(),'green');
+    // A steady higher-priority alarm keeps priority in either flash phase.
+    ctx.tagValueCache.set('PLC:Alarm',true);ctx.config.rules[0].flashEnabled=false;
+    ctx.browserColorFlashPhase.on=false;
+    assert.equal(color(),'red');assert.equal(override(),'red');
+    ctx.config.rules[0].enabled=false;
+    assert.equal(color(),'green');assert.equal(override(),'green');
+    // The configured inverse flash phase also falls through correctly.
+    Object.assign(ctx.config.rules[0],{enabled:true,flashEnabled:true,flashWhen:false});
+    assert.equal(color(),'red');assert.equal(override(),'red');
+    ctx.browserColorFlashPhase.on=true;
+    assert.equal(color(),'green');assert.equal(override(),'green');
+  }
+});

@@ -10552,17 +10552,18 @@ const getBrowserColorFlashRate = (obj) => {
   return rates.size === 1 ? [...rates][0] : null;
 };
 
+// Flash-off rules yield to later rules, preserving the underlying operating color.
 const getAutomationColor = (config, baseColor) => {
   if (!config || isEditMode) return baseColor;
   const rules = getColorAutomationRules(config);
   if (!rules.length) return baseColor;
   for (const rule of rules) {
-    if (!rule || !rule.enabled) continue;
+    if (!rule || !rule.enabled || !isColorRuleFlashActive(rule)) continue;
     if (rule.sourceType === "expression") {
       const result = evaluateAutomationExpression(rule.expression);
       if (result === null || result === undefined) continue;
       const isOn = rule.invert ? !coerceTagBoolean(result) : coerceTagBoolean(result);
-      if (isOn) return isColorRuleFlashActive(rule) ? (rule.onColor || baseColor) : baseColor;
+      if (isOn) return rule.onColor || baseColor;
       continue;
     }
     const connectionId = String(rule.connection_id || "");
@@ -10570,7 +10571,7 @@ const getAutomationColor = (config, baseColor) => {
     if (!connectionId || !tag) continue;
     const rawValue = tagValueCache.get(normalizeTagCacheKey(connectionId, tag));
     const state = getStableAutomationState(rawValue, rule, null);
-    if (state) return isColorRuleFlashActive(rule) ? (rule.onColor || baseColor) : baseColor;
+    if (state) return rule.onColor || baseColor;
   }
   return baseColor;
 };
@@ -10579,14 +10580,14 @@ const getActiveAutomationOverrideColor = (config) => {
   if (!config || isEditMode) return null;
   const rules = getColorAutomationRules(config);
   for (const rule of rules) {
-    if (!rule || !rule.enabled) continue;
+    if (!rule || !rule.enabled || !isColorRuleFlashActive(rule)) continue;
     const onColor = String(rule.onColor || "").trim();
     if (!onColor) continue;
     if (rule.sourceType === "expression") {
       const result = evaluateAutomationExpression(rule.expression);
       if (result === null || result === undefined) continue;
       const isOn = rule.invert ? !coerceTagBoolean(result) : coerceTagBoolean(result);
-      if (isOn) return isColorRuleFlashActive(rule) ? onColor : null;
+      if (isOn) return onColor;
       continue;
     }
     const connectionId = String(rule.connection_id || "");
@@ -10594,7 +10595,7 @@ const getActiveAutomationOverrideColor = (config) => {
     if (!connectionId || !tag) continue;
     const rawValue = tagValueCache.get(normalizeTagCacheKey(connectionId, tag));
     const state = getStableAutomationState(rawValue, rule, null);
-    if (state) return isColorRuleFlashActive(rule) ? onColor : null;
+    if (state) return onColor;
   }
   return null;
 };
