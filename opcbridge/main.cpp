@@ -12581,10 +12581,14 @@ static void apply_poll_cache_gate(DriverContext &driver, TagSnapshot &snapshot) 
 // inventing a new measurement timestamp. Scheduler suspension is not enabled yet.
 static TagSnapshot transition_poll_cache(DriverContext &driver, const TagRuntime &tag,
         TagTable &table, bool active, bool restart = false) {
-    auto &gate = driver.poll_gates[tag.cfg.logical_name];
+    auto [gateIt, inserted] = driver.poll_gates.try_emplace(tag.cfg.logical_name);
+    auto &gate = gateIt->second;
+    // UA client gates can first appear on demand, without the physical-driver
+    // startup pass. Bind them to the current generation before accepting data.
+    if (inserted) gate.restart(driver.freshness_epoch);
     const auto key = make_tag_key(driver.conn.id, tag.cfg.logical_name);
     auto found = table.find(key);
-    if (!restart && gate.is_active() == active && found != table.end()) return found->second;
+    if (!restart && !inserted && gate.is_active() == active && found != table.end()) return found->second;
     if (restart) gate.restart(driver.freshness_epoch);
     if (active) gate.resume(); else gate.suspend();
     auto snapshot = found == table.end() ? make_initial_snapshot_for_opcua(driver.conn, tag) : found->second;

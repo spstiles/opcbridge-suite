@@ -44,6 +44,39 @@ int main() {
         assert(writeError.find("configuration changed") != std::string::npos);
         assert(cache.at(make_tag_key(owner.conn.id, "Output")).quality == 1);
     }
+    // A demand-created UA gate must accept current subscription samples, while
+    // rejecting samples from a previous generation or before a wake boundary.
+    {
+        DriverContext remote; remote.conn.id = "Remote"; remote.conn.driver = "opcua_client";
+        remote.freshness_epoch = 42;
+        TagRuntime tag; tag.cfg.logical_name = "Kraft/Load"; tag.cfg.datatype = "int16";
+        TagTable cache;
+        auto inactive = make_initial_snapshot_for_opcua(remote.conn, tag);
+        inactive.polling_state = PollCacheState::Inactive;
+        cache[make_tag_key(remote.conn.id, tag.cfg.logical_name)] = inactive;
+        auto waiting = transition_poll_cache(remote, tag, cache, true);
+        assert(waiting.polling_state == PollCacheState::Waiting);
+        auto sample = waiting;
+        const auto received = PollReadStamp::Clock::now();
+        sample.poll_read = {received, received, remote.freshness_epoch};
+        sample.quality = 1;
+        apply_poll_cache_gate(remote, sample);
+        assert(sample.quality == 1 && sample.polling_state == PollCacheState::Active);
+        auto oldGeneration = sample; oldGeneration.poll_read.source_epoch = 41;
+        apply_poll_cache_gate(remote, oldGeneration);
+        assert(oldGeneration.quality == 0 && oldGeneration.polling_state == PollCacheState::Waiting);
+        cache[make_tag_key(remote.conn.id, tag.cfg.logical_name)] = sample;
+        transition_poll_cache(remote, tag, cache, false);
+        transition_poll_cache(remote, tag, cache, true);
+        auto beforeWake = sample;
+        apply_poll_cache_gate(remote, beforeWake);
+        assert(beforeWake.quality == 0 && beforeWake.polling_state == PollCacheState::Waiting);
+        const auto fresh = PollReadStamp::Clock::now();
+        sample.poll_read = {fresh, fresh, remote.freshness_epoch};
+        sample.quality = 1;
+        apply_poll_cache_gate(remote, sample);
+        assert(sample.quality == 1 && sample.polling_state == PollCacheState::Active);
+    }
     UA_Server *server = UA_Server_new();
     UA_ServerConfig_setDefault(UA_Server_getConfig(server));
     UA_Server_addNamespace(server, "urn:opcbridge:quality-test");
