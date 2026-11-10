@@ -737,3 +737,22 @@ test("preserves source stacking order when every object shares one layer", () =>
   const ids = new Set(result.screen.objects.map((object) => object.layerId));
   assert.equal(ids.size, 1);
 });
+
+test('process-point state rows inherit their parent binding and EqualZero imports as zero', () => {
+  const source = `<Canvas Width="300" Height="200" xmlns:gwx="gwx"><Label Name="Bypass" Width="140" Height="28">
+    <gwx:GwxProcessPoint AnimationMode="Discrete" DataSource="ac:S01/Bypass/Status">
+      <gwx:GwxProcessPoint.DynamicConnectionList>
+        <gwx:GwxProcessPointStateItem StateText="NORMAL" DataSource="ac:S01/Bypass/Status" DataComparison="EqualZero" />
+        <gwx:GwxProcessPointStateItem StateText="HIGH" LowLimitSource="1" DataComparison="EqualLowLimit" />
+      </gwx:GwxProcessPoint.DynamicConnectionList>
+    </gwx:GwxProcessPoint><TextBlock Text="??????" /></Label></Canvas>`;
+  const result=convertGraphWorx(source);
+  const obj=flattenObjects(result.screen.objects).find(o=>o.multiStateAutomation);
+  assert.ok(obj);
+  assert.deepEqual(obj.multiStateAutomation.states.map(s=>s.match),['0','1']);
+  assert.ok(obj.externalReferences.every(ref=>ref.automation==='states'&&ref.supported===true));
+  assert.ok(!result.screen.referenceHealth?.issues?.some(issue=>issue.automation==='GwxProcessPointStateItem'));
+  const different=convertGraphWorx(source.replace('StateText="NORMAL" DataSource="ac:S01/Bypass/Status"','StateText="NORMAL" DataSource="ac:Other/Status"'));
+  const other=flattenObjects(different.screen.objects).find(o=>o.multiStateAutomation);
+  assert.ok(other.externalReferences.some(ref=>ref.automation==='GwxProcessPointStateItem'&&ref.status==='unsupported'));
+});

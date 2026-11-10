@@ -79,3 +79,46 @@ test('layer visibility references use the normal mapper and retain the failure t
   assert.equal(visibility.expression,'tag("Memory", "Plant Fail Count")>3');
   assert.equal(visibility.status,'resolved');
 });
+
+test('legacy process-point state metadata resolves through the existing native States binding', () => {
+  const original='ac:S01_Augusta_and_Michigan/Bypass_High_Level/Status';
+  const ref={kind:'tag',automation:'GwxProcessPointStateItem',supported:false,status:'unsupported',source:{value:original}};
+  const binding={sourceReference:original,connection_id:'PLC',tag:'Bypass',status:'resolved'};
+  const obj={importId:'gwx_43',type:'text',multiStateAutomation:binding,externalReferences:[ref]};
+  const issue={objectImportId:'gwx_43',category:'unsupported-automation',automation:ref.automation,status:'unsupported',source:{value:original}};
+  const ctx=vm.createContext({currentScreenObj:{objects:[obj],referenceHealth:{issues:[issue]}},
+    pruneInactiveTemplateBindings:()=>{},knownMappedTag:()=>true,knownMappedScreen:()=>false,
+    parseMappedTagReference:()=>({connection_id:'PLC',tag:'Bypass'}),
+    collectScreenReferenceMappings:()=>[{type:'tag',current:'PLC::Bypass',occurrences:[{objectId:'gwx_43',automation:'states',original,binding}]}]});
+  vm.runInContext(source.slice(source.indexOf('const referenceAutomationMatches ='),source.indexOf('const getReferenceHealthIssues =')),ctx);
+  vm.runInContext('reconcileReferenceHealthMetadata()',ctx);
+  assert.equal(ref.status,'resolved');assert.equal(ref.supported,true);assert.equal(ref.automation,'states');assert.equal(issue.status,'resolved');
+  ctx.knownMappedTag=()=>false;
+  vm.runInContext('reconcileReferenceHealthMetadata()',ctx);
+  assert.equal(ref.status,'unresolved');assert.equal(issue.status,'unresolved');
+});
+
+test('color compatibility copies report one missing reference per color use, separately from States', () => {
+  const original='ac:Comms_Status/LS09_Read_Msg_Failure/Status';
+  const expression=`{{${original}}} || {{ac:Comms_Status/LS09_Write_Msg_Failure/Status}}`;
+  const rule={enabled:true,sourceType:'expression',expression,sourceReference:`x=${expression}`};
+  const child={importId:'state-label',type:'text',multiStateAutomation:{...rule}};
+  const obj={importId:'indicator',type:'group',colorAutomationRules:[{...rule},{...rule}],fillAutomation:{rules:[{...rule}]},children:[child]};
+  const context=vm.createContext({currentScreenObj:{objects:[obj]},aliasTokenName:()=>'',knownMappedTag:()=>false,knownMappedScreen:()=>false,
+    pruneInactiveTemplateBindings:()=>{},referenceHealthIssuesScreen:null,referenceHealthIssuesCache:null,tagCatalogLoaded:true,
+    getEffectiveScreenAliases:()=>[],screenCache:new Map(),extractAutomationExpressionTagReferences:()=>[],getAutomationExpressionValidationError:()=>'',resolveMappedConnectionId:s=>s});
+  for(const name of ['parseMappedTagReference','formatMappedTagReference']){
+    const start=source.indexOf(`const ${name} =`);vm.runInContext(source.slice(start,source.indexOf('\n};',start)+3),context);
+  }
+  vm.runInContext(source.slice(source.indexOf('const referenceAutomationLabel ='),source.indexOf('const displayMappingReference =')),context);
+  vm.runInContext(source.slice(source.indexOf('const referenceAutomationMatches ='),source.indexOf('const renderReferenceHealthBadge =')),context);
+  const issues=vm.runInContext('getReferenceHealthIssues()',context).filter(issue=>issue.source.value===original);
+  assert.equal(issues.length,2);
+  assert.deepEqual(Array.from(issues,issue=>issue.automation).sort(),['color','states']);
+  assert.deepEqual(Array.from(issues,issue=>issue.objectImportId).sort(),['indicator','state-label']);
+  const group=vm.runInContext('collectScreenReferenceMappings()',context).find(group=>group.current===original);
+  assert.equal(group.occurrences.length,4); // Keep every storage location repairable.
+  group.occurrences.forEach(occurrence=>occurrence.apply('PLC::ReadFailure',true));
+  assert.ok(obj.fillAutomation.rules[0].expression.includes('tag("PLC", "ReadFailure")'));
+  assert.ok(child.multiStateAutomation.expression.includes('tag("PLC", "ReadFailure")'));
+});

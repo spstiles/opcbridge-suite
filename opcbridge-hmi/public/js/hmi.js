@@ -7011,6 +7011,7 @@ const referenceAutomationMatches = (expected, actual) => {
     const name = String(value || "").trim().toLowerCase();
     if (name === "pick/write") return "action";
     if (name === "process point") return "data";
+    if (name === "gwxprocesspointstateitem") return "states";
     if (name === "text expression") return "text";
     return name;
   };
@@ -8074,7 +8075,7 @@ const formatMappedTagReference = (connectionId, tagName) => {
 
 const referenceAutomationLabel = (pathParts) => {
   const joined = pathParts.join(".").toLowerCase();
-  if (joined.includes("color")) return "color";
+  if (joined.includes("color") || pathParts.some(part => ["fillAutomation", "strokeAutomation", "backgroundAutomation"].includes(part))) return "color";
   if (joined.includes("visibility") || joined.includes("visible")) return "visibility";
   if (joined.includes("multistate")) return "states";
   if (joined.includes("textstate") || joined.includes("textbindings")) return "text";

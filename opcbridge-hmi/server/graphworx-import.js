@@ -370,7 +370,7 @@ const sourceMetadata = (sourceType, node, extra = {}) => {
     postfixLabel: String(item.PostfixLabel || ""),
     states: descendants(item, (name) => name === "gwx:GwxProcessPointStateItem").map((state) => ({
       text: String(state.StateText || ""),
-      match: String(state.LowLimitSource ?? ""),
+      match: String(state.DataComparison || "").toLowerCase() === "equalzero" ? "0" : String(state.LowLimitSource ?? ""),
       comparison: String(state.DataComparison || ""),
       target: String(state.TargetPropertyName || "")
     }))
@@ -387,6 +387,14 @@ const sourceMetadata = (sourceType, node, extra = {}) => {
   };
   const named = namedDataSources(node);
   const namedValues = new Set(named.map((item) => item.value));
+  // A discrete row can repeat its parent process point's data source. That
+  // reference is already represented by the native States binding.
+  const inheritedStateSources = new Set();
+  for (const item of named.filter(item => item.name === "gwx:GwxProcessPoint")) {
+    for (const state of descendants(item.node, name => name === "gwx:GwxProcessPointStateItem")) {
+      if (String(state.DataSource || "").trim() === item.value) inheritedStateSources.add(state);
+    }
+  }
   const refs = [
     ...named.map((item) => {
       const hasDiscreteStates = item.name === "gwx:GwxProcessPoint"
@@ -399,7 +407,7 @@ const sourceMetadata = (sourceType, node, extra = {}) => {
       const sizeDynamic = item.name === "gwx:GwxSize"
         ? sizes.find((candidate) => candidate.sourceExpression === item.value)
         : null;
-      const info = hasDiscreteStates
+      const info = (hasDiscreteStates || inheritedStateSources.has(item.node))
         ? { automation: "states", supported: true }
         : (hasTextValue ? { automation: hasTextExpression ? "text expression" : "text", supported: true }
         : (hasWriteCommand ? { automation: "pick/write", supported: true }
