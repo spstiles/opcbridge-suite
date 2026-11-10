@@ -2899,7 +2899,6 @@ function renderLoggerReportDetails() {
   const reporterHealth = state.reporterRuntime?.reporter || {};
   const validation = state.reporterValidationById?.get?.(id) || null;
   const rows = [
-    ['ID', id],
     ['Name', report?.name || ''],
     ['Database', reporterDatabaseLabel(report?.database_id)],
     ['Table', report?.table || 'tag_log'],
