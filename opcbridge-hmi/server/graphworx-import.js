@@ -859,8 +859,30 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
           if (!w) w = Math.max(0, childBounds.x + childBounds.w);
           if (!h) h = Math.max(0, childBounds.y + childBounds.h);
         }
+        // A Canvas transform acts on the original child coordinates, before
+        // an unpositioned wrapper is rebased to its content bounds. Native
+        // groups rotate about their frame center, so preserve that same world
+        // center while keeping the children in their normalized local frame.
+        let frame = { x, y, w, h };
+        const matrix = renderMatrixFrom(node);
+        if (matrix) {
+          const [a, b, c, d] = matrix;
+          const rigid = Math.abs(a * a + b * b - 1) < 1e-6
+            && Math.abs(c * c + d * d - 1) < 1e-6
+            && Math.abs(a * c + b * d) < 1e-6
+            && Math.abs(a * d - b * c - 1) < 1e-6;
+          if (rigid) {
+            const originX = isUnpositionedWrapper ? childBounds.x : 0;
+            const originY = isUnpositionedWrapper ? childBounds.y : 0;
+            frame = transformedFrame(node, {
+              x: num(node["Canvas.Left"]) + a * originX + c * originY,
+              y: num(node["Canvas.Top"]) + b * originX + d * originY,
+              w, h
+            });
+          }
+        }
         add({
-          type: "group", x, y, w, h, children, importAnimatorFramesIncomplete: incompleteFrames, ...(action ? { action } : {}),
+          type: "group", ...frame, children, importAnimatorFramesIncomplete: incompleteFrames, ...(action ? { action } : {}),
           ...sourceMetadata(name, ownedDynamicsNode, { source: { format: "graphworx64", type: name, name: node.Name || null }, importConversion: "preserved-group" })
         });
         return;

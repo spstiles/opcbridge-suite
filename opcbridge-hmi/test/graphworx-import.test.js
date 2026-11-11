@@ -793,3 +793,45 @@ test('text click import retains set-value writes and screen navigation', () => {
   assert.equal(texts.find(o=>o.text==='OVERVIEW').action.type,'navigate');
   assert.equal(texts.find(o=>o.text==='OVERVIEW').action.sourceScreen,'Overview.gdfx');
 });
+
+test('selector Canvas rotation preserves the source positions of both nested hand rectangles', () => {
+  // Geometry from the two selector states in 30-Bar Screen Buttons.gdfx.
+  const matrices = [
+    [0.939692620066508, 0.342020151118823, -0.342020151118823, 0.939692620066508, 193.18151245075, -170.382494219467],
+    [0.766044443050615, 0.642787615781442, -0.642787615781442, 0.766044443050615, 420.144199237814, -206.824737864719]
+  ];
+  const apply = (matrix, point) => ({ x: matrix[0] * point.x + matrix[2] * point.y + matrix[4], y: matrix[1] * point.x + matrix[3] * point.y + matrix[5] });
+  const worldCenter = (group, child) => {
+    const angle = group.rotation * Math.PI / 180;
+    const dx = child.x + child.w / 2 - group.w / 2;
+    const dy = child.y + child.h / 2 - group.h / 2;
+    return { x: group.x + group.w / 2 + Math.cos(angle) * dx - Math.sin(angle) * dy,
+      y: group.y + group.h / 2 + Math.sin(angle) * dx + Math.cos(angle) * dy };
+  };
+  for (const [state, matrix] of matrices.entries()) {
+    const inner = state === 0 ? [-0.49999999672258, 0.866025405676658, 0.866025405676658, 0.49999999672258, -17.8467762755176, 10.3038411318638] : [1, 0, 0, 1, 0, 0];
+    const left = state === 0 ? 422.909355 : 457.828596;
+    const top = state === 0 ? 586.579149 : 576.444098;
+    const xml = `<Canvas Width="800" Height="800"><Canvas RenderTransform="${matrix}">
+      <Rectangle Width="12" Height="62" Canvas.Left="${left}" Canvas.Top="${top}" RenderTransform="${inner}" />
+      <Rectangle Width="10" Height="58" Canvas.Left="${left + 1}" Canvas.Top="${top + 2}" RenderTransform="${inner}" />
+    </Canvas></Canvas>`;
+    const group = convertGraphWorx(xml).screen.objects[0];
+    assert.ok(Math.abs(group.rotation - (state === 0 ? 20 : 40)) < 1e-5);
+    group.children.forEach((child, index) => {
+      const local = apply(inner, { x: index ? 5 : 6, y: index ? 29 : 31 });
+      const expected = apply(matrix, { x: left + index + local.x, y: top + index * 2 + local.y });
+      const actual = worldCenter(group, child);
+      assert.ok(Math.abs(actual.x - expected.x) < 1e-5, `${actual.x} != ${expected.x}`);
+      assert.ok(Math.abs(actual.y - expected.y) < 1e-5, `${actual.y} != ${expected.y}`);
+    });
+  }
+});
+
+test('positioned Canvas rotation uses its local origin and adds the layout offset once', () => {
+  const screen = convertGraphWorx(`<Canvas Width="800" Height="600"><Canvas Canvas.Left="100" Canvas.Top="200" Width="80" Height="40" RenderTransform="0,1,-1,0,10,20"><Rectangle Canvas.Left="5" Canvas.Top="6" Width="10" Height="12" /></Canvas></Canvas>`).screen;
+  const group = screen.objects[0];
+  assert.deepEqual({ x: group.x, y: group.y, w: group.w, h: group.h, rotation: group.rotation }, { x: 50, y: 240, w: 80, h: 40, rotation: 90 });
+  assert.equal(group.children[0].x, 5);
+  assert.equal(group.children[0].y, 6);
+});
