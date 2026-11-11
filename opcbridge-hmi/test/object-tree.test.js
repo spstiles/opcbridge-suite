@@ -157,8 +157,8 @@ test('Explorer starts docked in the workspace and linked names differ only in we
   assert.doesNotMatch(html.slice(explorer,html.indexOf('>',explorer)),/is-floating/);
   assert.match(css,/\.object-explorer\s*\{[^}]*position: relative; flex: 0 0 auto;/);
   assert.match(css,/\.object-tree-object\.is-linked\s*\{\s*font-weight: 700;\s*\}/);
-  assert.match(css,/data-properties-dock="right"/);
-  assert.match(css,/flex: 0 0 var\(--properties-dock-space/);
+  assert.match(css,/#editor-pane\[data-dock="right"\] \{ order: 2;/);
+  assert.doesNotMatch(css,/--properties-dock-space/);
 });
 
 test('Explorer can float and redock without changing Properties', () => {
@@ -176,7 +176,7 @@ test('Explorer can float and redock without changing Properties', () => {
 });
 
 
-test('Properties dock reservation follows its selected side and actual width', () => {
+test('Properties uses column dimensions when docked and coordinates when floating', () => {
   const values = {};
   const ctx = vm.createContext({editorPane:{dataset:{},style:{}},document:{body:{dataset:{}},documentElement:{style:{setProperty:(key,value)=>{values[key]=value;}}}},
     window:{innerWidth:1400,innerHeight:900},getComputedStyle:()=>({getPropertyValue:key=>key==='--toolbar-height'?'48px':'38px'}),
@@ -185,12 +185,17 @@ test('Properties dock reservation follows its selected side and actual width', (
   vm.runInContext(source.slice(start,source.indexOf('const setEditorPaneDock =',start)),ctx);
   vm.runInContext('applyEditorPaneState({dock:"right",w:360})',ctx);
   assert.equal(ctx.document.body.dataset.propertiesDock,'right');
-  assert.equal(values['--properties-dock-space'],'380px');
+  assert.equal(values['--editor-pane-width'],'360px');
+  assert.equal(ctx.editorPane.style.height,'100%');
+  assert.equal(ctx.editorPane.style.left,'');
   vm.runInContext('applyEditorPaneState({dock:"left",w:420})',ctx);
   assert.equal(ctx.document.body.dataset.propertiesDock,'left');
-  assert.equal(values['--properties-dock-space'],'440px');
+  assert.equal(values['--editor-pane-width'],'420px');
+  assert.equal(ctx.editorPane.style.width,'420px');
   vm.runInContext('applyEditorPaneState({dock:"float",w:420,h:600,x:100,y:100})',ctx);
   assert.equal(ctx.document.body.dataset.propertiesDock,'float');
+  assert.equal(ctx.editorPane.style.left,'100px');
+  assert.equal(ctx.editorPane.style.top,'100px');
 });
 
 

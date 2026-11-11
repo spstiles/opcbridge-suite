@@ -3550,7 +3550,7 @@ body.runtime-mode #editor-pane {
   min-width: 34px;
 }
 
-/* Docking modes: always float over canvas, but snap to an edge. */
+/* Floating Properties can fade during canvas gestures. */
 .editor-pane[data-dock="float"].canvas-gesture-active {
   opacity: 0.2;
 }
@@ -4506,13 +4506,21 @@ body.edit-mode:not(.status-bar-hidden) #workspace { height: calc(100% - 31px); }
   max-width: 50vw; max-height: calc(100vh - var(--toolbar-height) - 20px);
   resize: both; border-radius: 5px; box-shadow: var(--shadow-lg);
 }
-/* Reserve the fixed Properties dock as well, without changing its contents. */
-body.edit-mode[data-properties-dock="right"] #workspace::after,
-body.edit-mode[data-properties-dock="left"] #workspace::before {
-  content: ""; display: block; flex: 0 0 var(--properties-dock-space, 380px);
+/* Docked Properties is a real column; only floating Properties overlays. */
+body.edit-mode #editor-pane[data-dock="right"],
+body.edit-mode #editor-pane[data-dock="left"] {
+  position: relative; flex: 0 0 auto; top: auto; bottom: auto; left: auto; right: auto;
+  height: 100%; min-height: 0; margin: 0; border-radius: 0;
 }
-body.edit-mode.editor-panel-hidden #workspace::before,
-body.edit-mode.editor-panel-hidden #workspace::after { display: none; }
+body.edit-mode #editor-pane[data-dock="right"] { order: 2; }
+body.edit-mode #editor-pane[data-dock="left"] { order: -1; }
+#screen-wrapper { order: 1; }
+body.edit-mode #editor-pane[data-dock="right"] #editor-resizer,
+body.edit-mode #editor-pane[data-dock="left"] #editor-resizer {
+  display: block; position: absolute; top: 0; bottom: 0; width: 6px; height: 100%; z-index: 2;
+}
+body.edit-mode #editor-pane[data-dock="right"] #editor-resizer { left: 0; }
+body.edit-mode #editor-pane[data-dock="left"] #editor-resizer { right: 0; }
 .object-explorer.is-hidden, body.runtime-mode .object-explorer, body.runtime-mode #objectExplorerToggleBtn { display: none; }
 .object-explorer-header { display: flex; justify-content: space-between; align-items: center; cursor: default; touch-action: none; font-size: 11px; user-select: none; }
 .object-explorer.is-floating .object-explorer-header { cursor: move; }

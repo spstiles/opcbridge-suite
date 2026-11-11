@@ -21,9 +21,11 @@ visible while working.
 - Layer locks and hidden-layer protections remain in effect.
 
 Explorer uses compact 11 px rows and starts docked to the left of the canvas.
-It reserves its own column; a docked Properties panel also reserves space so
-objects remain reachable in the scrollable workspace. The Properties panel's
-contents remain unchanged. Drag Explorer's right edge to resize its docked
+The workspace uses separate columns for Explorer, the canvas, and right-docked
+Properties. Docked panels reduce the canvas area so objects remain reachable by
+scrolling. Properties can also dock on the left; drag its inside edge to resize
+and remember its width. Floating Properties overlays the canvas. Its contents
+remain unchanged. Drag Explorer's right edge to resize its docked
 width; the preferred width is remembered. The focused edge also supports arrow
 keys (Shift for fine adjustment). When floating, resize from its corner. Use its float
 button to move it into a separate window. Its title bar moves it only while

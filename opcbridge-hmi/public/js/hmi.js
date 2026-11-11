@@ -555,7 +555,6 @@ const applyEditorPaneState = (state) => {
   editorPane.dataset.dock = nextDock;
   document.body.dataset.propertiesDock = nextDock;
   const toolbarH = Number(getComputedStyle(document.documentElement).getPropertyValue("--toolbar-height").replace("px", "")) || 48;
-  const leftToolbarW = Number(getComputedStyle(document.documentElement).getPropertyValue("--left-toolbar-width").replace("px", "")) || 38;
   const vw = window.innerWidth;
   const vh = window.innerHeight;
 
@@ -581,18 +580,11 @@ const applyEditorPaneState = (state) => {
     editorPane.style.top = `${y}px`;
     editorPane.style.right = "auto";
   } else {
-    const width = clamp(Number(state?.w) || 360, 280, Math.floor(vw * 0.6));
-    document.documentElement.style.setProperty("--properties-dock-space", `${width + 20}px`);
-    editorPane.style.top = `${toolbarH}px`;
-    editorPane.style.height = `${Math.max(240, vh - toolbarH)}px`;
+    const storedWidth = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--editor-pane-width")) || 360;
+    const width = clamp(Number(state?.w) || storedWidth, 280, Math.floor(vw * 0.6));
+    document.documentElement.style.setProperty("--editor-pane-width", `${width}px`);
+    editorPane.style.height = "100%";
     editorPane.style.width = `${width}px`;
-    if (nextDock === "left") {
-      editorPane.style.left = `${leftToolbarW + 10}px`;
-      editorPane.style.right = "auto";
-    } else {
-      editorPane.style.right = "10px";
-      editorPane.style.left = "auto";
-    }
   }
 };
 
@@ -614,7 +606,8 @@ const setEditorPaneDock = (dock) => {
     next.y = clamp(toolbarH + 18, toolbarH + 4, vh - h - 10);
   }
   if (nextDock !== "float") {
-    delete next.x; delete next.y; delete next.w; delete next.h;
+    delete next.x; delete next.y; delete next.h;
+    next.w = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--editor-pane-width")) || 360;
   }
   saveEditorPaneState(next);
   applyEditorPaneState(next);
@@ -22011,11 +22004,11 @@ const bindEnterToApply = () => {
 const applyEditorWidth = (value) => {
   const nextWidth = Math.max(280, Math.min(value, Math.floor(window.innerWidth * 0.6)));
   document.documentElement.style.setProperty("--editor-pane-width", `${nextWidth}px`);
-  try {
-    window.localStorage.setItem(EDITOR_WIDTH_KEY, String(nextWidth));
-  } catch {
-    /* ignore storage errors */
+  if (editorPane && ["left", "right"].includes(editorPane.dataset.dock)) {
+    editorPane.style.width = `${nextWidth}px`;
+    saveEditorPaneState({ ...(getEditorPaneState() || {}), dock: editorPane.dataset.dock, w: nextWidth });
   }
+  try { window.localStorage.setItem(EDITOR_WIDTH_KEY, String(nextWidth)); } catch {}
 };
 
 const restoreEditorWidth = () => {
@@ -22038,7 +22031,7 @@ const bindResizer = () => {
   const onMove = (event) => {
     if (!isResizing) return;
     const delta = event.clientX - startX;
-    applyEditorWidth(startWidth - delta);
+    applyEditorWidth(startWidth + (editorPane.dataset.dock === "left" ? delta : -delta));
   };
 
   const onUp = () => {
