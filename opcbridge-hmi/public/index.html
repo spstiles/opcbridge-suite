@@ -371,76 +371,6 @@
           </div>
         </div>
 
-        <div class="editor-panel" data-panel="library" role="tabpanel">
-          <div class="editor-section-title">Tools</div>
-	          <div class="library-toolbar">
-	            <button id="textToolBtn" class="tool-btn" type="button" title="Text tool">
-	              <span class="tool-icon">T</span>
-	            </button>
-              <button id="buttonToolBtn" class="tool-btn" type="button" title="Button tool">
-                <span class="tool-icon">B</span>
-              </button>
-            <button id="rectToolBtn" class="tool-btn" type="button" title="Rectangle tool">
-              <span class="tool-icon">▭</span>
-            </button>
-            <button id="alarmsPanelToolBtn" class="tool-btn" type="button" title="Alarms panel tool">
-              <span class="tool-icon">AL</span>
-            </button>
-            <button id="reportTableToolBtn" class="tool-btn" type="button" title="Insert report table">
-              <span class="tool-icon">RP</span>
-            </button>
-            <button id="dataEntryToolBtn" class="tool-btn" type="button" title="Insert data entry form"><span class="tool-icon">DE</span></button>
-	            <button id="polylineToolBtn" class="tool-btn" type="button" title="Polyline tool">
-	              <span class="tool-icon">〰</span>
-	            </button>
-            <button id="pipeToolBtn" class="tool-btn" type="button" title="Pipe tool (click vertices, double-click to finish)">
-              <span class="tool-icon">▰</span>
-            </button>
-            <button id="polygonToolBtn" class="tool-btn" type="button" title="Freeform polygon tool (click vertices)">
-              <span class="tool-icon">✣</span>
-            </button>
-            <button id="regularPolygonToolBtn" class="tool-btn" type="button" title="Regular n-sided shape (draw a box)">
-              <span class="tool-icon">⬣</span>
-            </button>
-            <button id="stretchedPolygonToolBtn" class="tool-btn" type="button" title="Stretched n-sided shape (fill the box)">
-              <span class="tool-icon">⬢</span>
-            </button>
-            <button id="barToolBtn" class="tool-btn" type="button" title="Bar graph tool">
-              <span class="tool-icon">▮</span>
-            </button>
-	            <button id="circleToolBtn" class="tool-btn" type="button" title="Circle (diameter)">
-	              <span class="tool-icon">◯</span>
-            </button>
-            <button id="circleCenterToolBtn" class="tool-btn" type="button" title="Circle (center/radius)">
-              <span class="tool-icon">◎</span>
-            </button>
-            <button id="lineToolBtn" class="tool-btn" type="button" title="Line tool">
-              <span class="tool-icon">／</span>
-            </button>
-            <button id="curveToolBtn" class="tool-btn" type="button" title="Curve tool (2 endpoints + control point)">
-              <span class="tool-icon">⌒</span>
-            </button>
-            <button id="splineToolBtn" class="tool-btn" type="button" title="Spline tool">
-              <span class="tool-icon">∿</span>
-            </button>
-            <button id="viewportToolBtn" class="tool-btn" type="button" title="Viewport tool">
-              <span class="tool-icon">VP</span>
-            </button>
-          </div>
-	          <div class="editor-section-title">Items</div>
-	          <div class="library-items">
-	            <button id="navToolBtn" class="panel-btn" type="button" draggable="true">Button</button>
-	            <button id="numberInputToolBtn" class="panel-btn" type="button" draggable="true">Numeric Entry</button>
-	            <button id="indicatorToolBtn" class="panel-btn" type="button" draggable="true">Indicator</button>
-	          </div>
-	          <div class="editor-section-title">Images</div>
-            <div class="library-items" style="margin-bottom: 6px;">
-              <button id="imgUploadBtn" class="panel-btn" type="button">Upload image…</button>
-              <input id="imgUploadInput" type="file" accept=".png,.jpg,.jpeg,.gif,.webp,.bmp,.svg,image/*" multiple hidden />
-            </div>
-	          <div id="libraryImagesGrid" class="library-images-grid" aria-label="Image library"></div>
-	        </div>
-
         <div class="editor-panel is-active" data-panel="properties" role="tabpanel">
           <div id="selectedReferenceHealthProps" class="properties-form reference-properties is-hidden"></div>
           <div id="objectDynamicTabs" class="editor-tabs is-hidden">
@@ -2499,7 +2429,77 @@
 	        <button id="libraryModalCloseBtn" class="panel-btn" type="button">Close</button>
 	      </div>
 	      <div class="settings-body">
-	        <div id="libraryModalHost" class="settings-section"></div>
+	        <div id="libraryModalHost" class="settings-section">
+<div id="libraryContents" class="library-panel">
+          <div class="editor-section-title">Tools</div>
+	          <div class="library-toolbar">
+	            <button id="textToolBtn" class="tool-btn" type="button" title="Text tool">
+	              <span class="tool-icon">T</span>
+	            </button>
+              <button id="buttonToolBtn" class="tool-btn" type="button" title="Button tool">
+                <span class="tool-icon">B</span>
+              </button>
+            <button id="rectToolBtn" class="tool-btn" type="button" title="Rectangle tool">
+              <span class="tool-icon">▭</span>
+            </button>
+            <button id="alarmsPanelToolBtn" class="tool-btn" type="button" title="Alarms panel tool">
+              <span class="tool-icon">AL</span>
+            </button>
+            <button id="reportTableToolBtn" class="tool-btn" type="button" title="Insert report table">
+              <span class="tool-icon">RP</span>
+            </button>
+            <button id="dataEntryToolBtn" class="tool-btn" type="button" title="Insert data entry form"><span class="tool-icon">DE</span></button>
+	            <button id="polylineToolBtn" class="tool-btn" type="button" title="Polyline tool">
+	              <span class="tool-icon">〰</span>
+	            </button>
+            <button id="pipeToolBtn" class="tool-btn" type="button" title="Pipe tool (click vertices, double-click to finish)">
+              <span class="tool-icon">▰</span>
+            </button>
+            <button id="polygonToolBtn" class="tool-btn" type="button" title="Freeform polygon tool (click vertices)">
+              <span class="tool-icon">✣</span>
+            </button>
+            <button id="regularPolygonToolBtn" class="tool-btn" type="button" title="Regular n-sided shape (draw a box)">
+              <span class="tool-icon">⬣</span>
+            </button>
+            <button id="stretchedPolygonToolBtn" class="tool-btn" type="button" title="Stretched n-sided shape (fill the box)">
+              <span class="tool-icon">⬢</span>
+            </button>
+            <button id="barToolBtn" class="tool-btn" type="button" title="Bar graph tool">
+              <span class="tool-icon">▮</span>
+            </button>
+	            <button id="circleToolBtn" class="tool-btn" type="button" title="Circle (diameter)">
+	              <span class="tool-icon">◯</span>
+            </button>
+            <button id="circleCenterToolBtn" class="tool-btn" type="button" title="Circle (center/radius)">
+              <span class="tool-icon">◎</span>
+            </button>
+            <button id="lineToolBtn" class="tool-btn" type="button" title="Line tool">
+              <span class="tool-icon">／</span>
+            </button>
+            <button id="curveToolBtn" class="tool-btn" type="button" title="Curve tool (2 endpoints + control point)">
+              <span class="tool-icon">⌒</span>
+            </button>
+            <button id="splineToolBtn" class="tool-btn" type="button" title="Spline tool">
+              <span class="tool-icon">∿</span>
+            </button>
+            <button id="viewportToolBtn" class="tool-btn" type="button" title="Viewport tool">
+              <span class="tool-icon">VP</span>
+            </button>
+          </div>
+	          <div class="editor-section-title">Items</div>
+	          <div class="library-items">
+	            <button id="navToolBtn" class="panel-btn" type="button" draggable="true">Button</button>
+	            <button id="numberInputToolBtn" class="panel-btn" type="button" draggable="true">Numeric Entry</button>
+	            <button id="indicatorToolBtn" class="panel-btn" type="button" draggable="true">Indicator</button>
+	          </div>
+	          <div class="editor-section-title">Images</div>
+            <div class="library-items" style="margin-bottom: 6px;">
+              <button id="imgUploadBtn" class="panel-btn" type="button">Upload image…</button>
+              <input id="imgUploadInput" type="file" accept=".png,.jpg,.jpeg,.gif,.webp,.bmp,.svg,image/*" multiple hidden />
+            </div>
+	          <div id="libraryImagesGrid" class="library-images-grid" aria-label="Image library"></div>
+	        </div>
+        </div>
 	      </div>
 	    </div>
 	  </div>

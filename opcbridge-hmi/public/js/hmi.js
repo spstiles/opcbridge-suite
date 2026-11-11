@@ -3593,50 +3593,18 @@ const closeTagsModal = () => {
   tagsModalOverlay.setAttribute("aria-hidden", "true");
 };
 
-// Standalone Library modal: reuse the existing library panel DOM (temporary).
-let libraryPanelOriginalParent = null;
-let libraryPanelOriginalNextSibling = null;
-
+// Library contents live permanently in their own modal, never in Properties.
 const openLibraryModal = () => {
-  if (!libraryModalOverlay || !libraryModalHost) return;
-  const panel = document.querySelector('.editor-panel[data-panel="library"]');
-  if (!panel) return;
+  if (!libraryModalOverlay) return;
   setMenuOpen(false);
   if (insertMenuFlyout) insertMenuFlyout.classList.add("is-hidden");
   if (insertMenuBtn) insertMenuBtn.setAttribute("aria-expanded", "false");
-
-  if (!libraryPanelOriginalParent) {
-    libraryPanelOriginalParent = panel.parentElement;
-    libraryPanelOriginalNextSibling = panel.nextSibling;
-  }
-
-  libraryModalHost.innerHTML = "";
-  panel.dataset._prevDisplay = panel.style.display || "";
-  panel.dataset._prevActive = panel.classList.contains("is-active") ? "1" : "0";
-  panel.style.display = "block";
-  panel.classList.add("is-active");
-  libraryModalHost.appendChild(panel);
-
   libraryModalOverlay.classList.remove("is-hidden");
   libraryModalOverlay.setAttribute("aria-hidden", "false");
 };
 
 const closeLibraryModal = () => {
   if (!libraryModalOverlay) return;
-  const panel = document.querySelector('.editor-panel[data-panel="library"]');
-  if (panel && libraryPanelOriginalParent) {
-    const prevDisplay = panel.dataset._prevDisplay;
-    if (prevDisplay !== undefined) panel.style.display = prevDisplay;
-    const prevActive = panel.dataset._prevActive;
-    if (prevActive === "0") panel.classList.remove("is-active");
-    delete panel.dataset._prevDisplay;
-    delete panel.dataset._prevActive;
-    if (libraryPanelOriginalNextSibling && libraryPanelOriginalParent.contains(libraryPanelOriginalNextSibling)) {
-      libraryPanelOriginalParent.insertBefore(panel, libraryPanelOriginalNextSibling);
-    } else {
-      libraryPanelOriginalParent.appendChild(panel);
-    }
-  }
   libraryModalOverlay.classList.add("is-hidden");
   libraryModalOverlay.setAttribute("aria-hidden", "true");
 };
