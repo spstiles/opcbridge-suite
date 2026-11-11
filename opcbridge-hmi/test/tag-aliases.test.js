@@ -96,6 +96,7 @@ test('shared tag picker offers screen aliases and saves them without a stale con
     document: { createElement: element }, tagsCache: [], tagPickerConnectionIds: () => [],
     tagPickerMatchesConnection: () => true, tagPickerConnectionId: id => id, tagPickerName: (_, name) => name,
     tagBindingSaveBtn: save, activeCompactTagBindingId: 'buttonWrite',
+    tagBindingSourceSelect: { value: 'tag' }, tagBindingAliasNameInput: { value: '' },
     getCompactTagBindingConfig: () => ({ apply: value => { binding = value; } }),
     parseTagSelectValue: () => ({ connection_id: '', tag: '{alias:Command}' }), tagBindingTemplateInput: { value: '' },
     closeCompactTagBindingModal() {}, renderCompactTagBindingRows() {} });
@@ -165,4 +166,39 @@ test('caller source type distinguishes a tag mapping from literal text while pre
   vm.runInContext('context = buildAliasContext(screen, mappings)', ctx);
   assert.equal(ctx.context.Title, 'Pump One');
   assert.equal(ctx.context.Command.tag, 'Pump1.Start');
+});
+
+test('explicit Screen Alias source saves every Click write type on an ellipse without a connection', () => {
+  for (const type of ['momentary-write', 'toggle-write', 'set-write', 'prompt-write']) {
+    const obj = { type: 'ellipse', action: { type, connection_id: 'OLD', tag: 'Old', onValue: '1', offValue: '0' } };
+    const save = { addEventListener(event, handler) { this[event] = handler; } };
+    let dirty = false;
+    let invalid = '';
+    const aliasInput = { value: 'AutoCommand', setCustomValidity: message => { invalid = message; }, reportValidity() {} };
+    const ctx = aliases({ tagBindingSaveBtn: save, activeCompactTagBindingId: 'buttonWrite',
+      tagBindingSourceSelect: { value: 'alias' }, tagBindingAliasNameInput: aliasInput,
+      tagBindingTagSelect: { value: 'OLD::Old', selectedOptions: [] }, tagBindingConnectionSelect: { value: 'OLD' },
+      tagBindingTemplateInput: { value: '' }, parseTagSelectValue: () => ({ connection_id: 'OLD', tag: 'Old' }), tagPickerConnectionId: id => id,
+      selectedIndices: [0], getActiveObjects: () => [obj], getEditedClickAction: owner => owner.action,
+      buttonActionSelect: { value: type }, buttonWriteOnValueInput: { value: '1' }, buttonWriteOffValueInput: { value: '0' },
+      buttonPromptDefaultInput: null, buttonPromptMinInput: null, buttonPromptMaxInput: null, buttonPromptStepInput: null,
+      parseOptionalNumber: () => null,
+      updateButtonProperty: patch => { obj.action = patch.action; dirty = true; },
+      closeCompactTagBindingModal() {}, renderCompactTagBindingRows() {} });
+    const start = source.indexOf('function updateButtonWriteBinding(');
+    vm.runInContext(source.slice(start, source.indexOf('function initializeCompactTagBindingRows(', start)), ctx);
+    vm.runInContext('getCompactTagBindingConfig = () => ({apply: updateButtonWriteBinding})', ctx);
+    const saveStart = source.indexOf('if (tagBindingSaveBtn) {');
+    vm.runInContext(source.slice(saveStart, source.indexOf('\nif (tagBindingClearBtn)', saveStart)), ctx);
+    save.click();
+    assert.equal(obj.action.type, type);
+    assert.equal(obj.action.tag, '{alias:AutoCommand}');
+    assert.equal(obj.action.connection_id, '');
+    assert.equal(dirty, true);
+    if (type !== 'prompt-write') assert.equal(obj.action.onValue, '1');
+    if (['momentary-write','toggle-write'].includes(type)) assert.equal(obj.action.offValue, '0');
+    dirty = false; aliasInput.value = 'bad alias'; save.click();
+    assert.equal(dirty, false);
+    assert.match(invalid, /alias name/);
+  }
 });

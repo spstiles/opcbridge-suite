@@ -1054,7 +1054,9 @@ body.runtime-mode .ws-badge {
     background: var(--bg-elevated);
 }
 
-.menu-item.is-disabled {
+.menu-item.is-disabled,
+.menu-item:disabled,
+.left-flyout-item:disabled {
     opacity: 0.4;
     cursor: default;
     pointer-events: none;

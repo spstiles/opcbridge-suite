@@ -9,6 +9,28 @@ const editorZoomOutBtn = document.getElementById("editorZoomOutBtn");
 const editorZoomResetBtn = document.getElementById("editorZoomResetBtn");
 const editorZoomInBtn = document.getElementById("editorZoomInBtn");
 const automationControlStore = document.getElementById("automationControlStore");
+const AUTOMATION_OBJECT_TYPES = Object.freeze({
+  visibility: ["rect", "line", "curve", "polyline", "spline", "pipe", "ellipse", "text", "button", "group", "circle", "polygon"],
+  color: ["rect", "line", "curve", "polyline", "spline", "pipe", "ellipse", "text", "button", "group", "circle", "polygon"],
+  states: ["rect", "line", "curve", "polyline", "spline", "ellipse", "text", "button", "group", "circle"],
+  rotation: ["rect", "line", "ellipse", "text", "button", "group"],
+  motion: ["rect", "line", "ellipse", "text", "button", "group", "circle"],
+  animator: ["group"],
+  level: ["rect", "ellipse", "circle", "polygon", "button"]
+});
+const supportsObjectAutomation = (obj, feature) => {
+  if (!obj) return false;
+  if (feature === "click") return true;
+  if (["box-shadow", "drop-shadow"].includes(feature)) return !["alarms-panel", "viewport"].includes(obj.type);
+  return Boolean(AUTOMATION_OBJECT_TYPES[feature]?.includes(obj.type));
+};
+const setAutomationMenuItemEnabled = (element, enabled) => {
+  if (!element) return;
+  element.disabled = !enabled;
+  element.classList.toggle("is-disabled", !enabled);
+  element.setAttribute("aria-disabled", enabled ? "false" : "true");
+};
+
 const isPathDynamicObject = (obj) => Boolean(obj && ["line", "curve", "polyline", "spline"].includes(obj.type));
 const isClosedDynamicPath = (obj) => Boolean(obj && ["polyline", "spline"].includes(obj.type) && obj.closed);
 const runtimeBtn = document.getElementById("runtimeBtn");
@@ -399,6 +421,10 @@ const tagBindingPropertySelect = document.getElementById("tagBindingProperty");
 const tagBindingConnectionSelect = document.getElementById("tagBindingConnection");
 const tagBindingTagSelect = document.getElementById("tagBindingTag");
 const tagBindingTagFilterInput = document.getElementById("tagBindingTagFilter");
+const tagBindingSourceSelect = document.getElementById("tagBindingSource");
+const tagBindingAliasNameInput = document.getElementById("tagBindingAliasName");
+const tagBindingAliasNames = document.getElementById("tagBindingAliasNames");
+const tagBindingAliasRow = document.getElementById("tagBindingAliasRow");
 const tagBindingTemplateInput = document.getElementById("tagBindingTemplate");
 const tagBindingAliasInsertSelect = document.getElementById("tagBindingAliasInsert");
 const tagBindingAliasInsertBtn = document.getElementById("tagBindingAliasInsertBtn");
@@ -639,27 +665,27 @@ const getSelectedPolygonObject = () => {
 
 const getSelectedVisibilityDynamicObject = () => {
   const obj = getAutomationObject();
-  return obj && (obj.type === "rect" || isPathDynamicObject(obj) || obj.type === "pipe" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "group" || obj.type === "circle" || obj.type === "polygon") ? obj : null;
+  return supportsObjectAutomation(obj, "visibility") ? obj : null;
 };
 
 const getSelectedColorDynamicObject = () => {
   const obj = getAutomationObject();
-  return obj && (obj.type === "rect" || isPathDynamicObject(obj) || obj.type === "pipe" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "polygon" || obj.type === "group") ? obj : null;
+  return supportsObjectAutomation(obj, "color") ? obj : null;
 };
 
 const getSelectedRotationDynamicObject = () => {
   const obj = getAutomationObject();
-  return obj && (obj.type === "rect" || obj.type === "line" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "group") ? obj : null;
+  return supportsObjectAutomation(obj, "rotation") ? obj : null;
 };
 
 const getSelectedMultiStateDynamicObject = () => {
   const obj = getAutomationObject();
-  return obj && (obj.type === "rect" || isPathDynamicObject(obj) || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "group") ? obj : null;
+  return supportsObjectAutomation(obj, "states") ? obj : null;
 };
 
 const getSelectedMotionDynamicObject = () => {
   const obj = getAutomationObject();
-  return obj && (obj.type === "rect" || obj.type === "line" || obj.type === "ellipse" || obj.type === "text" || obj.type === "button" || obj.type === "circle" || obj.type === "group") ? obj : null;
+  return supportsObjectAutomation(obj, "motion") ? obj : null;
 };
 
 const hasVisibilityDynamic = (obj) => {
@@ -12172,22 +12198,13 @@ const updateMenuState = () => {
     && selectedIndices.every((idx) => canSizeMatchObject(activeObjects[idx]));
   const canReorder = selectedIndices.length > 0;
   const canFlip = selectedIndices.length > 0;
-  const canAddRectDynamic = Boolean(getSelectedRectObject());
-  const canAddLineDynamic = Boolean(getSelectedLineObject());
-  const canAddEllipseDynamic = Boolean(getSelectedEllipseObject());
-  const canAddTextDynamic = Boolean(getSelectedTextObject());
-  const canAddButtonDynamic = Boolean(getSelectedButtonObject());
-  const canAddCircleDynamic = Boolean(getSelectedCircleObject());
-  const canAddPolygonDynamic = Boolean(getSelectedPolygonObject());
-  const canAddGroupDynamic = Boolean(getSelectedGroupObject());
-  const canAddPipeDynamic = selectedIndices.length === 1 && activeObjects[selectedIndices[0]]?.type === "pipe";
-  const canAddColorDynamic = canAddRectDynamic || canAddLineDynamic || canAddPipeDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddCircleDynamic || canAddPolygonDynamic;
-  const canAddStatesDynamic = canAddRectDynamic || canAddLineDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddCircleDynamic || canAddGroupDynamic;
-  const canAddRotationDynamic = canAddRectDynamic || Boolean(getSelectedLineObject()?.type === "line") || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddGroupDynamic;
-  const canAddMotionDynamic = canAddRectDynamic || Boolean(getSelectedLineObject()?.type === "line") || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddCircleDynamic || canAddGroupDynamic;
-  const canOpenDynamics = canAddRectDynamic || canAddLineDynamic || canAddPipeDynamic || canAddEllipseDynamic || canAddTextDynamic || canAddButtonDynamic || canAddGroupDynamic || canAddCircleDynamic || canAddPolygonDynamic;
   const selectedObject = selectedIndices.length === 1 ? activeObjects[selectedIndices[0]] : null;
-  const canAddShadow = Boolean(selectedObject && !["alarms-panel", "viewport"].includes(selectedObject.type));
+  const canAddColorDynamic = supportsObjectAutomation(selectedObject, "color");
+  const canAddStatesDynamic = supportsObjectAutomation(selectedObject, "states");
+  const canAddRotationDynamic = supportsObjectAutomation(selectedObject, "rotation");
+  const canAddMotionDynamic = supportsObjectAutomation(selectedObject, "motion");
+  const canOpenDynamics = supportsObjectAutomation(selectedObject, "visibility");
+  const canAddShadow = supportsObjectAutomation(selectedObject, "box-shadow");
   const toggleItem = (el) => {
     if (!el) return;
     const disabled = el === groupMenuBtn ? !canGroup
@@ -12211,11 +12228,7 @@ const updateMenuState = () => {
     if (!el) return;
     el.classList.toggle("is-disabled", !canFlip);
   };
-  const toggleDynamicMenuItem = (el, enabled) => {
-    if (!el) return;
-    el.classList.toggle("is-disabled", !enabled);
-    el.disabled = !enabled;
-  };
+  const toggleDynamicMenuItem = setAutomationMenuItemEnabled;
   if (explodeSelectedSvgBtn) {
     explodeSelectedSvgBtn.classList.toggle("is-disabled", !canExplodeSvg);
   }
@@ -12266,7 +12279,8 @@ const updateMenuState = () => {
       : kind === "states" ? canAddStatesDynamic
       : kind === "rotation" ? canAddRotationDynamic
       : kind === "motion" ? canAddMotionDynamic
-      : canOpenDynamics;
+      : kind === "visibility" ? canOpenDynamics
+      : supportsObjectAutomation(selectedObject, kind);
     toggleDynamicMenuItem(button, enabled);
   });
 };
@@ -23481,6 +23495,15 @@ document.addEventListener("click", event => {
   if (event.target.closest?.("[data-refresh-tag-catalog]")) void refreshEditorTagCatalog();
 });
 
+const syncTagBindingSourceMode = () => {
+  const aliasMode = tagBindingSourceSelect?.value === "alias";
+  if (tagBindingAliasRow) tagBindingAliasRow.hidden = !aliasMode;
+  [tagBindingConnectionSelect, tagBindingTagSelect, tagBindingTagFilterInput, tagBindingTemplateInput, tagBindingAliasInsertSelect]
+    .forEach(input => { const row = input?.closest?.(".prop-row"); if (row) row.hidden = aliasMode; });
+};
+tagBindingSourceSelect?.addEventListener("change", syncTagBindingSourceMode);
+tagBindingAliasNameInput?.addEventListener("input", () => tagBindingAliasNameInput.setCustomValidity(""));
+
 if (tagBindingSaveBtn) {
   tagBindingSaveBtn.addEventListener("click", () => {
     const config = getCompactTagBindingConfig(activeCompactTagBindingId);
@@ -23489,7 +23512,16 @@ if (tagBindingSaveBtn) {
     const parsedSelection = parseTagSelectValue(String(tagBindingTagSelect?.value || ""));
     let connection_id = tagPickerConnectionId(String(selectedTagOption?.dataset?.connectionId || tagBindingConnectionSelect?.value || parsedSelection.connection_id || "").trim());
     const template = String(tagBindingTemplateInput?.value || "").trim();
-    const tag = template || String(selectedTagOption?.dataset?.tag || parsedSelection.tag || "").trim();
+    let tag = template || String(selectedTagOption?.dataset?.tag || parsedSelection.tag || "").trim();
+    if (tagBindingSourceSelect?.value === "alias") {
+      const name = String(tagBindingAliasNameInput?.value || "").trim();
+      if (!/^[a-zA-Z0-9_.-]+$/.test(name)) {
+        tagBindingAliasNameInput?.setCustomValidity("Enter an alias name using letters, numbers, dots, underscores or hyphens.");
+        tagBindingAliasNameInput?.reportValidity();
+        return;
+      }
+      tag = `{alias:${name}}`;
+    }
     if (aliasTokenName(tag)) connection_id = "";
     if (config.connectionInput) setFriendlyConnectionInputValue(config.connectionInput, connection_id);
     if (config.tagInput) config.tagInput.value = tag;
@@ -26486,6 +26518,20 @@ function openCompactTagBindingModal(id) {
   activeCompactTagBindingId = id;
   if (tagBindingTitle) tagBindingTitle.textContent = config.modalTitle || config.label || "Tag Binding";
   const binding = config.read();
+  const aliasName = aliasTokenName(binding.tag);
+  if (tagBindingSourceSelect) tagBindingSourceSelect.value = aliasName ? "alias" : "tag";
+  if (tagBindingAliasNameInput) {
+    tagBindingAliasNameInput.value = aliasName;
+    tagBindingAliasNameInput.setCustomValidity("");
+  }
+  if (tagBindingAliasNames) {
+    tagBindingAliasNames.textContent = "";
+    getEffectiveScreenAliases(currentScreenObj).filter(alias => alias.type === "tag").forEach(alias => {
+      const option = document.createElement("option"); option.value = alias.name;
+      tagBindingAliasNames.appendChild(option);
+    });
+  }
+  syncTagBindingSourceMode();
   if (tagBindingPropertySelect) {
     tagBindingPropertySelect.closest(".prop-row").hidden = id !== "indicator";
     tagBindingPropertySelect.value = binding.property === "quality" ? "quality" : "value";
@@ -26713,7 +26759,7 @@ function initializeCompactTagBindingRows() {
     container: buttonWriteFields,
     beforeEl: buttonWriteOnRow,
     buttonLabel: "Tag",
-    modalTitle: "Button Write Tag",
+    modalTitle: "Click Write Tag",
     read: () => ({
       connection_id: getEditedClickAction(getActiveObjects()?.[selectedIndices[0]])?.connection_id || "",
       tag: getEditedClickAction(getActiveObjects()?.[selectedIndices[0]])?.tag || ""

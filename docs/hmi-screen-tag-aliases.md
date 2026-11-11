@@ -8,8 +8,10 @@ screen can therefore display and control different equipment for each caller.
    Mark them required when the screen needs the caller to supply them. Save.
 2. For an indicator or other read binding, open its Source tag picker and choose
    `{alias:Running}` under **Screen Aliases**. No local connection is required.
-3. For a button's Click write action, choose `{alias:Start}` in the write tag
-   picker. Configure its write values normally. A momentary action still writes
+3. For any object's Click write action, open the write tag picker and choose
+   **Source → Screen Alias**. Select an existing alias or enter a name such as
+   `Start`; there is no need to type braces or choose a connection. Configure its
+   write values normally. A momentary action still writes
    its press value and release value to the same resolved destination.
 4. On the calling screen, select the action that opens the reusable screen
    (Popup, Navigate, or Load Viewport). Under **Target Screen Aliases**, map

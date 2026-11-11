@@ -16,7 +16,7 @@ test('path objects use standard visibility, color and state selectors', () => {
   const context = { selected: null };
   context.getAutomationObject = () => context.selected;
   vm.createContext(context);
-  vm.runInContext(declaration('isPathDynamicObject', 'runtimeBtn') +
+  vm.runInContext(declaration('AUTOMATION_OBJECT_TYPES', 'isPathDynamicObject') + declaration('isPathDynamicObject', 'runtimeBtn') +
     declaration('getSelectedVisibilityDynamicObject', 'hasVisibilityDynamic') +
     declaration('getDefaultColorRuleForObject', 'normalizeStoredColorRule'), context);
   for (const type of ['polyline', 'spline', 'curve']) {
