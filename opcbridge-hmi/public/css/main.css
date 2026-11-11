@@ -4498,7 +4498,7 @@ body.edit-mode:not(.status-bar-hidden) #workspace { height: calc(100% - 31px); }
   position: relative; flex: 0 0 auto; width: 260px; height: 100%;
   min-width: 200px; min-height: 160px; max-width: 35vw;
   display: flex; flex-direction: column; gap: 5px; padding: 6px; box-sizing: border-box;
-  overflow: hidden; resize: horizontal; background: var(--bg-secondary); border: 1px solid var(--border-default);
+  overflow: hidden; resize: none; background: var(--bg-secondary); border: 1px solid var(--border-default);
 }
 .object-explorer.is-floating {
   position: fixed; z-index: 1050; left: calc(var(--left-toolbar-width) + 10px);
@@ -4534,3 +4534,7 @@ body.edit-mode.editor-panel-hidden #workspace::after { display: none; }
 
 .object-tree-list .object-tree-object { color: #c5cbd6; font-weight: 400; }
 .object-tree-list .object-tree-object.is-linked { font-weight: 700; }
+
+.object-explorer-resizer { position: absolute; right: 0; top: 0; bottom: 0; width: 6px; cursor: col-resize; touch-action: none; z-index: 2; }
+.object-explorer-resizer:hover, .object-explorer-resizer:focus-visible { background: rgba(59, 130, 246, 0.35); outline: none; }
+.object-explorer.is-floating .object-explorer-resizer { display: none; }

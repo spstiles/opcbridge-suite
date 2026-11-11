@@ -19026,8 +19026,67 @@ const setObjectExplorerDocked = (docked) => {
     button.setAttribute("aria-label", button.title);
   }
 };
+const OBJECT_EXPLORER_WIDTH_KEY = "opcbridge-hmi.objectExplorer.width";
+const applyObjectExplorerWidth = (width, persist = false) => {
+  const panel = document.getElementById("objectExplorer");
+  if (!panel) return;
+  const maximum = Math.max(200, Math.floor(window.innerWidth * 0.35));
+  const next = Math.max(200, Math.min(Number(width) || 260, maximum));
+  panel.style.width = `${next}px`;
+  const handle = document.getElementById("objectExplorerResizer");
+  handle?.setAttribute("aria-valuemin", "200");
+  handle?.setAttribute("aria-valuemax", String(maximum));
+  handle?.setAttribute("aria-valuenow", String(Math.round(next)));
+  if (persist) { try { window.localStorage.setItem(OBJECT_EXPLORER_WIDTH_KEY, String(next)); } catch {} }
+};
+const restoreObjectExplorerWidth = () => {
+  let width = 260;
+  try { width = Number(window.localStorage.getItem(OBJECT_EXPLORER_WIDTH_KEY)) || width; } catch {}
+  applyObjectExplorerWidth(width);
+};
+const initializeObjectExplorerResize = () => {
+  const panel = document.getElementById("objectExplorer");
+  const handle = document.getElementById("objectExplorerResizer");
+  if (!panel || !handle) return;
+  handle.addEventListener("pointerdown", event => {
+    if (!isEditMode || event.button !== 0 || panel.classList.contains("is-floating")) return;
+    event.preventDefault(); event.stopPropagation();
+    const startX = event.clientX;
+    const width = panel.getBoundingClientRect().width;
+    const oldCursor = document.body.style.cursor;
+    document.body.style.cursor = "col-resize";
+    const move = update => {
+      if (update.pointerId === event.pointerId) applyObjectExplorerWidth(width + update.clientX - startX);
+    };
+    const finish = update => {
+      if (update?.pointerId != null && update.pointerId !== event.pointerId) return;
+      applyObjectExplorerWidth(parseFloat(panel.style.width) || width, true);
+      document.body.style.cursor = oldCursor;
+      window.removeEventListener("pointermove", move, true);
+      window.removeEventListener("pointerup", finish, true);
+      window.removeEventListener("pointercancel", finish, true);
+      window.removeEventListener("blur", finish);
+    };
+    window.addEventListener("pointermove", move, true);
+    window.addEventListener("pointerup", finish, true);
+    window.addEventListener("pointercancel", finish, true);
+    window.addEventListener("blur", finish);
+  });
+  handle.addEventListener("keydown", event => {
+    if (!isEditMode || panel.classList.contains("is-floating") || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+    event.preventDefault(); event.stopPropagation();
+    applyObjectExplorerWidth(panel.getBoundingClientRect().width + (event.key === "ArrowLeft" ? -1 : 1) * (event.shiftKey ? 1 : 10), true);
+  });
+};
+restoreObjectExplorerWidth();
+initializeObjectExplorerResize();
+window.addEventListener("resize", () => {
+  if (!document.getElementById("objectExplorer")?.classList.contains("is-floating")) restoreObjectExplorerWidth();
+});
 document.getElementById("objectExplorerDockBtn")?.addEventListener("click", () => {
-  setObjectExplorerDocked(Boolean(document.getElementById("objectExplorer")?.classList.contains("is-floating")));
+  const docked = Boolean(document.getElementById("objectExplorer")?.classList.contains("is-floating"));
+  setObjectExplorerDocked(docked);
+  if (docked) restoreObjectExplorerWidth();
 });
 document.getElementById("objectTreeSearch")?.addEventListener("input", refreshObjectExplorer);
 document.getElementById("objectExplorerToggleBtn")?.addEventListener("click", () => {
