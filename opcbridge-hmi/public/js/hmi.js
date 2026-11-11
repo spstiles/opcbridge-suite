@@ -5708,7 +5708,10 @@ const mergeAlarmTimelineRowWithRuntimeState = (row, runtime) => {
   const runtimeActiveSince = Number(runtime?.active_since_ms) || Number(runtime?.last_change_ms) || Date.now();
   const rowActiveSince = Number(row?.active_since_ms) || 0;
   const rowClearedTs = Number(row?.cleared_ts_ms) || 0;
-  if (rowClearedTs > 0 && rowClearedTs > runtimeActiveSince) return row;
+  // A returned occurrence is historical even when this alarm has activated
+  // again. Applying the current state to it reopens every earlier cycle with
+  // the same active timestamp, flooding the panel after history is loaded.
+  if (rowClearedTs > 0) return row;
   return {
     ...row,
     ...runtime,
