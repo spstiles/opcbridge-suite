@@ -106,3 +106,40 @@ test('shared action updates save text writes without changing text appearance or
   vm.runInContext('updateButtonProperty({label:"Wrong control"})',c);
   assert.equal(obj.label,undefined);assert.equal(recorded,4);
 });
+
+test('popup settings on text and buttons persist checkbox changes and enable Save for the selected click action', () => {
+  const HmiClickActions = require('../public/js/click-actions');
+  for (const type of ['text', 'button']) {
+    const first = { type: 'navigate', screenId: 'Overview' };
+    const popup = { type: 'popup', screenId: 'Controls', modal: true, movable: false, aliases: { Pump: { value: '1' } } };
+    const obj = { type, text: 'Open Controls', action: HmiClickActions.pack([first, popup]) };
+    let dirty = false;
+    let history = 0;
+    const movable = { checked: true, addEventListener(event, handler) { this[event] = handler; } };
+    const c = vm.createContext({ HmiClickActions, obj, selectedIndices: [0],
+      getActiveObjects: () => [obj], getAutomationObject: () => obj,
+      recordHistory: () => { history++; }, renderClickActionList() {}, renderScreen() {}, syncEditorFromScreen() {},
+      setDirty: value => { dirty = value; },
+      buttonPopupMovableInput: movable, buttonPopupModalInput: null, buttonPopupXInput: null, buttonPopupYInput: null,
+      buttonPopupSizeModeSelect: null, buttonPopupWidthInput: null, buttonPopupHeightInput: null, buttonPopupScaleModeSelect: null,
+      buttonPopupFixedSizeFields: null, setPopupFixedSizeFieldsVisible() {},
+      buttonPopupSettingsFromInputs: () => ({ modal: true, movable: movable.checked, popupSizeMode: 'screen', popupScaleMode: 'fit' }) });
+    vm.runInContext(source.slice(source.indexOf('const usesFullClickEditor ='), source.indexOf('const renderClickActionList =')), c);
+    vm.runInContext('clickActionSelection.set(obj, 1)', c);
+    vm.runInContext(source.slice(source.indexOf('const updateButtonProperty ='), source.indexOf('const updateGroupProperty =')), c);
+    vm.runInContext(source.slice(source.indexOf('const updateButtonPopupSettings ='), source.indexOf('[groupPopupModalInput, groupPopupMovableInput')), c);
+    movable.change();
+    assert.equal(dirty, true, `${type}: Movable must enable Save`);
+    assert.equal(history, 1);
+    assert.equal(obj.action.actions[0], first);
+    assert.equal(obj.action.actions[1].movable, true);
+    assert.equal(obj.action.actions[1].screenId, 'Controls');
+    assert.equal(obj.action.actions[1].aliases, popup.aliases);
+    dirty = false;
+    movable.checked = false;
+    movable.change();
+    assert.equal(dirty, true, `${type}: clearing Movable must enable Save`);
+    assert.equal(obj.action.actions[1].movable, false);
+    assert.equal(obj.text, 'Open Controls');
+  }
+});

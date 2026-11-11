@@ -23704,7 +23704,7 @@ if (groupNavigationTargetSelect) {
 const updateButtonPopupSettings = () => {
   const obj = getAutomationObject();
   const action = getEditedClickAction(obj);
-  if (!obj || obj.type !== "button" || action.type !== "popup") return;
+  if (!usesFullClickEditor(obj) || action.type !== "popup") return;
   updateButtonProperty({ action: { ...action, ...buttonPopupSettingsFromInputs() } });
 };
 
