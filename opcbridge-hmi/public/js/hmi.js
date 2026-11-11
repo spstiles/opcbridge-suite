@@ -7590,7 +7590,32 @@ const collectObjectDiagnosticClicks = (obj) => {
   return [...new Set(blocks)];
 };
 
-const buildObjectDiagnosticsText = (obj) => {
+// Diagnostic hit testing deliberately includes visibility-controlled drawings.
+// A hidden lamp overlay still owns the tag that explains its visible base art.
+const collectDiagnosticObjectsAtPoint = (objects, point) => {
+  const found = [];
+  const visit = (items, localPoint) => {
+    (items || []).forEach(source => {
+      const obj = getDisplayObject(source);
+      const bounds = getObjectBounds(obj);
+      if (!bounds) return;
+      const angle = Number(getObjectRotationDegrees(obj)) || 0;
+      const pivot = getObjectRotationPivotPoint(obj, bounds);
+      const radians = -angle * Math.PI / 180;
+      const dx = localPoint.x - pivot.x, dy = localPoint.y - pivot.y;
+      const unrotated = { x: pivot.x + dx * Math.cos(radians) - dy * Math.sin(radians),
+        y: pivot.y + dx * Math.sin(radians) + dy * Math.cos(radians) };
+      if (!pointInBox(unrotated, bounds)) return;
+      const own = { ...obj }; delete own.children;
+      if (collectObjectDiagnosticReferences(own).length || collectObjectDiagnosticClicks(own).length) found.push(own);
+      if (obj.type === "group") visit(obj.children, { x: unrotated.x - Number(obj.x || 0), y: unrotated.y - Number(obj.y || 0) });
+    });
+  };
+  visit(objects, point);
+  return found;
+};
+
+const buildObjectDiagnosticsText = (obj, aliasContext = {}) => {
   const references = collectObjectDiagnosticReferences(obj);
   if (!obj) return "";
   const clicks = collectObjectDiagnosticClicks(obj);
@@ -7607,6 +7632,9 @@ const buildObjectDiagnosticsText = (obj) => {
       `Connection: ${getConnectionDisplayName(resolved) || "Unmapped"}`,
       `Tag: ${reference.tag}`
     ];
+    const aliasNames = Object.entries(aliasContext || {}).filter(([, target]) => target && typeof target === "object"
+      && String(target.connection_id || "") === resolved && String(target.tag || "") === reference.tag).map(([name]) => name);
+    if (aliasNames.length) lines.unshift(`Alias: ${aliasNames.join(", ")}`);
     const sourceTag = String(tagInfo?.plc_tag_name || "").trim();
     if (sourceTag && sourceTag !== reference.tag) {
       lines.push(`PLC tag: ${sourceTag}`);
@@ -7637,7 +7665,20 @@ const showDiagnosticsForPointer = (event) => {
     }
     ancestor = ancestor.parentElement?.closest?.("[data-hmi-diagnostic-object]");
   }
-  let text = buildObjectDiagnosticsText({ children: objects });
+  const aliases = inPopup
+    ? (typeof currentPopupAliasContext !== "undefined" ? currentPopupAliasContext : {})
+    : (typeof currentScreenAliasContext !== "undefined" ? currentScreenAliasContext : {});
+  if (inPopup && typeof popupSvg !== "undefined" && popupSvg?.getScreenCTM) {
+    const matrix = popupSvg.getScreenCTM();
+    const child = screenCache.get(currentPopupScreenId);
+    if (matrix && child) {
+      const cursor = popupSvg.createSVGPoint(); cursor.x = event.clientX; cursor.y = event.clientY;
+      const local = cursor.matrixTransform(matrix.inverse());
+      const resolved = resolveAliasObject(child, aliases);
+      objects.push(...collectDiagnosticObjectsAtPoint(resolved.objects, local));
+    }
+  }
+  let text = buildObjectDiagnosticsText({ children: objects }, aliases);
   if (!text) {
     // Decorative artwork can cover an interactive shape. Find its tagged
     // rendered object rather than stopping at the unbound topmost shape.
@@ -7645,7 +7686,7 @@ const showDiagnosticsForPointer = (event) => {
       if (Boolean(element.closest?.("#popupSvg")) !== inPopup) continue;
       const candidate = element.closest?.("[data-hmi-diagnostic-object]")?.__hmiDiagnosticObject;
       if (!candidate) continue;
-      text = buildObjectDiagnosticsText(candidate);
+      text = buildObjectDiagnosticsText(candidate, aliases);
       if (text) break;
     }
   }

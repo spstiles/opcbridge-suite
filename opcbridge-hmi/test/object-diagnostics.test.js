@@ -93,3 +93,38 @@ test('diagnostics restores nested click sequences and press/release values along
   assert.match(ctx.text, /Connection: PLC\nTag: Start/);
   assert.doesNotMatch(ctx.text, /Object:/);
 });
+
+test('popup diagnostics finds a hidden alias-controlled indicator beneath visible base artwork', () => {
+  const tooltip = { style: {}, classList: { remove() {} }, getBoundingClientRect: () => ({ width: 200, height: 100 }) };
+  const host = { __hmiDiagnosticObject: { type: 'ellipse' }, parentElement: null };
+  // Mirrors Buttons2's nested Group29: the aliased rule has no stored connection.
+  const child = { objects: [{ type: 'group', x: 100, y: 50, w: 100, h: 100, children: [
+    { type: 'ellipse', x: 10, y: 10, w: 80, h: 80 },
+    { type: 'group', x: 10, y: 10, w: 80, h: 80,
+      visibility: { enabled: true, rules: [{ enabled: true, tag: '{alias:BarScreenAutoMode}', match: '0', invert: true }] },
+      children: [{ type: 'ellipse', x: 0, y: 0, w: 80, h: 80 }] }
+  ] }] };
+  const ctx = helpers({ diagnosticsModeEnabled: true, isEditMode: false, hmiSvg: {},
+    currentPopupScreenId: '30-Bar Screen Buttons2',
+    currentPopupAliasContext: { BarScreenAutoMode: { connection_id: 'B030', tag: 'Bar_Screen_1.Auto_Mode' } },
+    screenCache: new Map([['30-Bar Screen Buttons2', child]]),
+    popupSvg: { getScreenCTM: () => ({ inverse: () => ({}) }), createSVGPoint: () => ({ matrixTransform() { return { x: this.x, y: this.y }; } }) },
+    getDisplayObject: obj => obj, getObjectBounds: obj => ({ x: obj.x, y: obj.y, width: obj.w, height: obj.h }),
+    getObjectRotationDegrees: () => 0, getObjectRotationPivotPoint: (obj, box) => ({ x: box.x + box.width / 2, y: box.y + box.height / 2 }),
+    pointInBox: (point, box) => point.x >= box.x && point.x <= box.x + box.width && point.y >= box.y && point.y <= box.y + box.height,
+    getScreenPoint: () => assert.fail('Must use popup coordinates'),
+    hideDiagnosticsTooltip: () => assert.fail('Hidden binding should remain diagnosable'), ensureDiagnosticsTooltip: () => tooltip,
+    tagValueCache: new Map([['B030:Bar_Screen_1.Auto_Mode', false]]), tagQualityCache: new Map([['B030:Bar_Screen_1.Auto_Mode', 1]]),
+    window: { innerWidth: 1000, innerHeight: 800 },
+    event: { clientX: 140, clientY: 90, target: { closest: selector => selector === '#popupSvg' ? {} : host } } });
+  vm.runInContext(source.slice(source.indexOf('const aliasTokenName ='), source.indexOf('const buildAliasContext =')), ctx);
+  const start = source.indexOf('const showDiagnosticsForPointer =');
+  vm.runInContext(source.slice(start, source.indexOf('const setDiagnosticsMode =', start)), ctx);
+  vm.runInContext('showDiagnosticsForPointer(event)', ctx);
+  assert.match(tooltip.textContent, /Alias: BarScreenAutoMode/);
+  assert.match(tooltip.textContent, /Connection: B030\nTag: Bar_Screen_1.Auto_Mode\nValue: false\nQuality: Good/);
+  assert.equal((tooltip.textContent.match(/Tag: Bar_Screen_1.Auto_Mode/g) || []).length, 1);
+  assert.equal(child.objects[0].children[1].visibility.rules[0].tag, '{alias:BarScreenAutoMode}');
+  ctx.child = child;
+  assert.equal(vm.runInContext('collectDiagnosticObjectsAtPoint(child.objects, {x: 5, y: 5}).length', ctx), 0);
+});
