@@ -4493,27 +4493,22 @@ body.edit-mode:not(.status-bar-hidden) #workspace { height: calc(100% - 31px); }
   flex-shrink: 0;
 }
 
-/* Docked panels reserve workspace; only the floating panel overlays it. */
-body.edit-mode[data-editor-dock="right"] #workspace {
-  box-sizing: border-box;
-  padding-right: var(--editor-dock-space, 380px);
+/* Object Explorer is separate from the unchanged Properties panel. */
+.object-explorer {
+  position: fixed; z-index: 1050; left: calc(var(--left-toolbar-width) + 10px);
+  top: calc(var(--toolbar-height) + 12px); width: 260px; height: min(65vh, 600px);
+  min-width: 200px; min-height: 160px; max-width: 50vw; max-height: calc(100vh - var(--toolbar-height) - 20px);
+  display: flex; flex-direction: column; gap: 5px; padding: 6px; box-sizing: border-box;
+  overflow: hidden; resize: both; background: var(--bg-secondary); border: 1px solid var(--border-default);
+  border-radius: 5px; box-shadow: var(--shadow-lg);
 }
-body.edit-mode[data-editor-dock="left"] #workspace {
-  box-sizing: border-box;
-  padding-left: var(--editor-dock-space, 380px);
-}
-body.edit-mode.editor-panel-hidden #workspace { padding-left: 0; padding-right: 0; }
-#editor-pane[data-dock="right"] #editor-resizer,
-#editor-pane[data-dock="left"] #editor-resizer {
-  display: block; position: absolute; top: 0; bottom: 0; height: 100%; width: 6px; z-index: 2;
-}
-#editor-pane[data-dock="right"] #editor-resizer { left: 0; }
-#editor-pane[data-dock="left"] #editor-resizer { right: 0; }
-.editor-main-tabs { padding: 3px 5px 0; gap: 3px; flex-shrink: 0; }
-.editor-main-tabs .editor-tab { padding: 5px 8px; font-size: 11px; }
-.object-tree-panel { padding: 6px; }
-#objectTreeSearch { box-sizing: border-box; width: 100%; font-family: inherit; font-size: 11px; margin-bottom: 5px; padding: 5px; }
-.object-tree-help { font-size: 10px; color: var(--text-muted); margin-bottom: 5px; }
+.object-explorer.is-hidden, body.runtime-mode .object-explorer, body.runtime-mode #objectExplorerToggleBtn { display: none; }
+.object-explorer-header { display: flex; justify-content: space-between; align-items: center; cursor: move; touch-action: none; font-size: 11px; user-select: none; }
+.object-explorer-header button { min-width: 22px; padding: 1px 5px; }
+#objectTreeSearch { width: 100%; box-sizing: border-box; font-family: inherit; font-size: 11px; padding: 4px; }
+.object-tree-help { font-size: 10px; color: var(--text-muted); }
+#objectTree { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.object-explorer-header, #objectTreeSearch, .object-tree-help { flex-shrink: 0; }
 .object-tree-list, .object-tree-list ul { list-style: none; padding: 0; margin: 0; }
 .object-tree-list ul { padding-left: 12px; }
 .object-tree-row { display: flex; align-items: center; min-height: 21px; border-radius: 3px; }
@@ -4524,6 +4519,3 @@ body.edit-mode.editor-panel-hidden #workspace { padding-left: 0; padding-right: 
 .object-tree-object { flex: 1; padding: 2px 3px; }
 .object-tree-automation { display: block; width: 100%; padding: 2px 4px; color: var(--text-secondary) !important; }
 .object-tree-list button:hover, .object-tree-list button:focus-visible { background: var(--bg-elevated); }
-
-#objectTree { flex: 1 1 auto; min-height: 0; overflow: auto; }
-.object-tree-panel > input, .object-tree-help { flex-shrink: 0; }

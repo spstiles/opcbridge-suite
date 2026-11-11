@@ -28,7 +28,7 @@ test('selected object References Needing Attention uses friendly labels after ch
    getConnectionDisplayName:()=> 'OPC Data',formatAutomationExpressionForDisplay:value=>value,
    document:{createElement:()=>make()}});
  vm.runInContext(source.slice(source.indexOf('const getReferenceHealthIssueDisplay ='),source.indexOf('const openReferenceHealth =')),c);
- vm.runInContext(source.slice(source.indexOf('const renderSelectedReferenceProperties ='),source.indexOf('const objectTreeExpanded =')),c);
+ vm.runInContext(source.slice(source.indexOf('const renderSelectedReferenceProperties ='),source.indexOf('const updatePropertiesPanel =')),c);
  vm.runInContext('renderSelectedReferenceProperties({id:"gate"})',c);
  const input=panel.children[0].children[1].children[0].children[1];
  assert.equal(input.value,raw.replace('connection_9783c3b9638597fb','OPC Data'));

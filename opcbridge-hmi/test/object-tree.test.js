@@ -32,7 +32,7 @@ test('nested tree selection opens its automation and leaves screen data untouche
     setEditorTab: tab => calls.push(tab), requestAnimationFrame() {} });
   vm.runInContext('let objectTreeSelectionActive = false;', ctx);
   const start = source.indexOf('const selectObjectTreeEntry =');
-  vm.runInContext(source.slice(start, source.indexOf('const refreshObjectTree =', start)), ctx);
+  vm.runInContext(source.slice(start, source.indexOf('const refreshObjectExplorer =', start)), ctx);
   vm.runInContext('selectObjectTreeEntry([0,0], {tab:"click", actionIndex:1})', ctx);
   assert.equal(ctx.groupEditStack[0], objects[0]);
   assert.deepEqual(Array.from(ctx.selectedIndices), [0]);
@@ -47,49 +47,12 @@ test('tree selection respects locked layers', () => {
   const ctx = vm.createContext({ currentScreenObj: { objects: [obj] },
     ensureScreenLayers: () => [{ id: 'locked', name: 'Locked', locked: true }], showHmiToast: text => { message = text; } });
   const start = source.indexOf('const selectObjectTreeEntry =');
-  vm.runInContext(source.slice(start, source.indexOf('const refreshObjectTree =', start)), ctx);
+  vm.runInContext(source.slice(start, source.indexOf('const refreshObjectExplorer =', start)), ctx);
   vm.runInContext('selectObjectTreeEntry([0])', ctx);
   assert.match(message, /unlock layer Locked/);
 });
 
-test('Fit uses the available workspace and retains scrollable manual zoom', () => {
-  const properties = {};
-  const ctx = vm.createContext({ screen: { style: {} }, screenWrapper: { clientWidth: 800, clientHeight: 600 },
-    getScreenSize: () => ({ width: 1920, height: 1080 }), hmiSvg: { setAttribute() {} },
-    document: { documentElement: { style: { setProperty: (key,value) => { properties[key] = value; } } } },
-    isEditMode: true, editorFitToWorkspace: true, editorScreenZoom: 1, updateEditorZoomUi() {} });
-  const start = source.indexOf('const applyScale =');
-  vm.runInContext(source.slice(start, source.indexOf('const stripJsonComments =', start)), ctx);
-  vm.runInContext('applyScale()', ctx);
-  assert.ok(parseInt(ctx.screen.style.width) <= 800);
-  assert.ok(parseInt(ctx.screen.style.height) <= 600);
-  ctx.screenWrapper.clientWidth = 500;
-  vm.runInContext('applyScale()', ctx);
-  assert.ok(parseInt(ctx.screen.style.width) <= 500);
-  ctx.editorFitToWorkspace = false; ctx.editorScreenZoom = 1;
-  vm.runInContext('applyScale()', ctx);
-  assert.equal(ctx.screen.style.width, '1920px');
-});
-
-test('docking publishes the actual reserved width; floating keeps separate coordinates', () => {
-  const values = {};
-  const ctx = vm.createContext({ editorPane: { dataset: {}, style: {} }, document: { body: { dataset: {} }, documentElement: { style: { setProperty: (key,value) => { values[key] = value; } } } },
-    getComputedStyle: () => ({ getPropertyValue: key => ({ '--toolbar-height': '48px', '--left-toolbar-width': '38px', '--editor-pane-width': '320px' })[key] || '' }),
-    window: { innerWidth: 1200, innerHeight: 900 }, clamp: (value,min,max) => Math.max(min,Math.min(value,max)) });
-  const start = source.indexOf('const applyEditorPaneState =');
-  vm.runInContext(source.slice(start, source.indexOf('const setEditorPaneDock =', start)), ctx);
-  vm.runInContext('applyEditorPaneState({dock:"left",w:320})', ctx);
-  assert.equal(ctx.document.body.dataset.editorDock, 'left');
-  assert.equal(values['--editor-dock-space'], '340px');
-  assert.equal(ctx.editorPane.style.width, '320px');
-  vm.runInContext('applyEditorPaneState({dock:"right",w:400})', ctx);
-  assert.equal(values['--editor-dock-space'], '420px');
-  vm.runInContext('applyEditorPaneState({dock:"float",w:400,h:600,x:100,y:100})', ctx);
-  assert.equal(ctx.document.body.dataset.editorDock, 'float');
-  assert.equal(ctx.editorPane.style.left, '100px');
-});
-
-test('tree renders compact expandable rows and keeps selection distinct from opening Properties', () => {
+test('separate explorer renders expandable rows and selects objects without replacing its window', () => {
   const doc = { createElement(tag) {
     const node = { tag, ownerDocument: doc, children: [], attributes: {}, className: '',
       setAttribute(key,value) { this.attributes[key] = value; },
@@ -115,4 +78,32 @@ test('tree renders compact expandable rows and keeps selection distinct from ope
   const automation = buttons.find(node => node.className === 'object-tree-automation' && node.textContent.startsWith('Click: popup'));
   automation.click();
   assert.equal(calls[2][1].tab, 'click'); assert.equal(calls[2][1].actionIndex, 1);
+});
+
+
+test('single-click explorer selection opens the existing Properties panel', () => {
+  const obj = { type: 'ellipse', x: 10, y: 20 };
+  const calls = [];
+  const ctx = vm.createContext({ currentScreenObj: {objects:[obj]}, groupEditStack: [], selectedIndices: [],
+    ensureScreenLayers: () => [], blurActiveFormControl() {}, clearSelectedPolygonVertex() {}, renderScreen() {},
+    updateSelectionOverlays() {}, updatePropertiesPanel: () => calls.push('properties refreshed'), updateGroupBreadcrumb() {},
+    setEditorTab: tab => calls.push(tab), requestAnimationFrame() {} });
+  vm.runInContext('let objectTreeSelectionActive = false;', ctx);
+  const start = source.indexOf('const selectObjectTreeEntry =');
+  vm.runInContext(source.slice(start, source.indexOf('const refreshObjectExplorer =',start)),ctx);
+  vm.runInContext('selectObjectTreeEntry([0])',ctx);
+  assert.deepEqual(Array.from(ctx.selectedIndices),[0]);
+  assert.equal(ctx.currentObjectDynamicTab,'properties');
+  assert.deepEqual(calls,['properties','properties refreshed']);
+});
+
+test('Object Explorer is separate from Properties and the workspace keeps its original controls', () => {
+  const html = fs.readFileSync(path.join(__dirname,'../public/index.html'),'utf8');
+  const explorer = html.indexOf('<aside id="objectExplorer"');
+  const explorerEnd = html.indexOf('</aside>',explorer);
+  const properties = html.indexOf('<aside id="editor-pane"');
+  assert.ok(explorer >= 0 && explorerEnd < properties);
+  assert.ok(html.includes('id="objectExplorerToggleBtn"'));
+  assert.ok(html.includes('id="objectExplorerCloseBtn"'));
+  assert.doesNotMatch(html,/editor-main-tabs|data-panel="objects"|id="editorFitBtn"|id="editorPanelToggleBtn"/);
 });

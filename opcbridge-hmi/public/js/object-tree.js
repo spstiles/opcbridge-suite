@@ -61,7 +61,7 @@
       if (hasChildren) li.setAttribute('aria-expanded', open ? 'true' : 'false');
       const button = doc.createElement('button'); button.type = 'button'; button.className = 'object-tree-object';
       button.textContent = `${node.label}${node.automations.length ? `  [${node.automations.length}]` : ''}`;
-      button.title = `${node.object.type} · ${node.label}\nDouble-click to open Properties`;
+      button.title = `${node.object.type} · ${node.label}\nSelect to show Properties`;
       button.addEventListener('click', () => {
         if (onSelect(node.path) === false) return;
         for (const item of list.querySelectorAll('[aria-selected]')) item.setAttribute('aria-selected', item === li ? 'true' : 'false');

@@ -1,22 +1,22 @@
-# Objects tree and editor workspace
+# Object Explorer
 
-In Edit mode, the Properties dock has **Properties**, **Objects**, and **Library**
-tabs. Objects uses compact 11 px rows and shares the existing panel width.
+In Edit mode, the **Objects** toolbar button opens a separate Object Explorer.
+The Properties panel retains its original layout and controls. Both can remain
+visible while working.
 
-- Expand a group to see its children. An object with automations shows their count;
-  expand it to see individual Click actions, bindings, and automation rules.
-- Click an object to select and highlight it on the canvas while keeping the tree
-  open. Double-click it to open Properties.
-- Click an automation entry to open its tab and, for Click sequences, its action.
-- Search by object name, tag, alias, or linked screen. Matching children retain
+- Expand groups to see their children. An object's automation count indicates
+  additional entries for Click actions, bindings and automation rules.
+- Single-click an object to select it on the canvas and display its properties
+  in the existing Properties panel. Object Explorer stays open.
+- Click an automation entry to open its tab and the selected Click action.
+- Search by object name, tag, alias or linked screen. Matching children retain
   their parent hierarchy. Canvas selections expand their parents in the tree.
-- Hidden or locked layers remain protected; use Layers to show and unlock them.
+- Layer locks and hidden-layer protections remain in effect.
 
-The initial tree does not reorder, regroup, or reparent objects. Selection and
-browsing do not edit the saved screen.
+Explorer uses compact 11 px rows. Drag its title bar to move it, resize using
+its bottom corner, or close it with **×**. Reopen it using **Objects**. It is
+hidden in Run mode.
 
-Docking left or right reserves space in the workspace. Resize using the thin
-inside edge of the dock; dock width is remembered. Floating panels intentionally
-overlay the canvas. **Panel** hides or restores the editor dock, releasing its
-space while hidden. **Fit** fits the screen into the remaining workspace and
-tracks dock resizing. Manual zoom returns to a fixed scale with scrolling.
+The initial explorer does not reorder, regroup or reparent objects. Browsing
+and selection do not edit the saved screen. Workspace zoom and Properties
+panel docking retain their previous behavior.
