@@ -76,18 +76,18 @@ test('Click keeps the non-button action editor visible while hiding appearance p
   assert.equal(ctx.objectActionProps.classes.has('is-hidden'), true);
 });
 
-test('text and buttons share the full Click editor while other objects retain their editor', () => {
+test('all drawable objects share the full Click editor and selected-action routing', () => {
   const c=vm.createContext({selectedIndices:[0],getActiveObjects:()=>[c.obj],getEditedClickAction:o=>o.action||{}});
   vm.runInContext(source.match(/^const usesFullClickEditor = .*;$/m)[0],c);
   const start=source.indexOf('const getSelectedActionOwner =');
   vm.runInContext(source.slice(start,source.indexOf('\n};',start)+3),c);
-  for(const type of ['text','button']){
+  for(const type of ['text','button','ellipse','rect','circle','polygon','polyline','pipe','spline','curve','line','group','image','viewport','indicator','number-input','bar','arc','alarms-panel']){
     c.obj={type,action:{type:'set-write',tag:'PumpCommand'}};
     assert.equal(vm.runInContext('usesFullClickEditor(obj)',c),true);
     assert.equal(vm.runInContext('getSelectedActionOwner("button").action.tag',c),'PumpCommand');
     assert.equal(vm.runInContext('getSelectedActionOwner("group")',c),null);
   }
-  c.obj={type:'group',action:{type:'navigate'}};
+  c.obj=null;
   assert.equal(vm.runInContext('usesFullClickEditor(obj)',c),false);
   assert.equal(vm.runInContext('getSelectedActionOwner("button")',c),null);
 });
@@ -109,7 +109,7 @@ test('shared action updates save text writes without changing text appearance or
 
 test('popup settings on text and buttons persist checkbox changes and enable Save for the selected click action', () => {
   const HmiClickActions = require('../public/js/click-actions');
-  for (const type of ['text', 'button']) {
+  for (const type of ['text', 'button', 'ellipse', 'rect', 'group', 'image', 'polygon', 'line', 'circle']) {
     const first = { type: 'navigate', screenId: 'Overview' };
     const popup = { type: 'popup', screenId: 'Controls', modal: true, movable: false, aliases: { Pump: { value: '1' } } };
     const obj = { type, text: 'Open Controls', action: HmiClickActions.pack([first, popup]) };
@@ -141,5 +141,51 @@ test('popup settings on text and buttons persist checkbox changes and enable Sav
     assert.equal(dirty, true, `${type}: clearing Movable must enable Save`);
     assert.equal(obj.action.actions[1].movable, false);
     assert.equal(obj.text, 'Open Controls');
+  }
+});
+
+
+test('ellipse Click writes save the selected action without changing ellipse appearance', () => {
+  const HmiClickActions = require('../public/js/click-actions');
+  const first = { type: 'navigate', screenId: 'Overview' };
+  const obj = { type: 'ellipse', x: 10, y: 20, w: 62, h: 62, fill: '#000000', stroke: '#ffffff',
+    action: HmiClickActions.pack([first, { type: 'momentary-write', tag: 'Old', onValue: 1, offValue: 0 }]) };
+  let dirty = false;
+  const c = vm.createContext({ HmiClickActions, obj, selectedIndices: [0], getActiveObjects: () => [obj],
+    recordHistory() {}, renderClickActionList() {}, renderScreen() {}, syncEditorFromScreen() {},
+    setDirty: value => { dirty = value; } });
+  vm.runInContext(source.slice(source.indexOf('const usesFullClickEditor ='), source.indexOf('const renderClickActionList =')), c);
+  vm.runInContext('clickActionSelection.set(obj, 1)', c);
+  const start = source.indexOf('const updateButtonProperty =');
+  vm.runInContext(source.slice(start, source.indexOf('const updateGroupProperty =', start)), c);
+  vm.runInContext('updateButtonProperty({action:{type:"momentary-write",connection_id:"PLC",tag:"Auto",onValue:1,offValue:0}})', c);
+  assert.equal(dirty, true);
+  assert.equal(obj.action.actions[0], first);
+  assert.equal(obj.action.actions[1].tag, 'Auto');
+  assert.equal(obj.action.actions[1].offValue, 0);
+  vm.runInContext('updateButtonProperty({label:"Wrong appearance panel"})', c);
+  assert.equal(obj.label, undefined);
+  assert.equal(obj.x, 10); assert.equal(obj.y, 20);
+  assert.equal(obj.w, 62); assert.equal(obj.h, 62);
+  assert.equal(obj.fill, '#000000'); assert.equal(obj.stroke, '#ffffff');
+});
+
+
+test('shared Click writes persist on every object while button appearance edits remain restricted', () => {
+  for (const type of ['group','rect','circle','polygon','polyline','pipe','spline','curve','line','image','viewport','indicator','number-input','bar','arc','alarms-panel']) {
+    const obj = { type, x: 12, fill: '#123456' };
+    let dirty = false;
+    const c = vm.createContext({ selectedIndices: [0], getActiveObjects: () => [obj],
+      recordHistory() {}, replaceEditedClickAction: (o, action) => { o.action = action; },
+      renderClickActionList() {}, renderScreen() {}, syncEditorFromScreen() {}, setDirty: value => { dirty = value; } });
+    const start = source.indexOf('const updateButtonProperty =');
+    vm.runInContext(source.slice(start, source.indexOf('const updateGroupProperty =', start)), c);
+    vm.runInContext('updateButtonProperty({action:{type:"set-write",connection_id:"PLC",tag:"Start",onValue:1}})', c);
+    assert.equal(obj.action.tag, 'Start', type);
+    assert.equal(dirty, true, type);
+    vm.runInContext('updateButtonProperty({label:"Wrong appearance control"})', c);
+    assert.equal(obj.label, undefined, type);
+    assert.equal(obj.x, 12, type);
+    assert.equal(obj.fill, '#123456', type);
   }
 });

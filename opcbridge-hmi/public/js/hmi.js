@@ -275,7 +275,7 @@ const objectDynamicTabs = document.getElementById("objectDynamicTabs");
 const objectDynamicTabClickBtn = document.getElementById("objectDynamicTabClickBtn");
 const buttonClickProps = document.getElementById("buttonClickProps");
 const dynamicsAddClickMenuBtn = document.getElementById("dynamicsAddClickMenuBtn");
-const usesFullClickEditor = (obj) => Boolean(obj && ["button", "text"].includes(obj.type));
+const usesFullClickEditor = (obj) => Boolean(obj);
 const hasClickTab = (obj) => Boolean(obj && (obj.type === "button" || obj.clickEnabled || obj.action?.type));
 const clickActionSelection = new WeakMap();
 const getEditedClickAction = (obj) => {
@@ -18926,7 +18926,7 @@ const updateButtonProperty = (patch) => {
   if (selectedIndices.length !== 1) return;
   const index = selectedIndices[0];
   const obj = activeObjects[index];
-  if (!obj || (obj.type !== "button" && !(obj.type === "text" && Object.prototype.hasOwnProperty.call(patch, "action")))) return;
+  if (!obj || (obj.type !== "button" && !Object.prototype.hasOwnProperty.call(patch, "action"))) return;
   recordHistory();
   if (Object.prototype.hasOwnProperty.call(patch, 'action')) {
     replaceEditedClickAction(obj, patch.action);
