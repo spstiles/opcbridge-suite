@@ -2624,6 +2624,7 @@ body:not(.edit-mode) #workspace {
 }
 
 .popup-overlay.is-movable .popup-header {
+  touch-action: none;
   cursor: move;
   user-select: none;
 }

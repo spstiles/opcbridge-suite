@@ -21965,14 +21965,24 @@ if (popupOverlay) {
     const startY = event.clientY;
     const originX = rect.left;
     const originY = rect.top;
-    popupOverlay.classList.add("is-positioned");
+    const screenId = currentPopupScreenId;
     const move = (moveEvent) => {
-      const maxX = Math.max(0, window.innerWidth - popupModalEl.offsetWidth);
-      const maxY = Math.max(0, window.innerHeight - popupModalEl.offsetHeight);
-      popupModalEl.style.left = `${clamp(originX + moveEvent.clientX - startX, 0, maxX)}px`;
-      popupModalEl.style.top = `${clamp(originY + moveEvent.clientY - startY, 0, maxY)}px`;
+      if (moveEvent.pointerId !== event.pointerId || currentPopupScreenId !== screenId || !currentPopupOptions) return;
+      const maxX = Math.max(0, window.innerWidth - rect.width);
+      const maxY = Math.max(0, window.innerHeight - rect.height);
+      const x = clamp(originX + moveEvent.clientX - startX, 0, maxX);
+      const y = clamp(originY + moveEvent.clientY - startY, 0, maxY);
+      // Live updates redraw the popup through openPopup. Retain the user's
+      // position in its runtime options so those redraws cannot recenter it.
+      currentPopupOptions.popupX = x;
+      currentPopupOptions.popupY = y;
+      popupModalEl.style.left = `${x}px`;
+      popupModalEl.style.top = `${y}px`;
     };
-    const finish = () => {
+    move(event);
+    popupOverlay.classList.add("is-positioned");
+    const finish = (endEvent) => {
+      if (endEvent.pointerId !== event.pointerId) return;
       window.removeEventListener("pointermove", move, true);
       window.removeEventListener("pointerup", finish, true);
       window.removeEventListener("pointercancel", finish, true);
