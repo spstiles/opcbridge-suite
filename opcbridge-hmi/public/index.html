@@ -151,6 +151,8 @@
         <span class="toolbar-zoom-label">Zoom</span>
         <button id="editorZoomOutBtn" class="toolbar-btn toolbar-zoom-btn" type="button" title="Zoom out">−</button>
         <button id="editorZoomResetBtn" class="toolbar-btn toolbar-zoom-readout" type="button" title="Reset zoom to 100%">100%</button>
+        <button id="editorFitBtn" class="toolbar-btn" type="button" title="Fit screen to available workspace">Fit</button>
+        <button id="editorPanelToggleBtn" class="toolbar-btn" type="button" title="Show or hide editor panel">Panel</button>
         <button id="editorZoomInBtn" class="toolbar-btn toolbar-zoom-btn" type="button" title="Zoom in">+</button>
       </div>
       <button class="toolbar-btn" type="button" data-refresh-tag-catalog title="Reload tags and connections from OPCBridge">Refresh Tags</button>
@@ -350,8 +352,8 @@
           </svg>
         </div>
       </div>
-      <div id="editor-resizer" class="editor-resizer" aria-hidden="true"></div>
       <aside id="editor-pane" class="editor-pane is-hidden">
+        <div id="editor-resizer" class="editor-resizer" aria-hidden="true"></div>
         <div id="editorPaneTitlebar" class="editor-pane-titlebar" aria-label="Editor panel window">
           <div id="editorPaneTitle" class="editor-pane-title" title="Drag to move (when floating)">Properties</div>
           <div class="editor-pane-dock" aria-label="Dock controls">
@@ -361,6 +363,16 @@
           </div>
         </div>
 
+        <div class="editor-tabs editor-main-tabs" role="tablist" aria-label="Editor panels">
+          <button class="editor-tab is-active" type="button" data-tab="properties" role="tab" aria-selected="true">Properties</button>
+          <button class="editor-tab" type="button" data-tab="objects" role="tab" aria-selected="false">Objects</button>
+          <button class="editor-tab" type="button" data-tab="library" role="tab" aria-selected="false">Library</button>
+        </div>
+        <div class="editor-panel object-tree-panel" data-panel="objects" role="tabpanel">
+          <input id="objectTreeSearch" type="search" placeholder="Find object, tag, alias or screen…" aria-label="Search screen objects" />
+          <div class="object-tree-help">Select an object; expand to find automations. Double-click for Properties.</div>
+          <div id="objectTree"></div>
+        </div>
         <div class="editor-panel" data-panel="library" role="tabpanel">
           <div class="editor-section-title">Tools</div>
 	          <div class="library-toolbar">
@@ -3157,6 +3169,7 @@
       <script src="/js/animator.js"></script>
       <script src="/js/trend-expression.js"></script>
       <script src="/js/trend.js"></script>
+      <script src="/js/object-tree.js"></script>
       <script src="/js/screen-save-sync.js"></script>
 	  <script src="/js/hmi.js?v=0.2.70"></script>
 	</body>

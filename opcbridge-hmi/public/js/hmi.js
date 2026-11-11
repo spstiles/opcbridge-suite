@@ -553,6 +553,7 @@ const applyEditorPaneState = (state) => {
   const allowed = new Set(["right", "left", "float"]);
   const nextDock = allowed.has(dock) ? dock : "right";
   editorPane.dataset.dock = nextDock;
+  document.body.dataset.editorDock = nextDock;
   const toolbarH = Number(getComputedStyle(document.documentElement).getPropertyValue("--toolbar-height").replace("px", "")) || 48;
   const leftToolbarW = Number(getComputedStyle(document.documentElement).getPropertyValue("--left-toolbar-width").replace("px", "")) || 38;
   const vw = window.innerWidth;
@@ -580,7 +581,10 @@ const applyEditorPaneState = (state) => {
     editorPane.style.top = `${y}px`;
     editorPane.style.right = "auto";
   } else {
-    const width = clamp(Number(state?.w) || 360, 280, Math.floor(vw * 0.6));
+    const storedWidth = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--editor-pane-width")) || 360;
+    const width = clamp(Number(state?.w) || storedWidth, 280, Math.floor(vw * 0.6));
+    document.documentElement.style.setProperty("--editor-dock-space", `${width + 20}px`);
+    document.documentElement.style.setProperty("--editor-pane-width", `${width}px`);
     editorPane.style.top = `${toolbarH}px`;
     editorPane.style.height = `${Math.max(240, vh - toolbarH)}px`;
     editorPane.style.width = `${width}px`;
@@ -612,7 +616,8 @@ const setEditorPaneDock = (dock) => {
     next.y = clamp(toolbarH + 18, toolbarH + 4, vh - h - 10);
   }
   if (nextDock !== "float") {
-    delete next.x; delete next.y; delete next.w; delete next.h;
+    delete next.x; delete next.y; delete next.h;
+    next.w = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--editor-pane-width")) || 360;
   }
   saveEditorPaneState(next);
   applyEditorPaneState(next);
@@ -5941,6 +5946,7 @@ let lastSelectionSignature = "";
 let selectionLayer = null;
 let resizeLayer = null;
 let editorScreenZoom = 1;
+let editorFitToWorkspace = false;
 
 const MIN_EDITOR_ZOOM = 0.25;
 const MAX_EDITOR_ZOOM = 4;
@@ -5959,6 +5965,7 @@ const updateEditorZoomUi = () => {
 };
 
 const applyEditorZoom = (nextZoom) => {
+  editorFitToWorkspace = false;
   editorScreenZoom = normalizeEditorZoom(nextZoom);
   document.documentElement.style.setProperty("--editor-screen-zoom", String(editorScreenZoom));
   updateEditorZoomUi();
@@ -14025,6 +14032,11 @@ const applyScale = () => {
   }
 
   if (isEditMode) {
+    if (editorFitToWorkspace) {
+      editorScreenZoom = Math.max(0.001, Math.min(4, (screenWrapper.clientWidth - 16) / width, (screenWrapper.clientHeight - 16) / height));
+      document.documentElement.style.setProperty("--editor-screen-zoom", String(editorScreenZoom));
+      updateEditorZoomUi();
+    }
     screen.style.width = `${Math.round(width * editorScreenZoom)}px`;
     screen.style.height = `${Math.round(height * editorScreenZoom)}px`;
     screen.style.transform = "none";
@@ -18739,7 +18751,60 @@ const renderSelectedReferenceProperties = (obj) => {
   list.appendChild(hint);
 };
 
+const objectTreeExpanded = new Set();
+let objectTreeScreen = null;
+let objectTreeSelectionActive = false;
+const selectObjectTreeEntry = (path, entry = null) => {
+  let objects = currentScreenObj?.objects || [];
+  const parents = [];
+  for (const index of path.slice(0, -1)) {
+    const group = objects[index];
+    if (!group || group.type !== "group") return false;
+    parents.push(group); objects = group.children || [];
+  }
+  const index = path[path.length - 1];
+  const obj = objects[index]; if (!obj) return false;
+  const layer = ensureScreenLayers().find(item => item.id === (parents[0] || obj).layerId);
+  if (layer?.locked || layer?.editorVisible === false) {
+    showHmiToast(`Show and unlock layer ${layer.name} in Layers to edit this object.`);
+    return false;
+  }
+  if (layer) activeLayerId = layer.id;
+  blurActiveFormControl();
+  groupEditStack.splice(0, groupEditStack.length, ...parents);
+  selectedIndices = [index]; selectionAnchorIndex = index;
+  currentObjectDynamicTab = entry?.tab || "properties";
+  if (entry?.actionIndex != null) clickActionSelection.set(obj, entry.actionIndex);
+  rectVisibilityDraft = null; rectVisibilityDraftObject = null;
+  rectColorDraft = null; rectColorDraftObject = null;
+  rectRotationDraft = null; rectRotationDraftObject = null;
+  objectTreeSelectionActive = true;
+  try { clearSelectedPolygonVertex(); renderScreen(); updateSelectionOverlays(); updatePropertiesPanel(); updateGroupBreadcrumb(); }
+  finally { objectTreeSelectionActive = false; }
+  if (entry) setEditorTab("properties");
+  requestAnimationFrame(() => centerReferenceObjectInView(obj));
+  return true;
+};
+const refreshObjectTree = () => {
+  const container = document.getElementById("objectTree");
+  if (!container || !isEditMode) return;
+  const search = document.getElementById("objectTreeSearch");
+  if (objectTreeScreen !== currentScreenObj) { objectTreeExpanded.clear(); objectTreeScreen = currentScreenObj; }
+  const selected = selectedIndices.length === 1 ? getActiveObjects()?.[selectedIndices[0]] : null;
+  HmiObjectTree.render({ container, objects: currentScreenObj?.objects || [], query: search?.value || "",
+    expanded: objectTreeExpanded, selectedPath: HmiObjectTree.findPath(currentScreenObj?.objects || [], selected), onSelect: selectObjectTreeEntry });
+};
+document.getElementById("objectTreeSearch")?.addEventListener("input", refreshObjectTree);
+document.getElementById("editorFitBtn")?.addEventListener("click", () => {
+  editorFitToWorkspace = true; applyScale(); screenWrapper?.scrollTo({ left: 0, top: 0 });
+});
+document.getElementById("editorPanelToggleBtn")?.addEventListener("click", () => {
+  document.body.classList.toggle("editor-panel-hidden");
+});
+if (typeof ResizeObserver !== "undefined" && screenWrapper) new ResizeObserver(() => applyScale()).observe(screenWrapper);
+
 const updatePropertiesPanel = () => {
+  if (currentTab === "objects" && !objectTreeSelectionActive && typeof refreshObjectTree === "function") refreshObjectTree();
   if (isEditMode && currentScreenObj?.layers) {
     selectedIndices = selectedIndices.filter(index => objectOnEditableLayer(getActiveObjects()?.[index]));
   }
@@ -18756,7 +18821,7 @@ const updatePropertiesPanel = () => {
   const animatorOwner = getAnimatorEditorOwner(obj);
   renderClickActionList(obj);
   if (editorPaneTitle) {
-    editorPaneTitle.textContent = isMulti ? "Multiple Properties" : getPropertiesPaneTitle(obj);
+    editorPaneTitle.textContent = currentTab === "objects" ? "Objects" : isMulti ? "Multiple Properties" : getPropertiesPaneTitle(obj);
   }
   const showText = Boolean(obj && obj.type === "text");
   const showButton = Boolean(obj && obj.type === "button");
@@ -21868,11 +21933,12 @@ const bindEnterToApply = () => {
 const applyEditorWidth = (value) => {
   const nextWidth = Math.max(280, Math.min(value, Math.floor(window.innerWidth * 0.6)));
   document.documentElement.style.setProperty("--editor-pane-width", `${nextWidth}px`);
-  try {
-    window.localStorage.setItem(EDITOR_WIDTH_KEY, String(nextWidth));
-  } catch {
-    /* ignore storage errors */
+  if (editorPane && ["left", "right"].includes(editorPane.dataset.dock)) {
+    editorPane.style.width = `${nextWidth}px`;
+    document.documentElement.style.setProperty("--editor-dock-space", `${nextWidth + 20}px`);
+    saveEditorPaneState({ ...(getEditorPaneState() || {}), dock: editorPane.dataset.dock || "right", w: nextWidth });
   }
+  try { window.localStorage.setItem(EDITOR_WIDTH_KEY, String(nextWidth)); } catch {}
 };
 
 const restoreEditorWidth = () => {
@@ -21895,7 +21961,7 @@ const bindResizer = () => {
   const onMove = (event) => {
     if (!isResizing) return;
     const delta = event.clientX - startX;
-    applyEditorWidth(startWidth - delta);
+    applyEditorWidth(startWidth + (editorPane.dataset.dock === "left" ? delta : -delta));
   };
 
   const onUp = () => {
@@ -22042,9 +22108,11 @@ const loadJsonc = async () => {
 };
 
 const setEditorTab = (nextTab) => {
-  const tabs = Array.from(document.querySelectorAll(".editor-tab"));
+  if (nextTab === "objects") refreshObjectTree();
+  const tabs = Array.from(document.querySelectorAll(".editor-main-tabs .editor-tab"));
   const panels = Array.from(document.querySelectorAll(".editor-panel"));
   const wants = String(nextTab || "properties").trim() || "properties";
+  if (editorPaneTitle) editorPaneTitle.textContent = wants === "objects" ? "Objects" : wants === "library" ? "Library" : getPropertiesPaneTitle(getAutomationObject());
 
   // No tab strip: just ensure the requested panel is active.
   if (!tabs.length) {
@@ -22062,7 +22130,7 @@ const setEditorTab = (nextTab) => {
     return;
   }
 
-  const available = new Set(tabs.map((t) => String(t.dataset.tab || "").trim()).filter(Boolean));
+  const available = new Set(["jsonc", ...tabs.map((t) => String(t.dataset.tab || "").trim()).filter(Boolean)]);
   currentTab = available.has(wants) ? wants : (tabs[0]?.dataset?.tab || "properties");
   tabs.forEach((tab) => {
     const isActive = tab.dataset.tab === currentTab;
@@ -22082,7 +22150,7 @@ const setEditorTab = (nextTab) => {
 };
 
 const bindEditorTabs = () => {
-  const tabs = Array.from(document.querySelectorAll(".editor-tab"));
+  const tabs = Array.from(document.querySelectorAll(".editor-main-tabs .editor-tab"));
   if (!tabs.length) {
     setEditorTab("properties");
     return;
