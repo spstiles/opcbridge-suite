@@ -7560,31 +7560,7 @@ const collectObjectDiagnosticReferences = (obj) => {
 const buildObjectDiagnosticsText = (obj) => {
   const references = collectObjectDiagnosticReferences(obj);
   if (!obj) return "";
-  const name = obj.name || obj.label || obj.source?.name || obj.id || obj.importId || "";
-  const heading = `Object: ${obj.type || "object"}${name ? ` (${name})` : ""}`;
-  const automations = [];
-  const visited = new WeakSet();
-  const inspect = (value, path = []) => {
-    if (!value || typeof value !== "object" || visited.has(value)) return;
-    visited.add(value);
-    if ((value.sourceType === "expression" || value.source === "expression") && typeof value.expression === "string") {
-      const label = referenceAutomationLabel(path);
-      const result = value.enabled === false ? "Disabled" : diagnosticValueText(evaluateAutomationExpression(value.expression));
-      automations.push(`${label}: ${value.expression || "Empty expression"}\nResult: ${result}`);
-    }
-    if (typeof value.tag === "string") {
-      automations.push(`${referenceAutomationLabel(path)}: ${value.connection_id || "Unmapped"}::${value.tag || "No tag selected"}${value.enabled === false ? " (Disabled)" : ""}`);
-    }
-    if (path.includes("action") && value.type && value.type !== "sequence") {
-      const target = value.screenId || value.viewportId || "";
-      automations.push(`Click: ${value.type}${target ? ` → ${target}` : ""}`);
-    }
-    Object.entries(value).forEach(([key, child]) => {
-      if (["externalReferences", "importInfo", "referenceHealth", "importedDynamics"].includes(key)) return;
-      if (child && typeof child === "object") inspect(child, [...path, key]);
-    });
-  };
-  inspect(obj);
+  if (!references.length) return "";
   const blocks = references.slice(0, 8).map((reference) => {
     const resolved = resolveConnectionForKnownTag(reference.storedConnection, reference.tag);
     const key = normalizeTagCacheKey(resolved, reference.tag);
@@ -7606,7 +7582,7 @@ const buildObjectDiagnosticsText = (obj) => {
     return lines.join("\n");
   });
   if (references.length > 8) blocks.push(`…and ${references.length - 8} more tag references`);
-  return [heading, ...new Set(automations), ...blocks].join("\n\n");
+  return blocks.join("\n\n");
 };
 
 const showDiagnosticsForPointer = (event) => {
@@ -7617,18 +7593,33 @@ const showDiagnosticsForPointer = (event) => {
   const meta = point ? getMetaAtPoint(point) : null;
   const obj = host?.__hmiDiagnosticObject || (meta ? getObjectFromMeta(meta) : null);
   if (!obj) return hideDiagnosticsTooltip();
-  const sections = [buildObjectDiagnosticsText(obj)];
+  const objects = [obj];
   let ancestor = host?.parentElement?.closest?.("[data-hmi-diagnostic-object]");
   while (ancestor) {
     const owner = ancestor.__hmiDiagnosticObject;
     if (owner && owner !== obj) {
       const own = { ...owner }; delete own.children;
-      const details = buildObjectDiagnosticsText(own);
-      if (details.includes("\n\n")) sections.push(details);
+      objects.push(own);
     }
     ancestor = ancestor.parentElement?.closest?.("[data-hmi-diagnostic-object]");
   }
-  const text = sections.filter(Boolean).join("\n\n");
+  let text = buildObjectDiagnosticsText({ children: objects });
+  if (!text) {
+    // Decorative artwork can cover an interactive shape. Find its tagged
+    // rendered object rather than stopping at the unbound topmost shape.
+    for (const element of document.elementsFromPoint?.(event.clientX, event.clientY) || []) {
+      if (Boolean(element.closest?.("#popupSvg")) !== inPopup) continue;
+      const candidate = element.closest?.("[data-hmi-diagnostic-object]")?.__hmiDiagnosticObject;
+      if (!candidate) continue;
+      text = buildObjectDiagnosticsText(candidate);
+      if (text) break;
+    }
+  }
+  if (!text && !inPopup) {
+    const taggedPoint = getScreenPoint(event);
+    const taggedMeta = taggedPoint ? getMetaAtPoint(taggedPoint, candidate => collectObjectDiagnosticReferences(candidate).length > 0) : null;
+    if (taggedMeta) text = buildObjectDiagnosticsText(getObjectFromMeta(taggedMeta));
+  }
   if (!text) return hideDiagnosticsTooltip();
   const tooltip = ensureDiagnosticsTooltip();
   tooltip.textContent = text;
