@@ -18541,7 +18541,7 @@ const updatePropertiesPanel = () => {
     currentObjectDynamicTab = getColorDynamicTabKey(Math.min(getColorDynamicTabIndex(), Math.max(0, colorRuleCount - 1)));
   }
   if ((showDynamicRect || showDynamicLine || showDynamicEllipse || showDynamicText || showDynamicButton || showDynamicCircle || showDynamicGroup) && !hasMultiStateDynamic(obj) && currentObjectDynamicTab === "states") currentObjectDynamicTab = "properties";
-  const hasLevelDynamic = Boolean(obj?.levelAutomation && LEVEL_AUTOMATION_TYPES.includes(obj.type));
+  const hasLevelDynamic = Boolean(obj?.levelAutomation && canEditLevelAutomation(obj));
   if (!hasLevelDynamic && currentObjectDynamicTab === "level") currentObjectDynamicTab = "properties";
   if (((showDynamicRect && !hasRectRotationDynamic(obj)) || (showDynamicLine && !hasLineRotationDynamic(obj)) || (showDynamicEllipse && !hasEllipseRotationDynamic(obj)) || (showDynamicText && !hasTextRotationDynamic(obj)) || (showDynamicButton && !hasButtonRotationDynamic(obj)) || (showDynamicGroup && !hasGroupRotationDynamic(obj))) && currentObjectDynamicTab === "rotation") currentObjectDynamicTab = "properties";
   if (((showDynamicRect && !hasRectMotionDynamic(obj)) || (showDynamicLine && !hasLineMotionDynamic(obj)) || (showDynamicEllipse && !hasEllipseMotionDynamic(obj)) || (showDynamicText && !hasTextMotionDynamic(obj)) || (showDynamicButton && !hasButtonMotionDynamic(obj)) || (showDynamicCircle && !hasCircleMotionDynamic(obj)) || (showDynamicGroup && !hasGroupMotionDynamic(obj))) && currentObjectDynamicTab === "motion") currentObjectDynamicTab = "properties";
@@ -28000,6 +28000,12 @@ const compactBindingRowBefore = (rowEl) => {
 };
 
 const LEVEL_AUTOMATION_TYPES = ["rect", "ellipse", "circle", "polygon", "button"];
+// GraphWorX size dynamics can be imported on a group. Keep that existing
+// binding editable even though new Level bindings are offered only on shapes.
+const canEditLevelAutomation = (obj) => Boolean(obj && (
+  LEVEL_AUTOMATION_TYPES.includes(obj.type)
+  || (obj.type === "group" && obj.levelAutomation)
+));
 let levelAutomationControl = null;
 
 const normalizeLevelAutomation = (value = {}) => ({
@@ -28023,7 +28029,7 @@ const normalizeLevelAutomation = (value = {}) => ({
 const updateSelectedLevelAutomation = (patch) => {
   const objects = getActiveObjects();
   const obj = selectedIndices.length === 1 ? objects?.[selectedIndices[0]] : null;
-  if (!obj || !LEVEL_AUTOMATION_TYPES.includes(obj.type)) return;
+  if (!canEditLevelAutomation(obj)) return;
   recordHistory();
   const next = { ...(obj.levelAutomation || {}), ...(patch || {}) };
   if (["sourceType", "connection_id", "tag", "expression"].some((key) => Object.prototype.hasOwnProperty.call(patch || {}, key))) {
@@ -28095,12 +28101,12 @@ const initializeLevelAutomationControl = () => {
     apply: ({ connection_id, tag: tagName }) => updateSelectedLevelAutomation({ connection_id, tag: tagName, enabled: true })
   });
   levelAutomationControl = { sectionEl, enabled, sourceType, expression, expressionRow, updateSourceRows, min, max, direction, invert, clamp, fill, emptyFill };
-  automationSectionConfigs.push({ id: "level-automation", tab: "level", types: LEVEL_AUTOMATION_TYPES, sectionEl });
+  automationSectionConfigs.push({ id: "level-automation", tab: "level", types: [...LEVEL_AUTOMATION_TYPES, "group"], sectionEl });
   return levelAutomationControl;
 };
 
 const syncLevelAutomationControl = (obj) => {
-  if (!LEVEL_AUTOMATION_TYPES.includes(String(obj?.type || ""))) return;
+  if (!canEditLevelAutomation(obj)) return;
   const control = initializeLevelAutomationControl();
   const value = normalizeLevelAutomation(obj?.levelAutomation || {});
   control.enabled.checked = value.enabled;
