@@ -553,6 +553,7 @@ const applyEditorPaneState = (state) => {
   const allowed = new Set(["right", "left", "float"]);
   const nextDock = allowed.has(dock) ? dock : "right";
   editorPane.dataset.dock = nextDock;
+  document.body.dataset.propertiesDock = nextDock;
   const toolbarH = Number(getComputedStyle(document.documentElement).getPropertyValue("--toolbar-height").replace("px", "")) || 48;
   const leftToolbarW = Number(getComputedStyle(document.documentElement).getPropertyValue("--left-toolbar-width").replace("px", "")) || 38;
   const vw = window.innerWidth;
@@ -581,6 +582,7 @@ const applyEditorPaneState = (state) => {
     editorPane.style.right = "auto";
   } else {
     const width = clamp(Number(state?.w) || 360, 280, Math.floor(vw * 0.6));
+    document.documentElement.style.setProperty("--properties-dock-space", `${width + 20}px`);
     editorPane.style.top = `${toolbarH}px`;
     editorPane.style.height = `${Math.max(240, vh - toolbarH)}px`;
     editorPane.style.width = `${width}px`;
@@ -18708,10 +18710,10 @@ const renderSelectedReferenceProperties = (obj) => {
 };
 
 const updatePropertiesPanel = () => {
-  if (typeof refreshObjectExplorer === "function") refreshObjectExplorer();
   if (isEditMode && currentScreenObj?.layers) {
     selectedIndices = selectedIndices.filter(index => objectOnEditableLayer(getActiveObjects()?.[index]));
   }
+  if (typeof refreshObjectExplorer === "function") refreshObjectExplorer();
   const isSingle = selectedIndices.length === 1;
   const isMulti = selectedIndices.length > 1;
   const selectionSignature = `${groupEditStack.length}:${[...selectedIndices].sort((a, b) => a - b).join(",")}`;
@@ -18948,6 +18950,7 @@ const updateScreenBorder = (patch) => {
 // Object Explorer is independent of the Properties panel and its tab state.
 const objectTreeExpanded = new Set();
 let objectTreeScreen = null;
+let objectTreeSelectionSignature = "";
 let objectTreeSelectionActive = false;
 const selectObjectTreeEntry = (path, entry = null) => {
   let objects = currentScreenObj?.objects || [];
@@ -18986,10 +18989,15 @@ const refreshObjectExplorer = () => {
   const container = document.getElementById("objectTree");
   if (!container || !isEditMode || explorer?.classList.contains("is-hidden") || objectTreeSelectionActive) return;
   const search = document.getElementById("objectTreeSearch");
-  if (objectTreeScreen !== currentScreenObj) { objectTreeExpanded.clear(); objectTreeScreen = currentScreenObj; }
-  const selected = selectedIndices.length === 1 ? getActiveObjects()?.[selectedIndices[0]] : null;
-  HmiObjectTree.render({ container, objects: currentScreenObj?.objects || [], query: search?.value || "",
-    expanded: objectTreeExpanded, selectedPath: HmiObjectTree.findPath(currentScreenObj?.objects || [], selected), onSelect: selectObjectTreeEntry });
+  if (objectTreeScreen !== currentScreenObj) {
+    objectTreeExpanded.clear(); objectTreeScreen = currentScreenObj; objectTreeSelectionSignature = "";
+  }
+  const selectedPaths = selectedIndices.map(index => HmiObjectTree.findPath(currentScreenObj?.objects || [], getActiveObjects()?.[index])).filter(Boolean);
+  const signature = JSON.stringify(selectedPaths);
+  const revealSelection = signature !== objectTreeSelectionSignature;
+  objectTreeSelectionSignature = signature;
+  HmiObjectTree.render({ container, objects: currentScreenObj?.objects || [], layers: currentScreenObj?.layers || [], query: search?.value || "",
+    expanded: objectTreeExpanded, selectedPaths, revealSelection, onSelect: selectObjectTreeEntry });
 };
 const OBJECT_EXPLORER_VISIBLE_KEY = "opcbridge-hmi.objectExplorer.visible";
 const getObjectExplorerPreference = () => {
@@ -19006,6 +19014,21 @@ const setObjectExplorerOpen = (open, persist = true) => {
   }
   if (open) refreshObjectExplorer();
 };
+const setObjectExplorerDocked = (docked) => {
+  const panel = document.getElementById("objectExplorer");
+  if (!panel) return;
+  panel.classList.toggle("is-floating", !docked);
+  panel.style.left = ""; panel.style.top = "";
+  const button = document.getElementById("objectExplorerDockBtn");
+  if (button) {
+    button.textContent = docked ? "⧉" : "⇤";
+    button.title = docked ? "Float Object Explorer" : "Dock Object Explorer";
+    button.setAttribute("aria-label", button.title);
+  }
+};
+document.getElementById("objectExplorerDockBtn")?.addEventListener("click", () => {
+  setObjectExplorerDocked(Boolean(document.getElementById("objectExplorer")?.classList.contains("is-floating")));
+});
 document.getElementById("objectTreeSearch")?.addEventListener("input", refreshObjectExplorer);
 document.getElementById("objectExplorerToggleBtn")?.addEventListener("click", () => {
   const explorer = document.getElementById("objectExplorer");
@@ -19014,10 +19037,11 @@ document.getElementById("objectExplorerToggleBtn")?.addEventListener("click", ()
 });
 document.getElementById("objectExplorerCloseBtn")?.addEventListener("click", () => setObjectExplorerOpen(false));
 setObjectExplorerOpen(getObjectExplorerPreference(), false);
-// Move only the explorer window; Properties and workspace layout are untouched.
+// Drag only when Explorer is floating; docked Explorer participates in layout.
 document.getElementById("objectExplorerTitlebar")?.addEventListener("pointerdown", event => {
   if (event.button !== 0 || event.target.closest?.("button")) return;
   const panel = document.getElementById("objectExplorer");
+  if (!panel.classList.contains("is-floating")) return;
   const bounds = panel.getBoundingClientRect();
   event.preventDefault();
   const move = update => {

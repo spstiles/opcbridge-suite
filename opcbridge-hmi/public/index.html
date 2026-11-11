@@ -340,16 +340,18 @@
           </div>
           <div id="layerMessage" role="status"></div>
         </dialog>
-	    <aside id="objectExplorer" class="object-explorer is-hidden" aria-label="Object Explorer">
+	    <div id="workspace">
+    <aside id="objectExplorer" class="object-explorer is-hidden" aria-label="Object Explorer">
       <div id="objectExplorerTitlebar" class="object-explorer-header">
         <span>Object Explorer</span>
+        <button id="objectExplorerDockBtn" class="toolbar-btn" type="button" title="Float Object Explorer" aria-label="Float Object Explorer">⧉</button>
         <button id="objectExplorerCloseBtn" class="toolbar-btn" type="button" title="Close Object Explorer" aria-label="Close Object Explorer">×</button>
       </div>
       <input id="objectTreeSearch" type="search" placeholder="Find object, tag, alias or screen…" aria-label="Search screen objects" />
-      <div class="object-tree-help">Select an object to show its properties. Bright, bold names indicate linked objects.</div>
+      <div class="object-tree-help">Select an object to show its properties. Bold names indicate linked objects.</div>
       <div id="objectTree"></div>
     </aside>
-    <div id="workspace">
+
 	      <div id="screen-wrapper">
 	        <div id="screen">
           <svg id="hmi-svg"

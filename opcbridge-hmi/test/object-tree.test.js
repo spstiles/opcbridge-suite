@@ -12,7 +12,7 @@ const nested = () => [{ type: 'group', name: 'Pump', children: [{ type: 'ellipse
 test('object tree searches nested tags and linked screens without changing screen data', () => {
   const objects = nested(); const before = JSON.stringify(objects);
   const result = tree.model(objects, 'Pump Detail');
-  assert.equal(result[0].label, 'Pump');
+  assert.equal(result[0].label, 'Group');
   assert.deepEqual(result[0].children[0].path, [0, 0]);
   const entries = result[0].children[0].automations;
   assert.ok(entries.some(entry => entry.tab === 'visibility-1'));
@@ -70,15 +70,15 @@ test('separate explorer renders expandable rows and selects objects without repl
   tree.render({ container, objects: nested(), selectedPath: [0,0], expanded, onSelect: (...args) => { calls.push(args); } });
   assert.ok(expanded.has('0'), 'selected object ancestors expand automatically');
   const buttons = container.querySelectorAll('*').filter(node => node.tag === 'button');
-  const object = buttons.find(node => node.className.includes('object-tree-object') && node.textContent.startsWith('Running'));
+  const object = buttons.find(node => node.className.includes('object-tree-object') && node.textContent === 'Ellipse');
   object.click();
   assert.deepEqual(calls[0], [[0,0]]);
   object.dblclick();
   assert.deepEqual(calls[1], [[0,0], {tab:'properties'}]);
   assert.equal(buttons.some(node => node.className === 'object-tree-automation'), false);
   assert.ok(object.className.includes('is-linked'));
-  assert.equal(object.textContent, 'Running');
-  const unlinked = buttons.find(node => node.className === 'object-tree-object' && node.textContent === 'Pump');
+  assert.equal(object.textContent, 'Ellipse');
+  const unlinked = buttons.find(node => node.className === 'object-tree-object' && node.textContent === 'Group');
   assert.ok(unlinked, 'parent artwork is not marked linked merely because a child is linked');
 });
 
@@ -118,7 +118,7 @@ test('Object Explorer visibility defaults on and persists choices across reloads
     window: {localStorage:{getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,value)}},
     refreshObjectExplorer:()=>{refreshed++;} });
   const start = source.indexOf('const OBJECT_EXPLORER_VISIBLE_KEY =');
-  vm.runInContext(source.slice(start,source.indexOf('document.getElementById("objectTreeSearch")',start)),ctx);
+  vm.runInContext(source.slice(start,source.indexOf('const setObjectExplorerDocked =',start)),ctx);
   assert.equal(vm.runInContext('getObjectExplorerPreference()',ctx),true);
   vm.runInContext('setObjectExplorerOpen(getObjectExplorerPreference(), false)',ctx);
   assert.equal(hidden,false); assert.equal(storage.size,0); assert.equal(attributes['aria-checked'],'true');
@@ -144,4 +144,102 @@ test('linked styling includes inline aliases and legacy bindings but excludes im
   assert.ok(tree.model([{type:'text',text:'Pump {alias:Number}'}])[0].automations.length);
   assert.ok(tree.model([{type:'ellipse',strokeAutomation:{connection_id:'PLC',tag:'Running'}}])[0].automations.length);
   assert.equal(tree.model([{type:'ellipse',externalReferences:[{tag:'Old'}],importedDynamics:{tag:'Old'}}])[0].automations.length,0);
+});
+
+
+test('Explorer starts docked in the workspace and linked names differ only in weight', () => {
+  const html = fs.readFileSync(path.join(__dirname,'../public/index.html'),'utf8');
+  const css = fs.readFileSync(path.join(__dirname,'../public/css/main.css'),'utf8');
+  const workspace = html.indexOf('<div id="workspace">');
+  const explorer = html.indexOf('<aside id="objectExplorer"');
+  const canvas = html.indexOf('id="screen-wrapper"',workspace);
+  assert.ok(workspace < explorer && explorer < canvas);
+  assert.doesNotMatch(html.slice(explorer,html.indexOf('>',explorer)),/is-floating/);
+  assert.match(css,/\.object-explorer\s*\{[^}]*position: relative; flex: 0 0 auto;/);
+  assert.match(css,/\.object-tree-object\.is-linked\s*\{\s*font-weight: 700;\s*\}/);
+  assert.match(css,/data-properties-dock="right"/);
+  assert.match(css,/flex: 0 0 var\(--properties-dock-space/);
+});
+
+test('Explorer can float and redock without changing Properties', () => {
+  const classes = new Set();
+  const panel = { style: { left:'100px',top:'100px' }, classList:{toggle:(name,on)=>on?classes.add(name):classes.delete(name)} };
+  const button = {setAttribute(){}};
+  const ctx = vm.createContext({document:{getElementById:id=>id==='objectExplorer'?panel:button}});
+  const start=source.indexOf('const setObjectExplorerDocked =');
+  vm.runInContext(source.slice(start,source.indexOf('\n};',start)+3),ctx);
+  vm.runInContext('setObjectExplorerDocked(false)',ctx);
+  assert.ok(classes.has('is-floating')); assert.equal(button.title,'Dock Object Explorer');
+  vm.runInContext('setObjectExplorerDocked(true)',ctx);
+  assert.equal(classes.has('is-floating'),false); assert.equal(button.title,'Float Object Explorer');
+  assert.equal(panel.style.left,''); assert.equal(panel.style.top,'');
+});
+
+
+test('Properties dock reservation follows its selected side and actual width', () => {
+  const values = {};
+  const ctx = vm.createContext({editorPane:{dataset:{},style:{}},document:{body:{dataset:{}},documentElement:{style:{setProperty:(key,value)=>{values[key]=value;}}}},
+    window:{innerWidth:1400,innerHeight:900},getComputedStyle:()=>({getPropertyValue:key=>key==='--toolbar-height'?'48px':'38px'}),
+    clamp:(value,min,max)=>Math.max(min,Math.min(value,max))});
+  const start=source.indexOf('const applyEditorPaneState =');
+  vm.runInContext(source.slice(start,source.indexOf('const setEditorPaneDock =',start)),ctx);
+  vm.runInContext('applyEditorPaneState({dock:"right",w:360})',ctx);
+  assert.equal(ctx.document.body.dataset.propertiesDock,'right');
+  assert.equal(values['--properties-dock-space'],'380px');
+  vm.runInContext('applyEditorPaneState({dock:"left",w:420})',ctx);
+  assert.equal(ctx.document.body.dataset.propertiesDock,'left');
+  assert.equal(values['--properties-dock-space'],'440px');
+  vm.runInContext('applyEditorPaneState({dock:"float",w:420,h:600,x:100,y:100})',ctx);
+  assert.equal(ctx.document.body.dataset.propertiesDock,'float');
+});
+
+
+test('Explorer labels only object types regardless of imported names, text or IDs', () => {
+  const objects = [{type:'group',name:'Building130Button',source:{name:'InventedName'},id:'internal-1'},
+    {type:'ellipse',label:'Auto Lamp',text:'AUTO',importId:'gwx_123'}, {type:'text',text:'Building 130'}];
+  assert.deepEqual(tree.model(objects).map(item=>item.label),['Group','Ellipse','Text']);
+});
+
+test('Explorer follows bottom-to-top painter order across layers while preserving selection paths', () => {
+  const objects = [
+    {type:'text',layerId:'front'},
+    {type:'group',layerId:'back',children:[{type:'rect'},{type:'ellipse'}]},
+    {type:'image',layerId:'front'},
+    {type:'button',layerId:'back'}
+  ];
+  const result = tree.model(objects,'',[],[{id:'back'},{id:'front'}]);
+  assert.deepEqual(result.map(item=>item.path),[[1],[3],[0],[2]]);
+  assert.deepEqual(result[0].children.map(item=>item.path),[[1,0],[1,1]]);
+  assert.deepEqual(result[0].children.map(item=>item.label),['Rectangle','Ellipse']);
+  assert.deepEqual(tree.model(objects).map(item=>item.path),[[0],[1],[2],[3]]);
+});
+
+test('canvas selection maps nested and multiple objects to Explorer and reveals only when selection changes', () => {
+  const objects = nested(); objects[0].children.push({type:'rect'});
+  const root = {objects}; const rendered = [];
+  const search = {value:''};
+  const ctx = vm.createContext({ currentScreenObj:root, isEditMode:true, isDirty:true, selectedIndices:[0],
+    objectTreeScreen:null, objectTreeSelectionSignature:'', objectTreeSelectionActive:false, objectTreeExpanded:new Set(),
+    getActiveObjects:()=>objects[0].children,
+    document:{getElementById:id=>id==='objectExplorer'?{classList:{contains:()=>false}}:id==='objectTreeSearch'?search:{}},
+    HmiObjectTree:{findPath:tree.findPath,render:options=>rendered.push(options)}, selectObjectTreeEntry() {} });
+  const start=source.indexOf('const refreshObjectExplorer =');
+  vm.runInContext(source.slice(start,source.indexOf('const OBJECT_EXPLORER_VISIBLE_KEY =',start)),ctx);
+  vm.runInContext('refreshObjectExplorer()',ctx);
+  assert.deepEqual(Array.from(rendered[0].selectedPaths,path=>Array.from(path)),[[0,0]]);
+  assert.equal(rendered[0].revealSelection,true);
+  vm.runInContext('refreshObjectExplorer()',ctx);
+  assert.equal(rendered[1].revealSelection,false);
+  ctx.selectedIndices=[0,1];
+  vm.runInContext('refreshObjectExplorer()',ctx);
+  assert.deepEqual(Array.from(rendered[2].selectedPaths,path=>Array.from(path)),[[0,0],[0,1]]);
+  assert.equal(rendered[2].revealSelection,true);
+  assert.equal(ctx.isDirty,true);
+});
+
+test('a search does not hide the selected canvas object or its parent hierarchy', () => {
+  const objects=[{type:'group',children:[{type:'ellipse'},{type:'rect'}]}];
+  const filtered=tree.model(objects,'unmatched search',[],[],[[0,1]]);
+  assert.deepEqual(filtered.map(row=>row.path),[[0]]);
+  assert.deepEqual(filtered[0].children.map(row=>row.path),[[0,1]]);
 });

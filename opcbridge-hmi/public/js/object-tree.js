@@ -1,6 +1,10 @@
 (function(root) {
   const text = value => String(value ?? '').trim();
-  const label = obj => text(obj.name || obj.source?.name || obj.label || obj.text || `${obj.type || 'object'}${obj.id || obj.importId ? ` · ${obj.id || obj.importId}` : ''}`).replace(/\s+/g, ' ').slice(0, 90);
+  const OBJECT_LABELS = { group: 'Group', ellipse: 'Ellipse', circle: 'Circle', rect: 'Rectangle',
+    line: 'Line', curve: 'Curve', polyline: 'Polyline', pipe: 'Pipe', polygon: 'Polygon', spline: 'Spline',
+    text: 'Text', button: 'Button', viewport: 'Viewport', image: 'Image', indicator: 'Indicator',
+    'number-input': 'Numeric Entry', bar: 'Bar', arc: 'Arc', 'alarms-panel': 'Alarm Panel' };
+  const label = obj => OBJECT_LABELS[obj.type] || 'Object';
   function automations(obj) {
     const entries = [];
     const add = (title, tab, binding, actionIndex) => {
@@ -23,15 +27,19 @@
     for (const key of ['textBindings','labelBindings']) for (const [name, binding] of Object.entries(obj[key] || {})) add(`Text {${name}}`, 'properties', binding);
     return entries;
   }
-  function model(objects, query = '', parents = []) {
+  function model(objects, query = '', parents = [], layers = [], selectedPaths = []) {
     const needle = text(query).toLowerCase();
-    return (objects || []).flatMap((object, index) => {
+    const order = new Map(layers.map((layer, index) => [layer.id, index]));
+    const entriesByZ = (objects || []).map((object, index) => ({ object, index }))
+      .sort((a, b) => (order.get(a.object.layerId) || 0) - (order.get(b.object.layerId) || 0) || a.index - b.index);
+    return entriesByZ.flatMap(({object, index}) => {
       const path = [...parents, index];
       const entries = automations(object);
       const own = Object.fromEntries(Object.entries(object).filter(([key]) => !['children','externalReferences','importedDynamics','importInfo','referenceHealth'].includes(key)));
       const matches = !needle || `${label(object)} ${JSON.stringify(own)}`.toLowerCase().includes(needle);
-      const children = model(object.children, matches ? '' : query, path);
-      if (!matches && !children.length) return [];
+      const children = model(object.children, matches ? '' : query, path, [], selectedPaths);
+      const selectedBranch = selectedPaths.some(selected => path.every((index, depth) => selected[depth] === index));
+      if (!matches && !children.length && !selectedBranch) return [];
       return [{ object, path, label: label(object), automations: entries, children }];
     });
   }
@@ -44,18 +52,21 @@
     }
     return null;
   }
-  function render({ container, objects, query, expanded, selectedPath, onSelect }) {
+  function render({ container, objects, query, expanded, selectedPath, selectedPaths = selectedPath ? [selectedPath] : [], revealSelection = true, onSelect, layers = [] }) {
     const doc = container.ownerDocument;
-    const selected = (selectedPath || []).join('.');
-    for (let depth = 1; depth < (selectedPath || []).length; depth++) expanded.add(selectedPath.slice(0, depth).join('.'));
+    const selected = new Set(selectedPaths.map(path => path.join('.')));
+    const scrollTop = container.scrollTop;
+    let selectedRow;
+    for (const path of selectedPaths) for (let depth = 1; depth < path.length; depth++) expanded.add(path.slice(0, depth).join('.'));
     container.replaceChildren();
     const list = doc.createElement('ul'); list.className = 'object-tree-list'; list.setAttribute('role', 'tree');
     list.setAttribute('aria-label', 'Screen objects');
     const draw = (nodes, parent) => nodes.forEach(node => {
       const key = node.path.join('.');
       const li = doc.createElement('li'); li.setAttribute('role', 'treeitem');
-      li.setAttribute('aria-selected', key === selected ? 'true' : 'false');
-      const row = doc.createElement('div'); row.className = `object-tree-row${key === selected ? ' is-selected' : ''}`;
+      li.setAttribute('aria-selected', selected.has(key) ? 'true' : 'false');
+      const row = doc.createElement('div'); row.className = `object-tree-row${selected.has(key) ? ' is-selected' : ''}`;
+      if (selected.has(key) && !selectedRow) selectedRow = row;
       const hasChildren = node.children.length;
       const open = Boolean(query) || expanded.has(key);
       const toggle = doc.createElement('button'); toggle.type = 'button'; toggle.className = 'object-tree-toggle';
@@ -64,7 +75,7 @@
       if (hasChildren) li.setAttribute('aria-expanded', open ? 'true' : 'false');
       const button = doc.createElement('button'); button.type = 'button'; button.className = `object-tree-object${node.automations.length ? ' is-linked' : ''}`;
       button.textContent = node.label;
-      button.title = `${node.object.type} · ${node.label}\nSelect to show Properties`;
+      button.title = `${node.label}\nSelect to show Properties`;
       button.addEventListener('click', () => {
         if (onSelect(node.path) === false) return;
         for (const item of list.querySelectorAll('[aria-selected]')) item.setAttribute('aria-selected', item === li ? 'true' : 'false');
@@ -82,7 +93,9 @@
         draw(node.children, children); li.appendChild(children);
       }
     });
-    draw(model(objects, query), list); container.appendChild(list);
+    draw(model(objects, query, [], layers, selectedPaths), list); container.appendChild(list);
+    container.scrollTop = scrollTop;
+    if (revealSelection) selectedRow?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
     if (!list.children.length) { const empty = doc.createElement('p'); empty.className = 'prop-help'; empty.textContent = query ? 'No matching objects.' : 'This screen has no objects.'; container.appendChild(empty); }
   }
   const api = { model, findPath, automations, render };
