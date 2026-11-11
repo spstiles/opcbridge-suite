@@ -47,3 +47,16 @@ aliases. A value alias can build a tag name, for example
 Unmapped or unresolved aliases cannot be sent as write destinations. Write
 permissions and upstream writable-tag checks still apply. Opening a keypad or
 pressing a momentary button captures the resolved target for that interaction.
+
+## Editing the caller and target in separate tabs
+
+Tabs opened at the same HMI address share successful screen-save notifications.
+Save the target screen after adding or changing aliases. The calling tab refreshes
+its Target Screen Aliases fields automatically, keeping its existing mappings
+and unsaved screen edits. New aliases appear unassigned. Removed aliases retain
+their mappings with a review notice, and changed alias types are flagged.
+
+Unsaved target edits do not trigger a refresh. If an alias field in the calling
+tab is being edited, the refresh waits until focus leaves that field so its edit
+can commit. Returning to a tab also checks for saved changes it may have missed.
+The refresh updates parameter definitions without reloading the calling screen.

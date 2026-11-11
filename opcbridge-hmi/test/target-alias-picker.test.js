@@ -23,7 +23,7 @@ async function editor(kind, definitionType = 'tag', initialMapping = null) {
   let toast;
   const ctx = vm.createContext({ buttonTargetAliases: host, groupTargetAliases: host,
     getScreenForAliases: async () => ({}), getEffectiveScreenAliases: () => [{ name: 'Command', type: definitionType, required: true }],
-    compactTagBindingConfigs: [], aliasTokenName: value => /^\{alias:[^}]+\}$/.test(String(value || '')),
+    compactTagBindingConfigs: [], savedAliasDefinitionChanges: new Map(), aliasTokenName: value => /^\{alias:[^}]+\}$/.test(String(value || '')),
     document: { createElement: element }, setFriendlyConnectionInputValue: (input, value) => { input.value = value; },
     connectionIdFromFriendlyInput: input => input.value,
     getAutomationObject: () => selected, getEditedClickAction: obj => obj?.actions[selectedIndex],
@@ -40,7 +40,7 @@ async function editor(kind, definitionType = 'tag', initialMapping = null) {
   vm.runInContext(source.slice(source.indexOf('let targetAliasRenderSequence ='), source.indexOf('const renderIndicatorStatesEditor =')), ctx);
   ctx.kind = kind; ctx.action = action;
   await vm.runInContext('renderTargetAliasEditor(kind, "Detail", action)', ctx);
-  const card = host.children[2];
+  const card = host.children.find(child => child.children?.[0]?.textContent === 'Command *');
   const sourceSelect = card.children[1].children[1];
   return { owner, first, action, card, sourceSelect, config: () => ctx.compactTagBindingConfigs[0],
     refresh: async () => { ctx.action = owner.actions[selectedIndex]; await vm.runInContext('renderTargetAliasEditor(kind, "Detail", action)', ctx); },

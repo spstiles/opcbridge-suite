@@ -3707,8 +3707,10 @@ const saveScreenToPath = async (relPath, raw) => {
     body: JSON.stringify({ raw })
   });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const saved = await response.json();
   invalidateSystemReferenceHealth();
-  return await response.json();
+  screenSaveSync.notify({ ref: saved.ref, path: saved.path || relPath });
+  return saved;
 };
 
 const getCurrentScreenRawForSave = () => {
@@ -6229,24 +6231,78 @@ const buildAliasPreviewContext = (screen) => Object.fromEntries(
   })
 );
 
+const savedAliasScreenRevisions = new Map();
+const savedAliasScreenCache = new Map();
+const savedAliasDefinitionChanges = new Map();
+let pendingSavedAliasRefresh = false;
+
+const refreshSavedTargetAliasEditor = async () => {
+  if (!pendingSavedAliasRefresh || !isEditMode) return;
+  const focused = document.activeElement;
+  if (focused && (buttonTargetAliases?.contains(focused) || groupTargetAliases?.contains(focused))) return;
+  const obj = getAutomationObject();
+  const action = getEditedClickAction(obj);
+  const id = String(action?.screenId || "");
+  if (!id || !savedAliasScreenRevisions.has(id)) return;
+  const latest = await getScreenForAliases(id);
+  if (!latest || getAutomationObject() !== obj || getEditedClickAction(obj) !== action) return;
+  pendingSavedAliasRefresh = false;
+  await renderTargetAliasEditor(usesFullClickEditor(obj) ? "button" : "group", id, action);
+  showHmiToast("Target screen aliases updated. Existing mappings were preserved.");
+};
+
+const handleSavedScreenAliases = async (notice) => {
+  if (notice.ref === currentScreenId || notice.path === currentScreenPath) return;
+  const previous = savedAliasScreenCache.get(notice.ref)?.screen || screenCache.get(notice.ref);
+  savedAliasScreenRevisions.set(notice.ref, notice.revision);
+  savedAliasScreenCache.delete(notice.ref);
+  screenAliasDefinitionPromises.delete(notice.ref);
+  const selected = getEditedClickAction(getAutomationObject());
+  if (!isEditMode || String(selected?.screenId || "") !== notice.ref) return;
+  const latest = await getScreenForAliases(notice.ref);
+  if (!latest) throw new Error("Saved target screen could not be loaded.");
+  if (savedAliasScreenRevisions.get(notice.ref) !== notice.revision) return;
+  const before = getEffectiveScreenAliases(previous);
+  const after = getEffectiveScreenAliases(latest);
+  if (JSON.stringify(before) === JSON.stringify(after)) return;
+  const byName = new Map(after.map(alias => [alias.name, alias]));
+  savedAliasDefinitionChanges.set(notice.ref, {
+    removed: before.filter(alias => !byName.has(alias.name)).map(alias => alias.name),
+    changed: before.filter(alias => byName.has(alias.name) && byName.get(alias.name).type !== alias.type).map(alias => alias.name)
+  });
+  pendingSavedAliasRefresh = true;
+  await refreshSavedTargetAliasEditor();
+};
+const screenSaveSync = HmiScreenSaveSync.create({ host: window, onSaved: handleSavedScreenAliases });
+document.addEventListener("focusout", () => {
+  if (pendingSavedAliasRefresh) window.setTimeout(() => { void refreshSavedTargetAliasEditor().catch(console.warn); }, 0);
+});
+
 const getScreenForAliases = async (screenId) => {
   const id = String(screenId || "").trim();
   if (!id) return null;
-  if (screenCache.has(id)) return screenCache.get(id);
+  const revision = savedAliasScreenRevisions.get(id);
+  const saved = savedAliasScreenCache.get(id);
+  if (revision && saved?.revision === revision) return saved.screen;
+  if (!revision && screenCache.has(id)) return screenCache.get(id);
   if (screenAliasDefinitionPromises.has(id)) return screenAliasDefinitionPromises.get(id);
   const item = availableScreens.find((screen) => screen.id === id || screen.ref === id);
   const path = item?.path || id;
-  const promise = fetch(`/api/screens/file?path=${encodeURIComponent(path)}`)
+  const promise = fetch(`/api/screens/file?path=${encodeURIComponent(path)}`, { cache: "no-store" })
     .then((response) => response.ok ? response.json() : null)
     .then((data) => {
       if (!data?.parsed) return null;
+      if (savedAliasScreenRevisions.get(id) !== revision) return getScreenForAliases(id);
       repairDuplicateImportIds(data.parsed);
       repairScreenTagConnections(data.parsed);
-      screenCache.set(String(data.ref || id), data.parsed);
-      screenCache.set(id, data.parsed);
+      if (revision) savedAliasScreenCache.set(id, { revision, screen: data.parsed });
+      else {
+        screenCache.set(String(data.ref || id), data.parsed);
+        screenCache.set(id, data.parsed);
+      }
       return data.parsed;
     })
-    .finally(() => screenAliasDefinitionPromises.delete(id));
+    .finally(() => { if (screenAliasDefinitionPromises.get(id) === promise) screenAliasDefinitionPromises.delete(id); });
   screenAliasDefinitionPromises.set(id, promise);
   return promise;
 };
@@ -17174,8 +17230,16 @@ const renderTargetAliasEditor = async (kind, screenId, action) => {
   if (sequence !== targetAliasRenderSequence) return;
   const definitions = getEffectiveScreenAliases(screen);
   host.textContent = "";
-  host.classList.toggle("is-hidden", definitions.length === 0);
-  host.hidden = definitions.length === 0;
+  const changes = savedAliasDefinitionChanges.get(screenId);
+  const removed = new Set([...(changes?.removed || []), ...Object.keys(action?.aliases || {}).filter(name => !definitions.some(alias => alias.name === name))]);
+  if (removed.size || changes?.changed.length) {
+    const notice = document.createElement("p"); notice.className = "prop-help reference-error";
+    notice.textContent = [removed.size ? `Removed aliases (mappings retained): ${[...removed].join(", ")}.` : "",
+      changes?.changed.length ? `Alias types changed; review mappings: ${changes.changed.join(", ")}.` : ""].filter(Boolean).join(" ");
+    host.appendChild(notice);
+  }
+  host.classList.toggle("is-hidden", definitions.length === 0 && !removed.size);
+  host.hidden = definitions.length === 0 && !removed.size;
   if (!definitions.length) {
     for (let index = compactTagBindingConfigs.length - 1; index >= 0; index -= 1) {
       if (compactTagBindingConfigs[index].id.startsWith(`target-alias:${kind}:`)) {
@@ -20496,6 +20560,7 @@ const saveJsoncEditor = async () => {
       body: JSON.stringify({ raw: rawToSave })
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    screenSaveSync.notify({ ref: currentScreenId, path: currentScreenPath });
     invalidateSystemReferenceHealth();
     if (isEditMode && tagCatalogLoaded) void scanSystemReferenceHealth({ force: true });
     if (editorStatus) editorStatus.textContent = "Saved.";
