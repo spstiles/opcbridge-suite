@@ -7528,17 +7528,19 @@ const diagnosticValueText = (value) => {
 const collectObjectDiagnosticReferences = (obj) => {
   const references = [];
   const seen = new Set();
+  const visited = new WeakSet();
   const add = (connection, tag) => {
     const storedConnection = String(connection || "").trim();
     const tagName = String(tag || "").trim();
     const key = `${storedConnection}\u0000${tagName}`;
-    if (!storedConnection || !tagName || seen.has(key)) return;
+    if (!tagName || seen.has(key)) return;
     seen.add(key);
     references.push({ storedConnection, tag: tagName });
   };
   const visit = (value, depth = 0) => {
-    if (!value || typeof value !== "object" || depth > 8) return;
-    if (typeof value.connection_id === "string" && typeof value.tag === "string") {
+    if (!value || typeof value !== "object" || visited.has(value)) return;
+    visited.add(value);
+    if (typeof value.tag === "string") {
       add(value.connection_id, value.tag);
     }
     if ((value.sourceType === "expression" || value.source === "expression") && typeof value.expression === "string") {
@@ -7547,7 +7549,7 @@ const collectObjectDiagnosticReferences = (obj) => {
       );
     }
     Object.entries(value).forEach(([key, child]) => {
-      if (key === "children") return;
+      if (["externalReferences", "importInfo", "referenceHealth", "importedDynamics"].includes(key)) return;
       if (child && typeof child === "object") visit(child, depth + 1);
     });
   };
@@ -7557,7 +7559,32 @@ const collectObjectDiagnosticReferences = (obj) => {
 
 const buildObjectDiagnosticsText = (obj) => {
   const references = collectObjectDiagnosticReferences(obj);
-  if (!references.length) return "";
+  if (!obj) return "";
+  const name = obj.name || obj.label || obj.source?.name || obj.id || obj.importId || "";
+  const heading = `Object: ${obj.type || "object"}${name ? ` (${name})` : ""}`;
+  const automations = [];
+  const visited = new WeakSet();
+  const inspect = (value, path = []) => {
+    if (!value || typeof value !== "object" || visited.has(value)) return;
+    visited.add(value);
+    if ((value.sourceType === "expression" || value.source === "expression") && typeof value.expression === "string") {
+      const label = referenceAutomationLabel(path);
+      const result = value.enabled === false ? "Disabled" : diagnosticValueText(evaluateAutomationExpression(value.expression));
+      automations.push(`${label}: ${value.expression || "Empty expression"}\nResult: ${result}`);
+    }
+    if (typeof value.tag === "string") {
+      automations.push(`${referenceAutomationLabel(path)}: ${value.connection_id || "Unmapped"}::${value.tag || "No tag selected"}${value.enabled === false ? " (Disabled)" : ""}`);
+    }
+    if (path.includes("action") && value.type && value.type !== "sequence") {
+      const target = value.screenId || value.viewportId || "";
+      automations.push(`Click: ${value.type}${target ? ` → ${target}` : ""}`);
+    }
+    Object.entries(value).forEach(([key, child]) => {
+      if (["externalReferences", "importInfo", "referenceHealth", "importedDynamics"].includes(key)) return;
+      if (child && typeof child === "object") inspect(child, [...path, key]);
+    });
+  };
+  inspect(obj);
   const blocks = references.slice(0, 8).map((reference) => {
     const resolved = resolveConnectionForKnownTag(reference.storedConnection, reference.tag);
     const key = normalizeTagCacheKey(resolved, reference.tag);
@@ -7567,7 +7594,7 @@ const buildObjectDiagnosticsText = (obj) => {
       && String(item?.name || "").trim() === reference.tag
     );
     const lines = [
-      `Connection: ${getConnectionDisplayName(resolved)}`,
+      `Connection: ${getConnectionDisplayName(resolved) || "Unmapped"}`,
       `Tag: ${reference.tag}`
     ];
     const sourceTag = String(tagInfo?.plc_tag_name || "").trim();
@@ -7579,16 +7606,29 @@ const buildObjectDiagnosticsText = (obj) => {
     return lines.join("\n");
   });
   if (references.length > 8) blocks.push(`…and ${references.length - 8} more tag references`);
-  return blocks.join("\n\n");
+  return [heading, ...new Set(automations), ...blocks].join("\n\n");
 };
 
 const showDiagnosticsForPointer = (event) => {
   if (!diagnosticsModeEnabled || isEditMode || !hmiSvg) return hideDiagnosticsTooltip();
-  const point = getScreenPoint(event);
-  const meta = point ? getMetaAtPoint(point, (obj) => collectObjectDiagnosticReferences(obj).length > 0) : null;
-  const obj = meta ? getObjectFromMeta(meta) : null;
+  const host = event.target?.closest?.("[data-hmi-diagnostic-object]");
+  const inPopup = Boolean(event.target?.closest?.("#popupSvg"));
+  const point = !host && !inPopup ? getScreenPoint(event) : null;
+  const meta = point ? getMetaAtPoint(point) : null;
+  const obj = host?.__hmiDiagnosticObject || (meta ? getObjectFromMeta(meta) : null);
   if (!obj) return hideDiagnosticsTooltip();
-  const text = buildObjectDiagnosticsText(obj);
+  const sections = [buildObjectDiagnosticsText(obj)];
+  let ancestor = host?.parentElement?.closest?.("[data-hmi-diagnostic-object]");
+  while (ancestor) {
+    const owner = ancestor.__hmiDiagnosticObject;
+    if (owner && owner !== obj) {
+      const own = { ...owner }; delete own.children;
+      const details = buildObjectDiagnosticsText(own);
+      if (details.includes("\n\n")) sections.push(details);
+    }
+    ancestor = ancestor.parentElement?.closest?.("[data-hmi-diagnostic-object]");
+  }
+  const text = sections.filter(Boolean).join("\n\n");
   if (!text) return hideDiagnosticsTooltip();
   const tooltip = ensureDiagnosticsTooltip();
   tooltip.textContent = text;
@@ -7610,7 +7650,11 @@ const setDiagnosticsMode = (enabled) => {
     viewDiagnosticsMenuBtn.setAttribute("aria-pressed", diagnosticsModeEnabled ? "true" : "false");
     viewDiagnosticsMenuBtn.innerHTML = `${diagnosticsModeEnabled ? "✓ " : ""}Diagnostics Mode <span class="menu-shortcut">Ctrl+D</span>`;
   }
-  if (!diagnosticsModeEnabled) hideDiagnosticsTooltip();
+  hideDiagnosticsTooltip();
+  if (!isEditMode) {
+    renderScreen({ refreshReferenceHealth: false });
+    if (currentPopupScreenId) openPopup(currentPopupScreenId);
+  }
 };
 
 const toggleDiagnosticsMode = () => {
@@ -14705,6 +14749,13 @@ const automaticReportTableDateFormat = (obj, report) => {
 };
 
 const renderObjectInto = (parent, obj, inheritedGroupColorOverrides = null) => {
+  if (!isEditMode && typeof diagnosticsModeEnabled !== "undefined" && diagnosticsModeEnabled && obj) {
+    const host = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    host.dataset.hmiDiagnosticObject = "true";
+    host.__hmiDiagnosticObject = obj;
+    parent.appendChild(host);
+    parent = host;
+  }
   if (isEditMode && editorObjectKey(obj)) {
     const host = document.createElementNS("http://www.w3.org/2000/svg", "g");
     parent.appendChild(host);
@@ -21958,6 +22009,8 @@ if (popupCloseBtn) {
 }
 
 if (popupSvg) {
+  popupSvg.addEventListener("pointermove", showDiagnosticsForPointer);
+  popupSvg.addEventListener("pointerleave", hideDiagnosticsTooltip);
   let popupMomentaryPress = null;
 
   const releasePopupMomentary = async (pointerId) => {
