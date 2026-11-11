@@ -4532,5 +4532,5 @@ body.edit-mode.editor-panel-hidden #workspace::after { display: none; }
 .object-tree-object { flex: 1; padding: 2px 3px; }
 .object-tree-list button:hover, .object-tree-list button:focus-visible { background: var(--bg-elevated); }
 
-.object-tree-list .object-tree-object { color: var(--text-muted, #929aa8); font-weight: 400; }
+.object-tree-list .object-tree-object { color: #c5cbd6; font-weight: 400; }
 .object-tree-list .object-tree-object.is-linked { font-weight: 700; }
