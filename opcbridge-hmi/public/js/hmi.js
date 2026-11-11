@@ -17052,7 +17052,7 @@ const renderTargetAliasEditor = async (kind, screenId, action) => {
   definitions.forEach((definition) => {
     const mapping = action?.aliases?.[definition.name] || {};
     const card = document.createElement("div"); card.className = "prop-group";
-    const title = document.createElement("div"); title.className = "prop-group-title";
+    const title = document.createElement("div"); title.className = "alias-mapping-name";
     title.textContent = `${definition.name}${definition.required ? " *" : ""}`;
     title.title = definition.description || definition.name;
     card.appendChild(title);

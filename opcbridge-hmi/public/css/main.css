@@ -3798,6 +3798,15 @@ body.runtime-mode #editor-pane {
   padding-top: 8px;
 }
 
+.alias-mapping-name {
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--text-primary);
+  margin: 8px 0 4px;
+}
+
 .prop-group-header {
   display: flex;
   align-items: center;
