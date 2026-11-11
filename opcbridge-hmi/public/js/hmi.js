@@ -17112,6 +17112,9 @@ const renderTargetAliasEditor = async (kind, screenId, action) => {
     }
     host.appendChild(card);
   });
+  // This editor is built after awaiting the referenced screen. Its controls
+  // were not present during the synchronous properties refresh.
+  renderCompactTagBindingRows();
   renderReferenceHealthBadge();
 };
 

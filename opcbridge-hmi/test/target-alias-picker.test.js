@@ -30,14 +30,21 @@ async function editor(kind, definitionType = 'tag', initialMapping = null) {
     getSelectedActionOwner: () => ({ ...selected, action: selected.actions[selectedIndex] }),
     updateButtonProperty: patch => { selected.actions[selectedIndex] = patch.action; dirty = true; },
     updateSelectedGroupAction: patch => { Object.assign(selected.actions[selectedIndex], patch); dirty = true; },
-    registerCompactTagBinding: value => { config = value; }, openCompactTagBindingModal: id => { opened = id; },
+    populateConnectionSelect: input => { input.value = ""; },
+    setConnectionSelectValue: (input, value) => { input.value = value; },
+    tagPickerConnectionId: value => value,
+    openCompactTagBindingModal: id => { opened = id; },
     showHmiToast: message => { toast = message; }, renderReferenceHealthBadge() {} });
+  vm.runInContext(source.slice(source.indexOf('function registerCompactTagBinding('), source.indexOf('function updateButtonWriteBinding(')), ctx);
+  vm.runInContext(source.slice(source.indexOf('function renderCompactTagBindingRows('), source.indexOf('function registerCompactTagBinding(')), ctx);
   vm.runInContext(source.slice(source.indexOf('let targetAliasRenderSequence ='), source.indexOf('const renderIndicatorStatesEditor =')), ctx);
   ctx.kind = kind; ctx.action = action;
   await vm.runInContext('renderTargetAliasEditor(kind, "Detail", action)', ctx);
   const card = host.children[2];
   const sourceSelect = card.children[1].children[1];
-  return { owner, first, action, card, sourceSelect, config: () => config, dirty: () => dirty, toast: () => toast,
+  return { owner, first, action, card, sourceSelect, config: () => ctx.compactTagBindingConfigs[0],
+    refresh: async () => { ctx.action = owner.actions[selectedIndex]; await vm.runInContext('renderTargetAliasEditor(kind, "Detail", action)', ctx); },
+    dirty: () => dirty, toast: () => toast,
     changeObject: () => { selected = { actions: [{ type: 'popup' }] }; },
     changeAction: () => { selectedIndex = 0; } };
 }
@@ -95,4 +102,20 @@ test('alias source is explicit and can switch between a tag and literal text', a
   text.sourceSelect.value = 'tag'; text.sourceSelect.change();
   assert.equal(text.owner.actions[1].aliases.Command.sourceType, 'tag');
   assert.equal(text.owner.actions[1].aliases.Command.value, undefined);
+});
+
+
+test('alias connection selection remains visible after the asynchronous properties rebuild', async () => {
+  const fixture = await editor('button', 'tag', { sourceType: 'tag', connection_id: 'PLC_ONE', tag: 'Pump.Start' });
+  let binding = fixture.config();
+  assert.equal(binding.editorConnectionInput.value, 'PLC_ONE');
+  assert.equal(binding.editorTagInput.value, 'Pump.Start');
+  binding.editorConnectionInput.value = 'PLC_TWO';
+  binding.editorConnectionInput.change();
+  assert.equal(fixture.owner.actions[1].aliases.Command.connection_id, 'PLC_TWO');
+  await fixture.refresh();
+  binding = fixture.config();
+  assert.equal(binding.editorConnectionInput.value, 'PLC_TWO');
+  assert.equal(binding.editorTagInput.value, 'Pump.Start');
+  assert.equal(fixture.dirty(), true);
 });
