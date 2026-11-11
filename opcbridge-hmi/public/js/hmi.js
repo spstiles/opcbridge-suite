@@ -6179,7 +6179,7 @@ const buildAliasContext = (screen, mappings = {}, parentContext = {}) => {
   const context = {};
   getEffectiveScreenAliases(screen).forEach((definition) => {
     const mapping = mappings?.[definition.name];
-    if (definition.type === "tag") {
+    if (mapping?.sourceType === "tag" || (definition.type === "tag" && mapping?.sourceType !== "text")) {
       const forwarded = aliasTokenName(mapping?.tag || mapping?.value || "");
       context[definition.name] = forwarded && parentContext?.[forwarded]
         ? parentContext[forwarded]
@@ -7386,7 +7386,8 @@ const getReferenceHealthIssues = () => {
     getEffectiveScreenAliases(targetScreen).forEach((definition, aliasIndex) => {
       if (!definition.required) return;
       const mapping = obj?.action?.aliases?.[definition.name];
-      const missing = definition.type === "tag"
+      const isTagSource = mapping?.sourceType === "tag" || (definition.type === "tag" && mapping?.sourceType !== "text");
+      const missing = isTagSource
         ? !String(mapping?.tag || "").trim()
         : !(mapping && Object.prototype.hasOwnProperty.call(mapping, "value") && (definition.type === "boolean" || String(mapping.value).trim() !== ""))
           && String(definition.defaultValue ?? "").trim() === "";
@@ -16981,7 +16982,7 @@ const renderScreenAliasDefinitions = () => {
     const name = document.createElement("input");
     name.type = "text"; name.placeholder = "Alias name"; name.value = definition.name;
     const type = document.createElement("select");
-    type.innerHTML = '<option value="text">Text</option><option value="number">Number</option><option value="boolean">Boolean</option><option value="tag">Tag Reference</option>';
+    type.innerHTML = '<option value="text">Text</option><option value="number">Number</option><option value="boolean">Boolean</option><option value="tag">Tag</option>';
     type.value = definition.type;
     const description = document.createElement("input");
     description.type = "text"; description.placeholder = "Description"; description.value = definition.description;
@@ -17031,64 +17032,85 @@ const renderTargetAliasEditor = async (kind, screenId, action) => {
   host.textContent = "";
   host.classList.toggle("is-hidden", definitions.length === 0);
   host.hidden = definitions.length === 0;
-  if (!definitions.length) return;
+  if (!definitions.length) {
+    for (let index = compactTagBindingConfigs.length - 1; index >= 0; index -= 1) {
+      if (compactTagBindingConfigs[index].id.startsWith(`target-alias:${kind}:`)) {
+        compactTagBindingConfigs[index].cancelPending?.();
+        compactTagBindingConfigs.splice(index, 1);
+      }
+    }
+    return;
+  }
   const title = document.createElement("div"); title.className = "prop-group-title"; title.textContent = "Target Screen Aliases"; host.appendChild(title);
   const help = document.createElement("div"); help.className = "prop-help"; help.textContent = "Required values are highlighted until supplied. A value may forward a parent alias with {alias:Name}."; host.appendChild(help);
+  const bindingPrefix = `target-alias:${kind}:`;
+  for (let index = compactTagBindingConfigs.length - 1; index >= 0; index -= 1) {
+    if (!compactTagBindingConfigs[index].id.startsWith(bindingPrefix)) continue;
+    compactTagBindingConfigs[index].cancelPending?.();
+    compactTagBindingConfigs.splice(index, 1);
+  }
   definitions.forEach((definition) => {
     const mapping = action?.aliases?.[definition.name] || {};
-    const row = document.createElement("div"); row.className = "prop-row";
-    const label = document.createElement("label"); label.textContent = `${definition.name}${definition.required ? " *" : ""}`; label.title = definition.description || definition.name;
+    const card = document.createElement("div"); card.className = "prop-group";
+    const title = document.createElement("div"); title.className = "prop-group-title";
+    title.textContent = `${definition.name}${definition.required ? " *" : ""}`;
+    title.title = definition.description || definition.name;
+    card.appendChild(title);
+    const owner = getAutomationObject();
+    let selectedAction = getEditedClickAction(owner);
     const commit = (nextMapping) => {
-      const owner = getSelectedActionOwner(kind); if (!owner) return;
-      const aliases = { ...(owner.action?.aliases || {}), [definition.name]: nextMapping };
-      if (kind === "button") updateButtonProperty({ action: { ...(owner.action || {}), aliases } });
+      if (getAutomationObject() !== owner || getEditedClickAction(owner) !== selectedAction) {
+        showHmiToast("The selected Click action changed. Reopen its alias properties.");
+        return;
+      }
+      const current = getSelectedActionOwner(kind); if (!current) return;
+      const aliases = { ...(current.action?.aliases || {}), [definition.name]: nextMapping };
+      if (kind === "button") updateButtonProperty({ action: { ...(current.action || {}), aliases } });
       else updateSelectedGroupAction({ aliases });
+      selectedAction = getEditedClickAction(owner);
     };
-    if (definition.type === "tag") {
-      const wrap = document.createElement("div"); wrap.className = "prop-inline";
-      const connection = document.createElement("input"); connection.type = "text"; connection.placeholder = "Connection name"; setFriendlyConnectionInputValue(connection, mapping.connection_id || "");
-      const tag = document.createElement("input"); tag.type = "text"; tag.placeholder = "Tag or {alias:Parent}"; tag.value = mapping.tag || "";
-      const refreshState = () => { const missing = definition.required && !tag.value.trim(); [connection, tag].forEach((input) => input.classList.toggle("reference-error", missing)); };
-      [connection, tag].forEach((input) => input.addEventListener("change", () => { commit({ connection_id: connectionIdFromFriendlyInput(connection), tag: tag.value.trim() }); refreshState(); }));
-      const picker = document.createElement("button");
-      picker.type = "button";
-      picker.className = "panel-btn";
-      picker.textContent = "Choose tag…";
-      picker.title = `Choose tag for ${definition.name}`;
-      picker.addEventListener("click", () => {
-        const owner = getAutomationObject();
-        const selectedAction = getEditedClickAction(owner);
-        const id = "target-screen-alias";
-        registerCompactTagBinding({
-          id,
-          inlineOnly: true,
-          modalTitle: `Target Alias: ${definition.name}`,
-          read: () => selectedAction?.aliases?.[definition.name] || {},
-          apply: (binding) => {
-            // A picker can remain open while selection or the Click action
-            // changes. Never send its result to a different action.
-            if (getAutomationObject() !== owner || getEditedClickAction(owner) !== selectedAction) {
-              showHmiToast("The selected Click action changed. Reopen its alias tag picker.");
-              return;
-            }
-            setFriendlyConnectionInputValue(connection, binding.connection_id || "");
-            tag.value = binding.tag || "";
-            commit({ connection_id: binding.connection_id || "", tag: binding.tag || "" });
-            refreshState();
-          }
-        });
-        openCompactTagBindingModal(id);
+    const source = document.createElement("select");
+    const literalLabel = definition.type === "number" ? "Number" : definition.type === "boolean" ? "Boolean" : "Text";
+    source.innerHTML = `<option value="text">${literalLabel}</option><option value="tag">Tag</option>`;
+    source.value = mapping.sourceType || (definition.type === "tag" ? "tag" : "text");
+    const sourceRow = document.createElement("div"); sourceRow.className = "prop-row";
+    const sourceLabel = document.createElement("label"); sourceLabel.textContent = "Source";
+    sourceRow.append(sourceLabel, source); card.appendChild(sourceRow);
+    source.addEventListener("change", () => {
+      commit(source.value === "tag" ? { sourceType: "tag", connection_id: "", tag: "" }
+        : { sourceType: "text", value: definition.type === "boolean" ? false : "" });
+      void renderTargetAliasEditor(kind, screenId, getEditedClickAction(owner));
+    });
+    if (source.value === "tag") {
+      const refreshState = (binding) => {
+        const missing = definition.required && (!String(binding.tag || "").trim()
+          || (!aliasTokenName(binding.tag) && !String(binding.connection_id || "").trim()));
+        card.classList.toggle("reference-error", missing);
+      };
+      registerCompactTagBinding({
+        id: `${bindingPrefix}${sequence}:${definition.name}`,
+        container: card,
+        buttonLabel: "Tag",
+        modalTitle: `Target Alias: ${definition.name}`,
+        read: () => getEditedClickAction(owner)?.aliases?.[definition.name] || {},
+        apply: (binding) => {
+          commit({ sourceType: "tag", connection_id: aliasTokenName(binding.tag) ? "" : binding.connection_id || "", tag: binding.tag || "" });
+          refreshState(binding);
+        }
       });
-      refreshState(); wrap.append(connection, tag, picker); row.append(label, wrap);
+      refreshState(mapping);
     } else {
-      const input = document.createElement("input"); input.type = definition.type === "boolean" ? "checkbox" : (definition.type === "number" ? "number" : "text");
+      const row = document.createElement("div"); row.className = "prop-row";
+      const label = document.createElement("label"); label.textContent = literalLabel;
+      const input = document.createElement("input");
+      input.type = definition.type === "boolean" ? "checkbox" : definition.type === "number" ? "number" : "text";
       if (input.type === "checkbox") input.checked = mapping.value ?? definition.defaultValue ?? false;
       else input.value = mapping.value ?? definition.defaultValue ?? "";
       const refreshState = () => input.classList.toggle("reference-error", definition.required && input.type !== "checkbox" && !String(input.value).trim());
-      input.addEventListener("change", () => { commit({ value: input.type === "checkbox" ? input.checked : input.value }); refreshState(); });
-      refreshState(); row.append(label, input);
+      input.addEventListener("change", () => { commit({ sourceType: "text", value: input.type === "checkbox" ? input.checked : input.value }); refreshState(); });
+      refreshState(); row.append(label, input); card.appendChild(row);
     }
-    host.appendChild(row);
+    host.appendChild(card);
   });
   renderReferenceHealthBadge();
 };

@@ -14,8 +14,11 @@ screen can therefore display and control different equipment for each caller.
 4. On the calling screen, select the action that opens the reusable screen
    (Popup, Navigate, or Load Viewport). Under **Target Screen Aliases**, map
    `Running` and `Start` to the actual connection and tag for that equipment.
-   Use **Choose tag…** beside each tag alias to open the connection/tag picker;
-   the picker also supports forwarding a parent screen alias. Save both screens.
+   Each alias has a **Source** selector: choose **Text** for a literal value or
+   **Tag** for a connection/tag mapping. Number and Boolean definitions retain
+   their corresponding literal controls. Tag sources use the standard connection
+   dropdown, tag field, and **...** picker, including parent screen aliases.
+   Changing the source clears the previous incompatible value. Save both screens.
 
 For example, one caller can map `Start` to `PLC::Pump1.Start`, while another maps
 it to `PLC::Pump2.Start`. Each instance resolves its own read and write bindings.

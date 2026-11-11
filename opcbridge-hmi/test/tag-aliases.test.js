@@ -153,3 +153,16 @@ test('expression editor accepts alias operands before runtime mappings are suppl
   ctx.expression = '{alias:}';
   assert.match(vm.runInContext('getAutomationExpressionValidationError(expression)', ctx), /Unsupported/);
 });
+
+test('caller source type distinguishes a tag mapping from literal text while preserving legacy mappings', () => {
+  const ctx = aliases({ screen: { aliases: [{ name: 'Title', type: 'text' }, { name: 'Command', type: 'tag' }] } });
+  ctx.mappings = { Title: { sourceType: 'tag', ...target('Pump1.Name') }, Command: { sourceType: 'text', value: 'No command' } };
+  vm.runInContext('context = buildAliasContext(screen, mappings)', ctx);
+  assert.equal(ctx.context.Title.tag, 'Pump1.Name');
+  assert.equal(ctx.context.Title.connection_id, 'PLC');
+  assert.equal(ctx.context.Command, 'No command');
+  ctx.mappings = { Title: { value: 'Pump One' }, Command: target('Pump1.Start') };
+  vm.runInContext('context = buildAliasContext(screen, mappings)', ctx);
+  assert.equal(ctx.context.Title, 'Pump One');
+  assert.equal(ctx.context.Command.tag, 'Pump1.Start');
+});
