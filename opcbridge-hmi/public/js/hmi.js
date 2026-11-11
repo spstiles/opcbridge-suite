@@ -17050,7 +17050,36 @@ const renderTargetAliasEditor = async (kind, screenId, action) => {
       const tag = document.createElement("input"); tag.type = "text"; tag.placeholder = "Tag or {alias:Parent}"; tag.value = mapping.tag || "";
       const refreshState = () => { const missing = definition.required && !tag.value.trim(); [connection, tag].forEach((input) => input.classList.toggle("reference-error", missing)); };
       [connection, tag].forEach((input) => input.addEventListener("change", () => { commit({ connection_id: connectionIdFromFriendlyInput(connection), tag: tag.value.trim() }); refreshState(); }));
-      refreshState(); wrap.append(connection, tag); row.append(label, wrap);
+      const picker = document.createElement("button");
+      picker.type = "button";
+      picker.className = "panel-btn";
+      picker.textContent = "Choose tag…";
+      picker.title = `Choose tag for ${definition.name}`;
+      picker.addEventListener("click", () => {
+        const owner = getAutomationObject();
+        const selectedAction = getEditedClickAction(owner);
+        const id = "target-screen-alias";
+        registerCompactTagBinding({
+          id,
+          inlineOnly: true,
+          modalTitle: `Target Alias: ${definition.name}`,
+          read: () => selectedAction?.aliases?.[definition.name] || {},
+          apply: (binding) => {
+            // A picker can remain open while selection or the Click action
+            // changes. Never send its result to a different action.
+            if (getAutomationObject() !== owner || getEditedClickAction(owner) !== selectedAction) {
+              showHmiToast("The selected Click action changed. Reopen its alias tag picker.");
+              return;
+            }
+            setFriendlyConnectionInputValue(connection, binding.connection_id || "");
+            tag.value = binding.tag || "";
+            commit({ connection_id: binding.connection_id || "", tag: binding.tag || "" });
+            refreshState();
+          }
+        });
+        openCompactTagBindingModal(id);
+      });
+      refreshState(); wrap.append(connection, tag, picker); row.append(label, wrap);
     } else {
       const input = document.createElement("input"); input.type = definition.type === "boolean" ? "checkbox" : (definition.type === "number" ? "number" : "text");
       if (input.type === "checkbox") input.checked = mapping.value ?? definition.defaultValue ?? false;
