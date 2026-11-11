@@ -7756,6 +7756,7 @@ const selectReferenceIssueObject = (issue) => {
   clearSelectedPolygonVertex();
   renderScreen();
   updateSelectionOverlays();
+  setEditorTab("properties");
   updatePropertiesPanel();
   updateGroupBreadcrumb();
   closeReferenceHealth();
@@ -18388,19 +18389,31 @@ const renderMultiStateEditor = (obj) => {
 const renderSelectedReferenceProperties = (obj) => {
   if (!selectedReferenceHealthProps) return;
   selectedReferenceHealthProps.textContent = "";
-  const objectIds = new Set([obj?.id, obj?.importId].map((value) => String(value || "").trim()).filter(Boolean));
+  const owners = new Map();
+  const collectOwners = (item) => {
+    if (!item) return;
+    [item.id, item.importId].forEach((id) => {
+      const key = String(id || "").trim();
+      if (key) owners.set(key, item);
+    });
+    if (item.type === "group") (item.children || []).forEach(collectOwners);
+  };
+  collectOwners(obj);
   const references = getReferenceHealthIssues()
-    .filter((issue) => objectIds.has(String(issue?.objectImportId || "").trim()))
+    .filter((issue) => owners.has(String(issue?.objectImportId || "").trim()))
     .map((issue) => {
       const display = getReferenceHealthIssueDisplay(issue);
+      const owner = owners.get(String(issue?.objectImportId || "").trim());
       return {
+        issue,
+        owner,
         kind: `${issue.automation || issue.category || "reference"}${issue.status === "unsupported" ? " (unsupported)" : ""}`,
         value: String(display.source || display.message || "").trim()
       };
     })
     .filter((reference) => reference.value);
   const unique = references.filter((ref, index, all) =>
-    all.findIndex((candidate) => candidate.kind === ref.kind && candidate.value === ref.value) === index
+    all.findIndex((candidate) => candidate.owner === ref.owner && candidate.kind === ref.kind && candidate.value === ref.value) === index
   );
   selectedReferenceHealthProps.classList.toggle("is-hidden", !obj || !unique.length);
   if (!obj || !unique.length) return;
@@ -18423,7 +18436,9 @@ const renderSelectedReferenceProperties = (obj) => {
     row.className = "prop-row";
     const label = document.createElement("label");
     label.className = "reference-property-kind";
-    label.textContent = ref.kind;
+    label.textContent = ref.owner === obj
+      ? ref.kind
+      : `${ref.owner.name || ref.owner.importId || ref.owner.id || ref.owner.type}: ${ref.kind}`;
     const input = document.createElement("textarea");
     input.readOnly = true;
     input.className = "reference-error";
@@ -18431,6 +18446,13 @@ const renderSelectedReferenceProperties = (obj) => {
     input.rows = Math.min(5, Math.max(2, String(ref.value).split(/\r?\n/).length));
     input.title = `Unresolved ${ref.kind}: ${ref.value}`;
     row.append(label, input);
+    if (ref.owner !== obj) {
+      const select = document.createElement("button");
+      select.type = "button";
+      select.textContent = "Select object";
+      select.addEventListener("click", () => selectReferenceIssueObject(ref.issue));
+      row.appendChild(select);
+    }
     list.appendChild(row);
   });
   const hint = document.createElement("p");
