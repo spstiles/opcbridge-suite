@@ -835,3 +835,55 @@ test('positioned Canvas rotation uses its local origin and adds the layout offse
   assert.equal(group.children[0].x, 5);
   assert.equal(group.children[0].y, 6);
 });
+
+test('drawn shapes retain Previous Screen click commands, including Ellipse19', () => {
+  const pick = `<gwx:GwxDynamicGroup.GwxDynamicGroup><gwx:GwxDynamicGroup><gwx:GwxDynamicGroup.DynamicsList>
+    <gwx:GwxPick LeftMouseButton="True" ExecuteOnDown="True" ExecuteOnUp="True" Control="True">
+      <gwx:GwxPick.CommandParameters><gwxcmd:HistoryBackCommand /></gwx:GwxPick.CommandParameters>
+    </gwx:GwxPick></gwx:GwxDynamicGroup.DynamicsList></gwx:GwxDynamicGroup></gwx:GwxDynamicGroup.GwxDynamicGroup>`;
+  for (const [name, attrs] of [
+    ['Ellipse', 'Name="Ellipse19" Width="62" Height="62" Canvas.Left="763.000165" Canvas.Top="660.290695"'],
+    ['Rectangle', 'Width="62" Height="62"'],
+    ['Line', 'X1="0" Y1="0" X2="30" Y2="30"'],
+    ['Polygon', 'Points="0,0 30,0 15,30"'],
+    ['Polyline', 'Points="0,0 30,30"'],
+    ['Path', 'Data="M0,0 L30,0 L15,30 Z"'],
+    ['Path', 'Data="M0,0 C10,0 20,10 30,30"']
+  ]) {
+    const xml = `<Canvas Width="1586" Height="940" xmlns:gwx="gwx" xmlns:gwxcmd="gwxcmd">
+      <Canvas><${name} ${attrs} Fill="#FF000000" Stroke="#FF000000">${pick}</${name}></Canvas></Canvas>`;
+    const screen = convertGraphWorx(xml).screen;
+    const shape = screen.objects[0].children[0];
+    assert.equal(shape.action?.type, 'history-back', name);
+    assert.equal(screen.objects[0].action, undefined, 'wrapper must not steal the shape action');
+  }
+});
+
+test('all four Bar Screen selector ellipses preserve press and release write automations', () => {
+  const selectors = [
+    ['Ellipse6', 'Bar_Screen_1', 'Call_Auto_To_PLC'],
+    ['Ellipse9', 'Bar_Screen_1', 'Call_Manual_To_PLC'],
+    ['Ellipse18', 'Bar_Screen_2', 'Call_Auto_To_PLC'],
+    ['Ellipse20', 'Bar_Screen_2', 'Call_Manual_To_PLC']
+  ];
+  const visuals = selectors.map(([name, screen, command]) => `<Ellipse Name="${name}" Width="62" Height="62" Fill="#FF000000">
+    <gwx:GwxDynamicGroup.GwxDynamicGroup><gwx:GwxDynamicGroup><gwx:GwxDynamicGroup.DynamicsList>
+      <gwx:GwxPick LeftMouseButton="True" ExecuteOnDown="True" ExecuteOnUp="True" Control="True" DataSource="ac:Building_30/${screen}/${command}/Status">
+        <gwx:GwxPick.CommandParameters><gwxcmd:WriteValueCommand OnDownValue="1" OnUpValue="0" /></gwx:GwxPick.CommandParameters>
+      </gwx:GwxPick>
+    </gwx:GwxDynamicGroup.DynamicsList></gwx:GwxDynamicGroup></gwx:GwxDynamicGroup.GwxDynamicGroup>
+  </Ellipse>`).join('');
+  const result = convertGraphWorx(`<Canvas Width="1586" Height="940" xmlns:gwx="gwx" xmlns:gwxcmd="gwxcmd">${visuals}</Canvas>`);
+  assert.equal(result.screen.objects.length, 4);
+  for (const [name, screen, command] of selectors) {
+    const object = result.screen.objects.find(obj => obj.source.name === name);
+    const tag = `ac:Building_30/${screen}/${command}/Status`;
+    assert.equal(object.action.type, 'momentary-write', name);
+    assert.equal(object.action.tag, tag);
+    assert.equal(object.action.sourceReference, tag);
+    assert.equal(object.action.onValue, '1');
+    assert.equal(object.action.offValue, '0');
+    assert.equal(object.action.status, 'unresolved');
+    assert.ok(object.externalReferences.some(ref => ref.source.value === tag && ref.supported === true));
+  }
+});

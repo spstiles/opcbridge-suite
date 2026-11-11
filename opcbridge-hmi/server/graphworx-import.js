@@ -958,11 +958,13 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
       }
       return;
     }
-    if (name === "Rectangle") add({ type: "rect", ...transformedFrame(node, base), rx: num(node.RadiusX), fill: dynamicColorFallback(node, "Fill", nestedPaint(node, "Rectangle.Fill", node.Fill, "none")), stroke: color(node.Stroke, "none"), strokeWidth: num(node.StrokeThickness, 1), ...sourceMetadata(name, node) });
-    else if (name === "Ellipse") add({ type: "ellipse", ...transformedFrame(node, base), fill: dynamicColorFallback(node, "Fill", nestedPaint(node, "Ellipse.Fill", node.Fill, "none")), stroke: color(node.Stroke, "none"), strokeWidth: num(node.StrokeThickness, 1), ...sourceMetadata(name, node) });
+    const nativeAction = navigationFor(node, viewportNames);
+    const shapeAction = nativeAction ? { action: nativeAction } : {};
+    if (name === "Rectangle") add({ type: "rect", ...transformedFrame(node, base), rx: num(node.RadiusX), fill: dynamicColorFallback(node, "Fill", nestedPaint(node, "Rectangle.Fill", node.Fill, "none")), stroke: color(node.Stroke, "none"), strokeWidth: num(node.StrokeThickness, 1), ...shapeAction, ...sourceMetadata(name, node) });
+    else if (name === "Ellipse") add({ type: "ellipse", ...transformedFrame(node, base), fill: dynamicColorFallback(node, "Fill", nestedPaint(node, "Ellipse.Fill", node.Fill, "none")), stroke: color(node.Stroke, "none"), strokeWidth: num(node.StrokeThickness, 1), ...shapeAction, ...sourceMetadata(name, node) });
     else if (name === "Line") {
       const [start, end] = transformPoints([[num(node.X1), num(node.Y1)], [num(node.X2), num(node.Y2)]], node, base);
-      add({ type: "line", x1: start.x, y1: start.y, x2: end.x, y2: end.y, stroke: color(node.Stroke, "#000000"), strokeWidth: num(node.StrokeThickness, 1), ...sourceMetadata(name, node) });
+      add({ type: "line", x1: start.x, y1: start.y, x2: end.x, y2: end.y, stroke: color(node.Stroke, "#000000"), strokeWidth: num(node.StrokeThickness, 1), ...shapeAction, ...sourceMetadata(name, node) });
     }
     else if (name === "Path") {
       const geometry = asArray(node?.["Path.Data"]?.PathGeometry)[0];
@@ -988,7 +990,7 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
             stroke: color(node.Stroke, "#000000"),
             strokeWidth: num(node.StrokeThickness, 1),
             ...(shadow ? { dropShadow: shadow } : {}),
-            ...sourceMetadata(name, node, { importConversion: hasCurves ? "editable-closed-spline" : "editable-closed-polyline" })
+            ...shapeAction, ...sourceMetadata(name, node, { importConversion: hasCurves ? "editable-closed-spline" : "editable-closed-polyline" })
           });
           return;
         }
@@ -997,14 +999,14 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
           stroke: color(node.Stroke, "#000000"),
           strokeWidth: num(node.StrokeThickness, 1),
           ...(importedShadow(node) ? { dropShadow: importedShadow(node) } : {}),
-          ...sourceMetadata(name, node, { importConversion: "editable-spline" })
+          ...shapeAction, ...sourceMetadata(name, node, { importConversion: "editable-spline" })
         });
       });
     }
     else if (name === "Polygon" || name === "Polyline") {
       const rawPoints = String(node.Points || "").trim().split(/\s+/).map((pair) => pair.split(",").map(Number)).filter((pair) => pair.length === 2 && pair.every(Number.isFinite));
       const points = transformPoints(rawPoints, node, base);
-      if (points.length) add({ type: name.toLowerCase(), points, fill: dynamicColorFallback(node, "Fill", nestedPaint(node, `${name}.Fill`, node.Fill, "none")), stroke: color(node.Stroke, "#000000"), strokeWidth: num(node.StrokeThickness, 1), ...sourceMetadata(name, node) });
+      if (points.length) add({ type: name.toLowerCase(), points, fill: dynamicColorFallback(node, "Fill", nestedPaint(node, `${name}.Fill`, node.Fill, "none")), stroke: color(node.Stroke, "#000000"), strokeWidth: num(node.StrokeThickness, 1), ...shapeAction, ...sourceMetadata(name, node) });
     } else if (name === "Label") {
       const align = horizontalTextAlignment(node);
       const valign = verticalTextAlignment(node);
