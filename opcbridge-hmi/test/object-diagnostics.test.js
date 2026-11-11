@@ -26,12 +26,13 @@ test('diagnostics includes nested group automations and omits stale import metad
   assert.doesNotMatch(ctx.text, /OldImport/);
 });
 
-test('diagnostics only shows tag information and hides unbound artwork and navigation', () => {
+test('diagnostics shows click automations and tags while keeping unbound artwork silent', () => {
   const ctx = helpers();
   ctx.obj = { type: 'button', label: 'Overview', action: { type: 'navigate', screenId: 'Overview' },
     rotationAutomation: { sourceType: 'expression', expression: '6 * 7' } };
   vm.runInContext('text = buildObjectDiagnosticsText(obj)', ctx);
-  assert.equal(ctx.text, '');
+  assert.match(ctx.text, /Click: navigate\nScreen: Overview/);
+  assert.doesNotMatch(ctx.text, /Object:|button|6 \* 7/);
   ctx.obj = { type: 'ellipse', bind: { tag: '{alias:Missing}' } };
   vm.runInContext('text = buildObjectDiagnosticsText(obj)', ctx);
   assert.match(ctx.text, /Connection: Unmapped/);
@@ -75,5 +76,20 @@ test('popup decorations do not obscure tag diagnostics on an underlying object',
   vm.runInContext(source.slice(start, source.indexOf('const setDiagnosticsMode =', start)), ctx);
   vm.runInContext('showDiagnosticsForPointer(event)', ctx);
   assert.match(tooltip.textContent, /Tag: Start\nValue: 1\nQuality: Good/);
-  assert.doesNotMatch(tooltip.textContent, /ellipse|momentary-write/);
+  assert.doesNotMatch(tooltip.textContent, /ellipse/);
+  assert.match(tooltip.textContent, /Click: momentary-write/);
+});
+
+
+test('diagnostics restores nested click sequences and press/release values alongside tag data', () => {
+  const ctx = helpers({ obj: { children: [{ action: { type: 'sequence', actions: [
+    { type: 'momentary-write', connection_id: 'PLC', tag: 'Start', onValue: 1, offValue: 0 },
+    { type: 'popup', screenId: 'Controls' }, { type: 'history-back' }
+  ] } }] } });
+  vm.runInContext('text = buildObjectDiagnosticsText(obj)', ctx);
+  assert.match(ctx.text, /Click: momentary-write\nPress: 1\nRelease: 0/);
+  assert.match(ctx.text, /Click: popup\nScreen: Controls/);
+  assert.match(ctx.text, /Click: history-back/);
+  assert.match(ctx.text, /Connection: PLC\nTag: Start/);
+  assert.doesNotMatch(ctx.text, /Object:/);
 });

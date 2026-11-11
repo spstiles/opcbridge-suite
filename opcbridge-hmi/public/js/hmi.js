@@ -7557,10 +7557,44 @@ const collectObjectDiagnosticReferences = (obj) => {
   return references;
 };
 
+const collectObjectDiagnosticClicks = (obj) => {
+  const blocks = [];
+  const visited = new WeakSet();
+  const actionDetails = (action) => {
+    if (!action || typeof action !== "object") return;
+    if (action.type === "sequence") {
+      (action.actions || []).forEach(actionDetails);
+      return;
+    }
+    if (!action.type) return;
+    const lines = [`Click: ${action.type}`];
+    if (action.screenId) lines.push(`Screen: ${action.screenId}`);
+    if (action.viewportId) lines.push(`Viewport: ${action.viewportId}`);
+    if (action.navigationTarget) lines.push(`Target: ${action.navigationTarget}`);
+    if (action.type === "momentary-write") {
+      lines.push(`Press: ${diagnosticValueText(action.onValue)}`, `Release: ${diagnosticValueText(action.offValue)}`);
+    } else if (action.type === "toggle-write") {
+      lines.push(`On: ${diagnosticValueText(action.onValue)}`, `Off: ${diagnosticValueText(action.offValue)}`);
+    } else if (action.type === "set-write") {
+      lines.push(`Write: ${diagnosticValueText(action.onValue)}`);
+    }
+    blocks.push(lines.join("\n"));
+  };
+  const visit = (value) => {
+    if (!value || typeof value !== "object" || visited.has(value)) return;
+    visited.add(value);
+    actionDetails(value.action);
+    (value.children || []).forEach(visit);
+  };
+  visit(obj);
+  return [...new Set(blocks)];
+};
+
 const buildObjectDiagnosticsText = (obj) => {
   const references = collectObjectDiagnosticReferences(obj);
   if (!obj) return "";
-  if (!references.length) return "";
+  const clicks = collectObjectDiagnosticClicks(obj);
+  if (!references.length && !clicks.length) return "";
   const blocks = references.slice(0, 8).map((reference) => {
     const resolved = resolveConnectionForKnownTag(reference.storedConnection, reference.tag);
     const key = normalizeTagCacheKey(resolved, reference.tag);
@@ -7582,7 +7616,7 @@ const buildObjectDiagnosticsText = (obj) => {
     return lines.join("\n");
   });
   if (references.length > 8) blocks.push(`…and ${references.length - 8} more tag references`);
-  return blocks.join("\n\n");
+  return [...clicks, ...blocks].join("\n\n");
 };
 
 const showDiagnosticsForPointer = (event) => {
@@ -7617,7 +7651,7 @@ const showDiagnosticsForPointer = (event) => {
   }
   if (!text && !inPopup) {
     const taggedPoint = getScreenPoint(event);
-    const taggedMeta = taggedPoint ? getMetaAtPoint(taggedPoint, candidate => collectObjectDiagnosticReferences(candidate).length > 0) : null;
+    const taggedMeta = taggedPoint ? getMetaAtPoint(taggedPoint, candidate => Boolean(buildObjectDiagnosticsText(candidate))) : null;
     if (taggedMeta) text = buildObjectDiagnosticsText(getObjectFromMeta(taggedMeta));
   }
   if (!text) return hideDiagnosticsTooltip();
