@@ -7293,6 +7293,7 @@ const getReferenceHealthIssues = () => {
         id: `current:${occurrence.type}:${occurrence.objectId}:${occurrence.path}:${occurrenceIndex}`,
         objectImportId: occurrence.objectId || "",
         objectIndex: location?.index,
+        bindingPath: occurrence.path,
         severity: "warning",
         category: occurrence.type,
         automation: occurrence.automation || null,
@@ -7324,6 +7325,7 @@ const getReferenceHealthIssues = () => {
           const automation = referenceAutomationLabel(path);
           addIssue({
             id: `expression:${index}:${path.join(".")}`,
+            bindingPath: path.join("."),
             objectImportId: objectId,
             objectIndex: index,
             severity: "warning",
@@ -7342,6 +7344,7 @@ const getReferenceHealthIssues = () => {
           const source = formatMappedTagReference(connection, tag) || tag || "No tag selected";
           addIssue({
             id: `empty-tag:${index}:${path.join(".")}`,
+            bindingPath: path.join("."),
             objectImportId: objectId,
             objectIndex: index,
             severity: "warning",
@@ -7855,17 +7858,27 @@ const selectReferenceIssueObject = (issue) => {
     String(ref?.source?.value || "") === sourceValue
   );
   const automation = String(issue?.automation || matchingReference?.automation || "").toLowerCase();
-  currentObjectDynamicTab = automation === "color"
-    ? "color"
-    : automation === "visibility"
-      ? "visibility"
-      : automation === "level"
-        ? "level"
-        : automation === "states"
-          ? "states"
-      : automation === "rotation"
-          ? "rotation"
-          : "properties";
+  const ids = new Set([match.object.id, match.object.importId].filter(Boolean).map(String));
+  const occurrence = issue?.bindingPath ? null : collectScreenReferenceMappings()
+    .flatMap(group => group.occurrences)
+    .find(item => ids.has(String(item.objectId || ""))
+      && (item.current === sourceValue || item.original === sourceValue)
+      && (!automation || referenceAutomationMatches(automation, item.automation)));
+  const path = String(issue?.bindingPath || occurrence?.path || "");
+  const label = path ? referenceAutomationLabel(path.split(".")) : automation;
+  if (/(?:^|\.)action(?:\.|$)/.test(path) || ["action", "click", "pick/write"].includes(label) || issue?.category === "alias") {
+    currentObjectDynamicTab = "click";
+    const actionIndex = path.match(/(?:^|\.)action\.actions\.(\d+)(?:\.|$)/);
+    clickActionSelection.set(match.object, actionIndex ? Number(actionIndex[1]) : 0);
+  } else if (label === "color") {
+    const rule = path.match(/(?:colorAutomationRules\.|(?:fill|stroke|background|borderColor|textColor)Automation\.rules\.)(\d+)/);
+    currentObjectDynamicTab = rule && Number(rule[1]) > 0 ? getColorDynamicTabKey(Number(rule[1])) : "color";
+  } else if (label === "visibility") {
+    const rule = path.match(/(?:visibility|visible)\.rules\.(\d+)/);
+    currentObjectDynamicTab = rule && Number(rule[1]) > 0 ? getVisibilityDynamicTabKey(Number(rule[1])) : "visibility";
+  } else {
+    currentObjectDynamicTab = ["level", "states", "rotation", "motion", "animator"].includes(label) ? label : "properties";
+  }
   rectVisibilityDraft = null;
   rectVisibilityDraftObject = null;
   rectColorDraft = null;

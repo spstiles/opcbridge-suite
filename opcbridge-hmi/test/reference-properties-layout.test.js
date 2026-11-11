@@ -66,6 +66,7 @@ test('health navigation opens Properties for the nested owner before refreshing 
   const calls = [];
   const ctx = vm.createContext({ currentScreenObj: { objects: [parent] }, isEditMode: true,
     groupEditStack: [], selectedIndices: [], ensureScreenLayers: () => [],
+    collectScreenReferenceMappings: () => [], clickActionSelection: new WeakMap(),
     clearSelectedPolygonVertex() {}, renderScreen() {}, updateSelectionOverlays() {},
     setEditorTab: tab => calls.push(tab), updatePropertiesPanel: () => calls.push('refresh'),
     updateGroupBreadcrumb() {}, closeReferenceHealth() {}, requestAnimationFrame() {},
@@ -76,5 +77,5 @@ test('health navigation opens Properties for the nested owner before refreshing 
   assert.deepEqual(calls, ['properties', 'refresh']);
   assert.equal(ctx.groupEditStack[0], parent);
   assert.equal(ctx.selectedIndices[0], 0);
-  assert.equal(ctx.currentObjectDynamicTab, 'properties');
+  assert.equal(ctx.currentObjectDynamicTab, 'click');
 });
