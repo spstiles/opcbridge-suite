@@ -2243,7 +2243,12 @@ const openAutomationNumericExpressionModal = ({ title, value, apply }) => {
 };
 
 const getAutomationExpressionValidationError = (expression) => {
-  const source = String(expression || "").trim();
+  // Check syntax before a referenced screen has received its runtime aliases.
+  // Keep quoted literals intact and use a scalar stand-in only for alias tokens.
+  const source = String(expression || "").trim().replace(
+    /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|(\{alias:[a-zA-Z0-9_.-]+\})/gi,
+    (match, alias) => alias ? "(0)" : match
+  );
   if (!source) return "Expression is empty.";
   const withoutStrings = stripQuotedStrings(source);
   if (/[;[\]{}?:\\]/.test(withoutStrings) || withoutStrings.includes("=>")) {
@@ -12370,17 +12375,22 @@ const collectActiveWsSubscriptions = () => {
   if (currentScreenObj) {
     collectTagKeysFromValue(resolveAliasObject(currentScreenObj, currentScreenAliasContext), out);
 
-    // Include any loaded viewport target screens (only those already in cache).
-    const targetIds = new Set();
-    collectViewportTargetsFromValue(currentScreenObj, targetIds);
-    targetIds.forEach((targetId) => {
-      const child = screenCache.get(targetId);
-      if (child) {
-        const viewport = currentScreenObj?.objects?.find((obj) => obj?.type === "viewport" && String(obj.target || "") === String(targetId));
-        const aliasSource = viewportAliasMappings.get(String(viewport?.id || "")) || { mappings: viewport?.aliases || {}, parentContext: currentScreenAliasContext };
-        collectTagKeysFromValue(resolveAliasObject(child, buildAliasContext(child, aliasSource.mappings, aliasSource.parentContext)), out);
-      }
-    });
+    // Each viewport instance can bind the same referenced screen to different
+    // tags. Collect per instance rather than deduplicating by screen ID.
+    const visitViewports = (objects) => {
+      (objects || []).forEach(viewport => {
+        if (viewport.type === "viewport") {
+          const child = screenCache.get(String(viewport.target || ""));
+          if (child) {
+            const aliasSource = viewportAliasMappings.get(String(viewport.id || ""))
+              || { mappings: viewport.aliases || {}, parentContext: currentScreenAliasContext };
+            collectTagKeysFromValue(resolveAliasObject(child, buildAliasContext(child, aliasSource.mappings, aliasSource.parentContext)), out);
+          }
+        }
+        visitViewports(viewport.children);
+      });
+    };
+    visitViewports(currentScreenObj.objects);
   }
 
   // Include popup screen if open and loaded.
@@ -14948,7 +14958,8 @@ const renderObjectContentInto = (parent, obj, inheritedGroupColorOverrides = nul
     }
 	    input.autocomplete = "off";
 	    input.spellcheck = false;
-	    input.dataset.hmiInputId = String(obj.id || "");
+	    input.__hmiNumberInputObject = obj;
+    input.dataset.hmiInputId = String(obj.id || "");
 	    input.dataset.hmiInputKind = "number-input";
 	    const fg = obj.textColor === "none" ? "transparent" : (obj.textColor || "#ffffff");
 	    input.style.color = fg;
@@ -16694,7 +16705,8 @@ const renderScreen = ({ refreshReferenceHealth = true } = {}) => {
         input.inputMode = "decimal";
         input.autocomplete = "off";
         input.spellcheck = false;
-        input.dataset.hmiInputId = String(obj.id || "");
+        input.__hmiNumberInputObject = obj;
+    input.dataset.hmiInputId = String(obj.id || "");
         input.dataset.hmiInputKind = "number-input";
         input.style.color = obj.textColor || "#ffffff";
         input.style.fontSize = `${Number(obj.fontSize ?? 16)}px`;
@@ -16843,6 +16855,7 @@ const renderScreen = ({ refreshReferenceHealth = true } = {}) => {
           HmiLayers.entries(child).forEach(({ object: childObj }) => {
             const aliasSource = viewportAliasMappings.get(String(obj.id || "")) || { mappings: obj.aliases || {}, parentContext: currentScreenAliasContext };
             const aliasContext = buildAliasContext(child, aliasSource.mappings, aliasSource.parentContext);
+            viewportAliasContexts.set(String(obj.id || ""), aliasContext);
             if (!shouldDrawLayer(HmiLayers.layerOf(child, childObj), aliasContext)) return;
             renderObjectInto(scaledGroup, resolveAliasObject(childObj, aliasContext));
           });
@@ -22608,7 +22621,7 @@ document.addEventListener("click", (event) => {
     const raw = String(keypadDisplay.value || "");
     closeKeypad();
     if (targetInfo?.kind === "number-input" && targetInfo.id) {
-      writeNumberInputById(String(targetInfo.id), raw).catch((error) => {
+      writeNumberInputById(String(targetInfo.id), raw, targetInfo.object).catch((error) => {
         console.error("[keypad] write failed:", error);
       });
     }
@@ -22658,6 +22671,9 @@ const apiWriteTag = async ({ connection_id, tag, value, audit = {}, keepalive = 
   const connectionId = String(connection_id || "").trim();
   const tagName = String(tag || "").trim();
   if (!connectionId || !tagName) throw new Error("Missing connection_id or tag.");
+  if (/\{alias:/i.test(connectionId) || /\{alias:/i.test(tagName)) {
+    throw new Error("Tag alias is unresolved. Supply its mapping on the referencing screen.");
+  }
   const response = await fetch("/api/opc/write", {
     method: "POST",
     keepalive,
@@ -22702,8 +22718,8 @@ const normalizeNumericString = (raw) => {
   return normalized;
 };
 
-const writeNumberInputById = async (id, rawValue) => {
-  const obj = findNumberInputById(id);
+const writeNumberInputById = async (id, rawValue, resolvedObject = null) => {
+  const obj = resolvedObject || resolveAliasObject(findNumberInputById(id), currentScreenAliasContext);
   const bind = obj?.bindValue || {};
   const connectionId = String(bind.connection_id || "").trim();
   const tagName = String(bind.tag || "").trim();
@@ -22726,7 +22742,7 @@ const commitNumberInputValue = async (inputEl) => {
   if (!raw) return;
   if (inputEl.dataset.hmiLastCommitted === raw) return;
   try {
-    await writeNumberInputById(id, raw);
+    await writeNumberInputById(id, raw, inputEl.__hmiNumberInputObject);
     inputEl.dataset.hmiLastCommitted = raw;
   } catch (error) {
     console.error("[number-input] write failed:", error);
@@ -22778,6 +22794,7 @@ const wireNumberInputs = () => {
       openKeypad({
         kind: "number-input",
         id,
+        object: inputEl.__hmiNumberInputObject,
         value: String(inputEl.value ?? ""),
         title: "Enter value"
       });
@@ -23284,9 +23301,10 @@ if (tagBindingSaveBtn) {
     if (!config) return;
     const selectedTagOption = tagBindingTagSelect?.selectedOptions?.[0] || null;
     const parsedSelection = parseTagSelectValue(String(tagBindingTagSelect?.value || ""));
-    const connection_id = tagPickerConnectionId(String(selectedTagOption?.dataset?.connectionId || tagBindingConnectionSelect?.value || parsedSelection.connection_id || "").trim());
+    let connection_id = tagPickerConnectionId(String(selectedTagOption?.dataset?.connectionId || tagBindingConnectionSelect?.value || parsedSelection.connection_id || "").trim());
     const template = String(tagBindingTemplateInput?.value || "").trim();
     const tag = template || String(selectedTagOption?.dataset?.tag || parsedSelection.tag || "").trim();
+    if (aliasTokenName(tag)) connection_id = "";
     if (config.connectionInput) setFriendlyConnectionInputValue(config.connectionInput, connection_id);
     if (config.tagInput) config.tagInput.value = tag;
     if (config.tagSelect) setSelectValueSafe(config.tagSelect, formatTagSelectValue(connection_id, tag));
@@ -26218,6 +26236,18 @@ function populateCompactTagBindingTagOptions(connectionId = "") {
     return option;
   };
   const matchesFilter = (tagName) => !filterQuery || String(tagName || "").toLowerCase().includes(filterQuery.toLowerCase());
+  const aliases = getEffectiveScreenAliases(currentScreenObj).filter(alias => alias.type === "tag" && matchesFilter(alias.name));
+  if (aliases.length) {
+    const group = document.createElement("optgroup");
+    group.label = "Screen Aliases";
+    aliases.forEach(alias => {
+      const option = createTagOption("", `{alias:${alias.name}}`);
+      option.textContent = `{alias:${alias.name}}`;
+      option.title = alias.description || alias.name;
+      group.appendChild(option);
+    });
+    tagBindingTagSelect.appendChild(group);
+  }
   if (selectedConnectionId) {
     const tagNames = tagsCache
       .filter((tag) => tagPickerMatchesConnection(tag, selectedConnectionId))
@@ -31230,14 +31260,19 @@ const getObjectFromMeta = (meta) => {
   if (meta.viewportTargetId && Array.isArray(meta.viewportChildPath) && meta.viewportChildPath.length) {
     const child = screenCache.get(meta.viewportTargetId);
     if (!child) return null;
-    return getObjectByScreenPath(child, meta.viewportChildPath);
+    const object = getObjectByScreenPath(child, meta.viewportChildPath);
+    if (isEditMode) return object;
+    const viewport = getActiveObjects()?.[meta.index];
+    const aliasSource = viewportAliasMappings.get(String(viewport?.id || ""))
+      || { mappings: viewport?.aliases || {}, parentContext: currentScreenAliasContext };
+    return resolveAliasObject(object, buildAliasContext(child, aliasSource.mappings, aliasSource.parentContext));
   }
   const root = getActiveObjects()?.[meta.index];
   if (!root) return null;
-  if (Array.isArray(meta.childPath) && meta.childPath.length > 0) {
-    return getObjectByChildPath(root, meta.childPath) || root;
-  }
-  return root;
+  const object = Array.isArray(meta.childPath) && meta.childPath.length > 0
+    ? getObjectByChildPath(root, meta.childPath) || root
+    : root;
+  return isEditMode ? object : resolveAliasObject(object, currentScreenAliasContext);
 };
 
 const getMetaAtPoint = (point, acceptsObject = null) => {
@@ -31555,7 +31590,7 @@ const findRuntimeGroupHotspot = (point) => {
       if (nested) return nested;
       const action = obj.action;
       if (!action || !action.type) continue;
-      return { obj, bounds, rotation, path: [...path, i] };
+      return { obj: isEditMode ? obj : resolveAliasObject(obj, aliasContext), bounds, rotation, path: [...path, i] };
     }
     return null;
   };
