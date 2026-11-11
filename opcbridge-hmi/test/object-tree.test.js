@@ -70,14 +70,16 @@ test('separate explorer renders expandable rows and selects objects without repl
   tree.render({ container, objects: nested(), selectedPath: [0,0], expanded, onSelect: (...args) => { calls.push(args); } });
   assert.ok(expanded.has('0'), 'selected object ancestors expand automatically');
   const buttons = container.querySelectorAll('*').filter(node => node.tag === 'button');
-  const object = buttons.find(node => node.className === 'object-tree-object' && node.textContent.startsWith('Running'));
+  const object = buttons.find(node => node.className.includes('object-tree-object') && node.textContent.startsWith('Running'));
   object.click();
   assert.deepEqual(calls[0], [[0,0]]);
   object.dblclick();
   assert.deepEqual(calls[1], [[0,0], {tab:'properties'}]);
-  const automation = buttons.find(node => node.className === 'object-tree-automation' && node.textContent.startsWith('Click: popup'));
-  automation.click();
-  assert.equal(calls[2][1].tab, 'click'); assert.equal(calls[2][1].actionIndex, 1);
+  assert.equal(buttons.some(node => node.className === 'object-tree-automation'), false);
+  assert.ok(object.className.includes('is-linked'));
+  assert.equal(object.textContent, 'Running');
+  const unlinked = buttons.find(node => node.className === 'object-tree-object' && node.textContent === 'Pump');
+  assert.ok(unlinked, 'parent artwork is not marked linked merely because a child is linked');
 });
 
 
@@ -106,4 +108,40 @@ test('Object Explorer is separate from Properties and the workspace keeps its or
   assert.ok(html.includes('id="objectExplorerToggleBtn"'));
   assert.ok(html.includes('id="objectExplorerCloseBtn"'));
   assert.doesNotMatch(html,/editor-main-tabs|data-panel="objects"|id="editorFitBtn"|id="editorPanelToggleBtn"/);
+});
+
+
+test('Object Explorer visibility defaults on and persists choices across reloads', () => {
+  const storage = new Map(); let hidden; const attributes = {}; let refreshed = 0;
+  const menu = {setAttribute:(key,value)=>{attributes[key]=value;}};
+  const ctx = vm.createContext({ document: { getElementById: id => id === 'objectExplorer' ? {classList:{toggle:(_,value)=>{hidden=value;}}} : menu },
+    window: {localStorage:{getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,value)}},
+    refreshObjectExplorer:()=>{refreshed++;} });
+  const start = source.indexOf('const OBJECT_EXPLORER_VISIBLE_KEY =');
+  vm.runInContext(source.slice(start,source.indexOf('document.getElementById("objectTreeSearch")',start)),ctx);
+  assert.equal(vm.runInContext('getObjectExplorerPreference()',ctx),true);
+  vm.runInContext('setObjectExplorerOpen(getObjectExplorerPreference(), false)',ctx);
+  assert.equal(hidden,false); assert.equal(storage.size,0); assert.equal(attributes['aria-checked'],'true');
+  vm.runInContext('setObjectExplorerOpen(false)',ctx);
+  assert.equal(hidden,true); assert.equal(vm.runInContext('getObjectExplorerPreference()',ctx),false);
+  vm.runInContext('setObjectExplorerOpen(getObjectExplorerPreference(), false)',ctx);
+  assert.equal(hidden,true);
+  vm.runInContext('setObjectExplorerOpen(true)',ctx);
+  assert.equal(vm.runInContext('getObjectExplorerPreference()',ctx),true);
+  assert.equal(menu.textContent,'✓ Object Explorer'); assert.equal(refreshed,2);
+});
+
+test('Object Explorer launcher belongs to View rather than the toolbar controls', () => {
+  const html = fs.readFileSync(path.join(__dirname,'../public/index.html'),'utf8');
+  const menu = html.slice(html.indexOf('id="viewMenuFlyout"'),html.indexOf('id="referencesMenuWrap"'));
+  assert.match(menu,/id="objectExplorerToggleBtn"/);
+  const toolbar = html.slice(html.indexOf('id="editorZoomOutBtn"'),html.indexOf('id="runtimeBtn"'));
+  assert.doesNotMatch(toolbar,/objectExplorerToggleBtn/);
+  assert.equal(html.split('id="objectExplorerToggleBtn"').length-1,1);
+});
+
+test('linked styling includes inline aliases and legacy bindings but excludes import-only references', () => {
+  assert.ok(tree.model([{type:'text',text:'Pump {alias:Number}'}])[0].automations.length);
+  assert.ok(tree.model([{type:'ellipse',strokeAutomation:{connection_id:'PLC',tag:'Running'}}])[0].automations.length);
+  assert.equal(tree.model([{type:'ellipse',externalReferences:[{tag:'Old'}],importedDynamics:{tag:'Old'}}])[0].automations.length,0);
 });

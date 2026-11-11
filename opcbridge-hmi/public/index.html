@@ -50,6 +50,7 @@
             <div id="viewMenuFlyout" class="menu-flyout is-hidden" role="menu" aria-label="View menu">
               <button id="viewTagsMenuBtn" class="menu-item" type="button">Tags</button>
               <button id="viewStatusBarMenuBtn" class="menu-item" type="button" aria-pressed="true">Status Bar</button>
+              <button id="objectExplorerToggleBtn" class="menu-item" type="button" role="menuitemcheckbox" aria-checked="true">Object Explorer</button>
               <button id="viewLayersMenuBtn" class="menu-item" type="button">Layers…</button>
               <button id="viewDiagnosticsMenuBtn" class="menu-item" type="button" aria-pressed="false">Diagnostics Mode <span class="menu-shortcut">Ctrl+D</span></button>
             </div>
@@ -153,7 +154,6 @@
         <button id="editorZoomResetBtn" class="toolbar-btn toolbar-zoom-readout" type="button" title="Reset zoom to 100%">100%</button>
         <button id="editorZoomInBtn" class="toolbar-btn toolbar-zoom-btn" type="button" title="Zoom in">+</button>
       </div>
-      <button id="objectExplorerToggleBtn" class="toolbar-btn" type="button" aria-expanded="false" title="Open Object Explorer">Objects</button>
       <button class="toolbar-btn" type="button" data-refresh-tag-catalog title="Reload tags and connections from OPCBridge">Refresh Tags</button>
       <button id="screenSaveBtn" class="screen-save-btn toolbar-btn" type="button">Save</button>
       <button id="snapToggleBtn" class="toolbar-btn" type="button" title="Toggle snap to grid">Snap</button>
@@ -346,7 +346,7 @@
         <button id="objectExplorerCloseBtn" class="toolbar-btn" type="button" title="Close Object Explorer" aria-label="Close Object Explorer">×</button>
       </div>
       <input id="objectTreeSearch" type="search" placeholder="Find object, tag, alias or screen…" aria-label="Search screen objects" />
-      <div class="object-tree-help">Select an object to show its properties. Expand to find children and automations.</div>
+      <div class="object-tree-help">Select an object to show its properties. Bright, bold names indicate linked objects.</div>
       <div id="objectTree"></div>
     </aside>
     <div id="workspace">

@@ -18991,17 +18991,29 @@ const refreshObjectExplorer = () => {
   HmiObjectTree.render({ container, objects: currentScreenObj?.objects || [], query: search?.value || "",
     expanded: objectTreeExpanded, selectedPath: HmiObjectTree.findPath(currentScreenObj?.objects || [], selected), onSelect: selectObjectTreeEntry });
 };
-const setObjectExplorerOpen = (open) => {
+const OBJECT_EXPLORER_VISIBLE_KEY = "opcbridge-hmi.objectExplorer.visible";
+const getObjectExplorerPreference = () => {
+  try { return window.localStorage.getItem(OBJECT_EXPLORER_VISIBLE_KEY) !== "false"; }
+  catch { return true; }
+};
+const setObjectExplorerOpen = (open, persist = true) => {
   document.getElementById("objectExplorer")?.classList.toggle("is-hidden", !open);
-  document.getElementById("objectExplorerToggleBtn")?.setAttribute("aria-expanded", open ? "true" : "false");
+  const menu = document.getElementById("objectExplorerToggleBtn");
+  menu?.setAttribute("aria-checked", open ? "true" : "false");
+  if (menu) menu.textContent = `${open ? "✓ " : ""}Object Explorer`;
+  if (persist) {
+    try { window.localStorage.setItem(OBJECT_EXPLORER_VISIBLE_KEY, String(Boolean(open))); } catch {}
+  }
   if (open) refreshObjectExplorer();
 };
 document.getElementById("objectTreeSearch")?.addEventListener("input", refreshObjectExplorer);
 document.getElementById("objectExplorerToggleBtn")?.addEventListener("click", () => {
   const explorer = document.getElementById("objectExplorer");
   setObjectExplorerOpen(Boolean(explorer?.classList.contains("is-hidden")));
+  setMenuOpen(false);
 });
 document.getElementById("objectExplorerCloseBtn")?.addEventListener("click", () => setObjectExplorerOpen(false));
+setObjectExplorerOpen(getObjectExplorerPreference(), false);
 // Move only the explorer window; Properties and workspace layout are untouched.
 document.getElementById("objectExplorerTitlebar")?.addEventListener("pointerdown", event => {
   if (event.button !== 0 || event.target.closest?.("button")) return;

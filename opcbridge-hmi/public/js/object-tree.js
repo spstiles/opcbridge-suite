@@ -11,12 +11,15 @@
     const actions = obj.action?.type === 'sequence' ? obj.action.actions || [] : obj.action?.type ? [obj.action] : [];
     actions.forEach((action, index) => add(`Click: ${action.type}`, 'click', action, index));
     if (obj.visibility) (obj.visibility.rules || [obj.visibility]).forEach((rule, index) => add(`Visibility ${index + 1}`, index ? `visibility-${index}` : 'visibility', rule));
-    const colors = obj.colorAutomationRules || obj.fillAutomation?.rules || (obj.fillAutomation ? [obj.fillAutomation] : []);
+    const legacyColors = ['fillAutomation','strokeAutomation','backgroundAutomation','borderColorAutomation','textColorAutomation']
+      .flatMap(key => obj[key] ? obj[key].rules || [obj[key]] : []);
+    const colors = obj.colorAutomationRules || legacyColors;
     colors.forEach((rule, index) => add(`Color ${index + 1}`, index ? `color-${index}` : 'color', rule));
     for (const [key, title, tab] of [['levelAutomation','Level','level'], ['rotationAutomation','Rotation','rotation'], ['motion','Motion','motion'], ['multiStateAutomation','States','states'], ['animator','Animator','animator']]) {
       if (obj[key]) add(title, tab, obj[key]);
     }
     for (const key of ['bind','bindValue','bindLabel']) if (obj[key]) add('Binding', 'properties', obj[key]);
+    if (/\{alias:[a-zA-Z0-9_.-]+\}/i.test(String(obj.text || obj.label || ''))) add('Alias', 'properties');
     for (const key of ['textBindings','labelBindings']) for (const [name, binding] of Object.entries(obj[key] || {})) add(`Text {${name}}`, 'properties', binding);
     return entries;
   }
@@ -53,14 +56,14 @@
       const li = doc.createElement('li'); li.setAttribute('role', 'treeitem');
       li.setAttribute('aria-selected', key === selected ? 'true' : 'false');
       const row = doc.createElement('div'); row.className = `object-tree-row${key === selected ? ' is-selected' : ''}`;
-      const hasChildren = node.children.length || node.automations.length;
+      const hasChildren = node.children.length;
       const open = Boolean(query) || expanded.has(key);
       const toggle = doc.createElement('button'); toggle.type = 'button'; toggle.className = 'object-tree-toggle';
       toggle.textContent = hasChildren ? open ? '▾' : '▸' : '·'; toggle.disabled = !hasChildren;
       toggle.setAttribute('aria-label', `${open ? 'Collapse' : 'Expand'} ${node.label}`);
       if (hasChildren) li.setAttribute('aria-expanded', open ? 'true' : 'false');
-      const button = doc.createElement('button'); button.type = 'button'; button.className = 'object-tree-object';
-      button.textContent = `${node.label}${node.automations.length ? `  [${node.automations.length}]` : ''}`;
+      const button = doc.createElement('button'); button.type = 'button'; button.className = `object-tree-object${node.automations.length ? ' is-linked' : ''}`;
+      button.textContent = node.label;
       button.title = `${node.object.type} · ${node.label}\nSelect to show Properties`;
       button.addEventListener('click', () => {
         if (onSelect(node.path) === false) return;
@@ -76,13 +79,6 @@
           children.hidden = !children.hidden; toggle.textContent = children.hidden ? '▸' : '▾';
           li.setAttribute('aria-expanded', children.hidden ? 'false' : 'true');
         });
-        for (const entry of node.automations) {
-          const item = doc.createElement('li'); item.setAttribute('role', 'treeitem');
-          const action = doc.createElement('button'); action.type = 'button'; action.className = 'object-tree-automation';
-          action.textContent = entry.label; action.title = entry.label;
-          action.addEventListener('click', () => onSelect(node.path, entry));
-          item.appendChild(action); children.appendChild(item);
-        }
         draw(node.children, children); li.appendChild(children);
       }
     });

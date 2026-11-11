@@ -4515,7 +4515,9 @@ body.edit-mode:not(.status-bar-hidden) #workspace { height: calc(100% - 31px); }
 .object-tree-row.is-selected { background: var(--bg-elevated); outline: 1px solid var(--border-default); }
 .object-tree-list button { background: transparent; border: 0; color: var(--text-primary); font-family: inherit; font-size: 11px; line-height: 17px; text-align: left; cursor: pointer; }
 .object-tree-toggle { flex: 0 0 17px; width: 17px; padding: 1px; }
-.object-tree-object, .object-tree-automation { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.object-tree-object { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .object-tree-object { flex: 1; padding: 2px 3px; }
-.object-tree-automation { display: block; width: 100%; padding: 2px 4px; color: var(--text-secondary) !important; }
 .object-tree-list button:hover, .object-tree-list button:focus-visible { background: var(--bg-elevated); }
+
+.object-tree-list .object-tree-object { color: var(--text-muted, #929aa8); font-weight: 400; }
+.object-tree-list .object-tree-object.is-linked { color: #fff; font-weight: 700; }
