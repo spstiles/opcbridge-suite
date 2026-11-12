@@ -3516,21 +3516,18 @@ body.runtime-mode #editor-pane {
 }
 
 .editor-pane-titlebar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   flex-wrap: nowrap;
-  gap: 8px;
-  padding: 8px 10px;
-  background: rgba(255, 255, 255, 0.04);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  user-select: none;
+  gap: 0;
+  padding: 6px;
+  background: var(--bg-secondary);
+  border-bottom: 0;
 }
 
 .editor-pane-title {
-  color: #9aa3b2;
-  font-weight: 400;
-  letter-spacing: 0.01em;
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: normal;
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -3541,13 +3538,8 @@ body.runtime-mode #editor-pane {
 .editor-pane-dock {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 0;
   flex: 0 0 auto;
-}
-
-.editor-pane-dock-btn {
-  padding: 4px 8px;
-  min-width: 34px;
 }
 
 /* Floating Properties can fade during canvas gestures. */
@@ -4522,14 +4514,14 @@ body.edit-mode #editor-pane[data-dock="left"] #editor-resizer {
 body.edit-mode #editor-pane[data-dock="right"] #editor-resizer { left: 0; }
 body.edit-mode #editor-pane[data-dock="left"] #editor-resizer { right: 0; }
 .object-explorer.is-hidden, body.runtime-mode .object-explorer, body.runtime-mode #objectExplorerToggleBtn { display: none; }
-.object-explorer-header { display: flex; justify-content: space-between; align-items: center; cursor: default; touch-action: none; font-size: 11px; user-select: none; }
-.object-explorer.is-floating .object-explorer-header { cursor: move; }
+.object-explorer-header, .editor-pane-titlebar { display: flex; justify-content: space-between; align-items: center; cursor: default; touch-action: none; font-size: 11px; user-select: none; }
+.object-explorer.is-floating .object-explorer-header, .editor-pane[data-dock="float"] .editor-pane-titlebar { cursor: move; }
 .object-explorer-header span { flex: 1; }
-.object-explorer-header button { min-width: 22px; padding: 1px 5px; }
+.object-explorer-header button, .editor-pane-titlebar button { min-width: 22px; padding: 1px 5px; }
 #objectTreeSearch { width: 100%; box-sizing: border-box; font-family: inherit; font-size: 11px; padding: 4px; }
 .object-tree-help { font-size: 10px; color: var(--text-muted); }
 #objectTree { flex: 1 1 auto; min-height: 0; overflow: auto; }
-.object-explorer-header, #objectTreeSearch, .object-tree-help { flex-shrink: 0; }
+.object-explorer-header, .editor-pane-titlebar, #objectTreeSearch, .object-tree-help { flex-shrink: 0; }
 .object-tree-list, .object-tree-list ul { list-style: none; padding: 0; margin: 0; }
 .object-tree-list ul { padding-left: 12px; }
 .object-tree-row { display: flex; align-items: center; min-height: 21px; border-radius: 3px; }
