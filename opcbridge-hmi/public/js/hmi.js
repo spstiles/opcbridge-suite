@@ -20510,7 +20510,10 @@ const applyRectColorDraftColor = (color, colorInput, textInput, colorKey, enable
   if (!String(color || "").trim()) return;
   if (colorInput && isHexColor(color)) colorInput.value = color;
   if (textInput) textInput.value = color;
-  updateRectColorDraft({ [colorKey]: color, [enabledKey]: true });
+  const isGroupText = colorKey === "strokeColor" && getSelectedColorDynamicObject()?.type === "group";
+  updateRectColorDraft(isGroupText
+    ? { textColor: color, textEnabled: true }
+    : { [colorKey]: color, [enabledKey]: true });
 };
 
 const applyAutomationColor = (key, colorKey, color, colorInput, textInput) => {
@@ -26467,23 +26470,13 @@ if (rectColorFillTextInput) {
 
 if (rectColorStrokeInput) {
   rectColorStrokeInput.addEventListener("input", () => {
-    const obj = getSelectedColorDynamicObject();
-    updateRectColorDraft(obj?.type === "group"
-      ? { textColor: rectColorStrokeInput.value, textEnabled: true }
-      : { strokeColor: rectColorStrokeInput.value, strokeEnabled: true });
-    if (rectColorStrokeTextInput) rectColorStrokeTextInput.value = rectColorStrokeInput.value;
+    applyRectColorDraftColor(rectColorStrokeInput.value, rectColorStrokeInput, rectColorStrokeTextInput, "strokeColor", "strokeEnabled");
   });
 }
 
 if (rectColorStrokeTextInput) {
   rectColorStrokeTextInput.addEventListener("change", () => {
-    const value = rectColorStrokeTextInput.value.trim();
-    if (!value) return;
-    const obj = getSelectedColorDynamicObject();
-    updateRectColorDraft(obj?.type === "group"
-      ? { textColor: value, textEnabled: true }
-      : { strokeColor: value, strokeEnabled: true });
-    if (rectColorStrokeInput && isHexColor(value)) rectColorStrokeInput.value = value;
+    applyRectColorDraftColor(rectColorStrokeTextInput.value.trim(), rectColorStrokeInput, rectColorStrokeTextInput, "strokeColor", "strokeEnabled");
   });
 }
 
@@ -29433,9 +29426,7 @@ buildSwatches(rectColorFillSwatches, (color) => {
 
 buildSwatches(rectColorStrokeSwatches, (color) => {
   if (color === "transparent" || color === "none") return;
-  if (rectColorStrokeInput) rectColorStrokeInput.value = color;
-  if (rectColorStrokeTextInput) rectColorStrokeTextInput.value = color;
-  updateRectColorDraft({ strokeColor: color, strokeEnabled: true });
+  applyRectColorDraftColor(color, rectColorStrokeInput, rectColorStrokeTextInput, "strokeColor", "strokeEnabled");
   closeSwatches();
 });
 
