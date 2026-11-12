@@ -23,7 +23,7 @@ visible while working.
 Explorer uses compact 11 px rows and starts docked to the left of the canvas.
 The workspace uses separate columns for Explorer, the canvas, and right-docked
 Properties. Docked panels reduce the canvas area so objects remain reachable by
-scrolling. Properties can also dock on the left; drag its inside edge to resize
+scrolling. Properties docks on the right; drag its inside edge to resize
 and remember its width. Floating Properties overlays the canvas. Its contents
 remain unchanged. Drag Explorer's right edge to resize its docked
 width; the preferred width is remembered. The focused edge also supports arrow
@@ -36,3 +36,6 @@ hidden in Run mode.
 The initial explorer does not reorder, regroup or reparent objects. Browsing
 and selection do not edit the saved screen. Manual zoom remains unchanged; larger screens can be scrolled within the
 remaining canvas area.
+
+Both panels use ⧉ to float and ▣ to dock. Saved left-docked Properties layouts
+open on the right.

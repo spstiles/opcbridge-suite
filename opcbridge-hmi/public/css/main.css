@@ -3553,7 +3553,6 @@ body.runtime-mode #editor-pane {
 }
 
 .editor-pane[data-dock="right"] { right: 10px; }
-.editor-pane[data-dock="left"]  { left: calc(var(--left-toolbar-width) + 10px); }
 
 .editor-pane[data-dock="float"] {
   /* left/top set via JS */
@@ -4499,20 +4498,16 @@ body.edit-mode:not(.status-bar-hidden) #workspace { height: calc(100% - 31px); }
   resize: both; border-radius: 5px; box-shadow: var(--shadow-lg);
 }
 /* Docked Properties is a real column; only floating Properties overlays. */
-body.edit-mode #editor-pane[data-dock="right"],
-body.edit-mode #editor-pane[data-dock="left"] {
+body.edit-mode #editor-pane[data-dock="right"] {
   position: relative; flex: 0 0 auto; top: auto; bottom: auto; left: auto; right: auto;
   height: 100%; min-height: 0; margin: 0; border-radius: 0;
 }
 body.edit-mode #editor-pane[data-dock="right"] { order: 2; }
-body.edit-mode #editor-pane[data-dock="left"] { order: -1; }
 #screen-wrapper { order: 1; }
-body.edit-mode #editor-pane[data-dock="right"] #editor-resizer,
-body.edit-mode #editor-pane[data-dock="left"] #editor-resizer {
+body.edit-mode #editor-pane[data-dock="right"] #editor-resizer {
   display: block; position: absolute; top: 0; bottom: 0; width: 6px; height: 100%; z-index: 2;
 }
 body.edit-mode #editor-pane[data-dock="right"] #editor-resizer { left: 0; }
-body.edit-mode #editor-pane[data-dock="left"] #editor-resizer { right: 0; }
 .object-explorer.is-hidden, body.runtime-mode .object-explorer, body.runtime-mode #objectExplorerToggleBtn { display: none; }
 .object-explorer-header, .editor-pane-titlebar { display: flex; justify-content: space-between; align-items: center; cursor: default; touch-action: none; font-size: 11px; user-select: none; }
 .object-explorer.is-floating .object-explorer-header, .editor-pane[data-dock="float"] .editor-pane-titlebar { cursor: move; }

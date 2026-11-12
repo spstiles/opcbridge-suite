@@ -178,7 +178,7 @@ test('Explorer can float and redock without changing Properties', () => {
 
 test('Properties uses column dimensions when docked and coordinates when floating', () => {
   const values = {};
-  const ctx = vm.createContext({editorPane:{dataset:{},style:{}},document:{body:{dataset:{}},documentElement:{style:{setProperty:(key,value)=>{values[key]=value;}}}},
+  const ctx = vm.createContext({editorPane:{dataset:{},style:{}},document:{getElementById:()=>null,body:{dataset:{}},documentElement:{style:{setProperty:(key,value)=>{values[key]=value;}}}},
     window:{innerWidth:1400,innerHeight:900},getComputedStyle:()=>({getPropertyValue:key=>key==='--toolbar-height'?'48px':'38px'}),
     clamp:(value,min,max)=>Math.max(min,Math.min(value,max))});
   const start=source.indexOf('const applyEditorPaneState =');
@@ -189,7 +189,7 @@ test('Properties uses column dimensions when docked and coordinates when floatin
   assert.equal(ctx.editorPane.style.height,'100%');
   assert.equal(ctx.editorPane.style.left,'');
   vm.runInContext('applyEditorPaneState({dock:"left",w:420})',ctx);
-  assert.equal(ctx.document.body.dataset.propertiesDock,'left');
+  assert.equal(ctx.document.body.dataset.propertiesDock,'right');
   assert.equal(values['--editor-pane-width'],'420px');
   assert.equal(ctx.editorPane.style.width,'420px');
   vm.runInContext('applyEditorPaneState({dock:"float",w:420,h:600,x:100,y:100})',ctx);

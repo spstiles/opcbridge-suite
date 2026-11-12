@@ -2,9 +2,7 @@ const toolbar = document.getElementById("toolbar");
 const editorPane = document.getElementById("editor-pane");
 const editorResizer = document.getElementById("editor-resizer");
 const editorPaneTitlebar = document.getElementById("editorPaneTitlebar");
-const editorPaneDockFloatBtn = document.getElementById("editorPaneDockFloatBtn");
-const editorPaneDockLeftBtn = document.getElementById("editorPaneDockLeftBtn");
-const editorPaneDockRightBtn = document.getElementById("editorPaneDockRightBtn");
+const editorPaneDockToggleBtn = document.getElementById("editorPaneDockToggleBtn");
 const editorZoomOutBtn = document.getElementById("editorZoomOutBtn");
 const editorZoomResetBtn = document.getElementById("editorZoomResetBtn");
 const editorZoomInBtn = document.getElementById("editorZoomInBtn");
@@ -550,10 +548,16 @@ const saveEditorPaneState = (state) => {
 const applyEditorPaneState = (state) => {
   if (!editorPane) return;
   const dock = String(state?.dock || "right");
-  const allowed = new Set(["right", "left", "float"]);
+  const allowed = new Set(["right", "float"]);
   const nextDock = allowed.has(dock) ? dock : "right";
   editorPane.dataset.dock = nextDock;
   document.body.dataset.propertiesDock = nextDock;
+  const dockButton = document.getElementById("editorPaneDockToggleBtn");
+  if (dockButton) {
+    dockButton.textContent = nextDock === "float" ? "▣" : "⧉";
+    dockButton.title = nextDock === "float" ? "Dock Properties" : "Float Properties";
+    dockButton.setAttribute("aria-label", dockButton.title);
+  }
   const toolbarH = Number(getComputedStyle(document.documentElement).getPropertyValue("--toolbar-height").replace("px", "")) || 48;
   const vw = window.innerWidth;
   const vh = window.innerHeight;
@@ -590,7 +594,7 @@ const applyEditorPaneState = (state) => {
 
 const setEditorPaneDock = (dock) => {
   const prev = getEditorPaneState() || {};
-  const nextDock = String(dock || "right");
+  const nextDock = dock === "float" ? "float" : "right";
   const next = { ...prev, dock: nextDock };
   if (nextDock === "float" && (!Number.isFinite(Number(next.x)) || !Number.isFinite(Number(next.y)))) {
     const vw = window.innerWidth;
@@ -19014,7 +19018,7 @@ const setObjectExplorerDocked = (docked) => {
   panel.style.left = ""; panel.style.top = "";
   const button = document.getElementById("objectExplorerDockBtn");
   if (button) {
-    button.textContent = docked ? "⧉" : "⇤";
+    button.textContent = docked ? "⧉" : "▣";
     button.title = docked ? "Float Object Explorer" : "Dock Object Explorer";
     button.setAttribute("aria-label", button.title);
   }
@@ -22004,7 +22008,7 @@ const bindEnterToApply = () => {
 const applyEditorWidth = (value) => {
   const nextWidth = Math.max(280, Math.min(value, Math.floor(window.innerWidth * 0.6)));
   document.documentElement.style.setProperty("--editor-pane-width", `${nextWidth}px`);
-  if (editorPane && ["left", "right"].includes(editorPane.dataset.dock)) {
+  if (editorPane && editorPane.dataset.dock === "right") {
     editorPane.style.width = `${nextWidth}px`;
     saveEditorPaneState({ ...(getEditorPaneState() || {}), dock: editorPane.dataset.dock, w: nextWidth });
   }
@@ -22031,7 +22035,7 @@ const bindResizer = () => {
   const onMove = (event) => {
     if (!isResizing) return;
     const delta = event.clientX - startX;
-    applyEditorWidth(startWidth + (editorPane.dataset.dock === "left" ? delta : -delta));
+    applyEditorWidth(startWidth - delta);
   };
 
   const onUp = () => {
@@ -34422,13 +34426,8 @@ if (editorPane) {
   if (!editorPane.dataset.dock) editorPane.dataset.dock = String(initial.dock || "right");
 }
 
-[
-  [editorPaneDockFloatBtn, "float"],
-  [editorPaneDockLeftBtn, "left"],
-  [editorPaneDockRightBtn, "right"]
-].forEach(([button, dock]) => {
-  if (!button) return;
-  button.addEventListener("click", () => setEditorPaneDock(dock));
+editorPaneDockToggleBtn?.addEventListener("click", () => {
+  setEditorPaneDock(editorPane.dataset.dock === "float" ? "right" : "float");
 });
 
 if (editorZoomOutBtn) {

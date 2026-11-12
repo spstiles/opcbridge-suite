@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync(`${__dirname}/../public/js/hmi.js`, 'utf8');
 
-for (const dock of ['right', 'left']) {
+for (const dock of ['right']) {
   test(`Properties ${dock} dock resizes from its inside edge and persists width`, () => {
     const listeners = {};
     let saved;
