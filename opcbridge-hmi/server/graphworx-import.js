@@ -1,6 +1,12 @@
 const path = require("path");
 const crypto = require("crypto");
 
+// GraphWorX local Boolean variables belong to the browser, not an OPC server.
+const localBooleanBinding = (source) => {
+  const match = String(source || "").trim().match(/^localsim::([^:]+):Boolean$/i);
+  return match ? { connection_id: "_local", tag: match[1] } : null;
+};
+
 let parser = null;
 const getParser = () => {
   if (parser) return parser;
@@ -38,7 +44,7 @@ const normalizeOrderedElement = (entry) => {
   let text = "";
   for (const childEntry of asArray(entry[name])) {
     if (childEntry && Object.prototype.hasOwnProperty.call(childEntry, "#text")) {
-      text += String(childEntry["#text"] || "");
+      text += String(childEntry["#text"] ?? "");
       continue;
     }
     const normalized = normalizeOrderedElement(childEntry);
@@ -324,6 +330,22 @@ const importedShadow = (node) => {
   };
 };
 
+const importedToggleAction = (pick) => {
+  const sourceReference = String(pick?.DataSource || "").trim();
+  const local = localBooleanBinding(sourceReference);
+  const command = descendants(pick, name => name === "gwxcmd:ToggleValueCommand")[0];
+  if (!sourceReference || !command) return null;
+  const values = descendants(command, name => /(?:^|:)String$/.test(name)).map(value => String(value["#text"] ?? "").trim());
+  if (values.length !== 2 || values.some(value => !value) || values[0] === values[1]) return null;
+  if (local) {
+    if (values[0] !== "1" || values[1] !== "0") return null;
+    return { type: "toggle-write", ...local, onValue: values[0], offValue: values[1] };
+  }
+  if (/^localsim:/i.test(sourceReference) || graphWorxExpression(sourceReference).isExpression) return null;
+  return { type: "toggle-write", connection_id: "", tag: sourceReference,
+    onValue: values[0], offValue: values[1], sourceReference, status: "unresolved" };
+};
+
 const sourceMetadata = (sourceType, node, extra = {}) => {
   const selectors = descendants(node, name => name === "gwx:GwxRangeSelector").map(item => ({ ...item, sourceExpression: String(item.DataSource ?? "1") }));
   const colors = descendants(node, (name) => name === "gwx:GwxColor").map((item) => ({
@@ -403,7 +425,8 @@ const sourceMetadata = (sourceType, node, extra = {}) => {
         && (String(item.node.AnimationMode || "").toLowerCase() === "analog" || /\?+/.test(textFrom(node)));
       const hasTextExpression = hasTextValue && graphWorxExpression(item.value).isExpression;
       const hasWriteCommand = item.name === "gwx:GwxPick"
-        && descendants(item.node, (name) => name === "gwxcmd:WriteValueCommand").length > 0;
+        && (descendants(item.node, (name) => name === "gwxcmd:WriteValueCommand").length > 0
+          || importedToggleAction(item.node));
       const sizeDynamic = item.name === "gwx:GwxSize"
         ? sizes.find((candidate) => candidate.sourceExpression === item.value)
         : null;
@@ -413,7 +436,8 @@ const sourceMetadata = (sourceType, node, extra = {}) => {
         : (hasWriteCommand ? { automation: "pick/write", supported: true }
         : (sizeDynamic?.levelCompatible ? { automation: "level", supported: true }
         : (automationTypes[item.name] || { automation: item.name.replace(/^.*:/, ""), supported: false }))));
-      return { kind: "tag", ...info, source: { format: "graphworx64", value: item.value }, target: null, status: info.supported ? "unresolved" : "unsupported" };
+      const local = localBooleanBinding(item.value);
+      return { kind: "tag", ...info, source: { format: "graphworx64", value: item.value }, target: local && info.supported ? { value: `${local.connection_id}::${local.tag}` } : null, status: local && info.supported ? "resolved" : (info.supported ? "unresolved" : "unsupported") };
     }),
     ...dataSources(node).filter((value) => !namedValues.has(value)).map((value) => ({ kind: "tag", automation: "data", supported: false, source: { format: "graphworx64", value }, target: null, status: "unsupported" }))
   ];
@@ -484,7 +508,7 @@ const navigationFor = (node, viewportNames) => {
     if (!value || typeof value !== "object" || command) return;
     for (const entry of childEntries(value)) {
       const nextPick = entry.name === "gwx:GwxPick" ? entry.node : owningPick;
-      if (["gwxcmd:LoadDisplayCommand", "gwxcmd:HistoryBackCommand", "gwxcmd:HistoryForwardCommand", "gwxcmd:WriteValueCommand"].includes(entry.name)) {
+      if (["gwxcmd:LoadDisplayCommand", "gwxcmd:HistoryBackCommand", "gwxcmd:HistoryForwardCommand", "gwxcmd:WriteValueCommand", "gwxcmd:ToggleValueCommand"].includes(entry.name)) {
         command = entry.node;
         commandName = entry.name;
         commandPick = owningPick;
@@ -497,6 +521,7 @@ const navigationFor = (node, viewportNames) => {
   if (commandName === "gwxcmd:HistoryBackCommand" || commandName === "gwxcmd:HistoryForwardCommand") {
     return { type: commandName === "gwxcmd:HistoryBackCommand" ? "history-back" : "history-forward" };
   }
+  if (commandName === "gwxcmd:ToggleValueCommand") return importedToggleAction(commandPick);
   if (commandName === "gwxcmd:WriteValueCommand") {
     const sourceReference = String(commandPick?.DataSource || "").trim();
     if (!sourceReference) return null;
@@ -561,6 +586,8 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
   let objectSequence = 0;
   const unresolvedBinding = (source) => {
     const raw = String(source || "").trim();
+    const local = localBooleanBinding(raw);
+    if (local) return { enabled: true, sourceType: "tag", ...local };
     const parsedExpression = graphWorxExpression(raw);
     return parsedExpression.isExpression
       ? { enabled: true, sourceType: "expression", expression: parsedExpression.expression, status: "unresolved", sourceReference: raw }
@@ -646,7 +673,7 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
       .map((item) => {
       const binding = unresolvedBinding(item.sourceExpression);
       const target = String(item.target || "").toLowerCase();
-      const strokeTarget = obj.type === "line" || obj.type === "pipe" || target.includes("stroke") || target.includes("border");
+      const strokeTarget = obj.type === "line" || obj.type === "pipe" || target.includes("stroke") || target.includes("border") || (obj.type === "text" && target.includes("background"));
       const textTarget = obj.type === "group" && target.includes("foreground");
       const toggleRate = num(item.periodicToggleRate, 0);
       return {
@@ -671,7 +698,7 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
       const strokeRules = colorRules.filter((rule) => rule.strokeEnabled).map((rule) => ({ ...rule, onColor: rule.strokeColor }));
       const textRules = colorRules.filter((rule) => rule.textEnabled).map((rule) => ({ ...rule, onColor: rule.textColor }));
       if (fillRules.length) obj.fillAutomation = { rules: fillRules };
-      if (strokeRules.length) obj.strokeAutomation = { rules: strokeRules };
+      if (strokeRules.length) obj[obj.type === "text" ? "backgroundAutomation" : "strokeAutomation"] = { rules: strokeRules };
       if (textRules.length) obj.textColorAutomation = { rules: textRules };
     }
     const hiddenRules = (dynamics.hides || []).map((hidden) => {
@@ -756,6 +783,7 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
     obj.importId = `gwx_${++objectSequence}`;
     objectTarget.push(obj);
     for (const ref of obj.externalReferences || []) {
+      if (ref.status === "resolved") continue;
       const unsupported = ref.supported === false || ref.status === "unsupported";
       issues.push({ id: `${obj.importId}:${issues.length + 1}`, objectImportId: obj.importId, severity: "warning", category: unsupported ? "unsupported-automation" : ref.kind, automation: ref.automation || null, status: unsupported ? "unsupported" : "unresolved", source: ref.source, message: unsupported ? `Unsupported ${ref.automation || ref.kind} automation preserved: ${ref.source.value}` : `Unresolved ${ref.automation || ref.kind}: ${ref.source.value}` });
     }

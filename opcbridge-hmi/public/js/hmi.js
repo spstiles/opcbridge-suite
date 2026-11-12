@@ -8494,6 +8494,7 @@ const downloadObjectReferenceMappings = () => {
 const knownMappedTag = (replacement) => {
   const parsed = parseMappedTagReference(replacement);
   if (!parsed) return false;
+  if (parsed.connection_id === "_local") return Boolean(parsed.tag);
   return knownTagKeysCache.has(normalizeWsTagKey(parsed.connection_id, parsed.tag));
 };
 
@@ -12348,7 +12349,9 @@ const normalizeTagCacheKey = (connectionId, tagName) => {
   const conn = String(connectionId || "").trim();
   const tag = String(tagName || "").trim();
   if (!conn || !tag) return "";
-  return `${conn}.${tag}`;
+  const key = `${conn}.${tag}`;
+  if (conn === "_local" && !tagValueCache.has(key)) tagValueCache.set(key, 0);
+  return key;
 };
 
 const normalizeTagQuality = (quality) => {
@@ -12490,7 +12493,8 @@ const collectTagKeysFromValue = (value, out, visited = new WeakSet(), visibility
   const tag = value.tag;
   if (typeof conn === "string" && typeof tag === "string") {
     const key = normalizeWsTagKey(conn, tag);
-    if (key) out.add(key);
+    if (conn === "_local") normalizeTagCacheKey(conn, tag);
+    else if (key) out.add(key);
   }
   if ((value.sourceType === "expression" || value.source === "expression") && typeof value.expression === "string") {
     extractAutomationExpressionTagKeys(value.expression, out);
@@ -12569,7 +12573,7 @@ const wsTagKeyToQueryItem = (key) => {
   if (sep <= 0 || sep >= raw.length - 1) return null;
   const connection_id = raw.slice(0, sep).trim();
   const name = raw.slice(sep + 1).trim();
-  if (!connection_id || !name) return null;
+  if (!connection_id || !name || connection_id === "_local") return null;
   return { connection_id, name };
 };
 
@@ -16439,7 +16443,7 @@ const startClickSequence = (obj, context = {}) => {
       if (!await getScreenForAliases(action.screenId)) throw new Error(`Screen could not be loaded: ${action.screenId}`);
     }
     if (action.type === 'set-write' || action.type === 'toggle-write') {
-      if (isViewOnlyRuntime()) throw new Error('Writes are disabled for this session.');
+      if (isViewOnlyRuntime() && action.connection_id !== "_local") throw new Error('Writes are disabled for this session.');
       let value = action.onValue;
       if (action.type === 'toggle-write') {
         await seedTagValuesForKeys([normalizeWsTagKey(action.connection_id, action.tag)]);
@@ -23091,6 +23095,17 @@ const getAuditContextForWrite = (connectionId, tagName, audit = {}) => {
 };
 
 const apiWriteTag = async ({ connection_id, tag, value, audit = {}, keepalive = false }) => {
+  if (connection_id === "_local") {
+    const name = String(tag || "").trim();
+    if (!name) throw new Error("Missing local variable name.");
+    const localValue = coerceTagBoolean(value) ? 1 : 0;
+    tagValueCache.set(normalizeTagCacheKey("_local", name), localValue);
+    if (!isEditMode) {
+      renderScreen();
+      if (currentPopupScreenId) openPopup(currentPopupScreenId);
+    }
+    return { ok: true, value: localValue };
+  }
   if (isViewOnlyRuntime()) {
     throw new Error("Writes are disabled in view-only mode.");
   }
@@ -23263,7 +23278,7 @@ const matchesToggleOnValue = (rawValue, onValue) => {
 
 const runToggleWriteAction = async (action, obj = null) => {
   if (!action) return;
-  if (isViewOnlyRuntime()) return;
+  if (isViewOnlyRuntime() && action.connection_id !== "_local") return;
   const connectionId = String(action.connection_id || "").trim();
   const tagName = String(action.tag || "").trim();
   if (!connectionId || !tagName) return;
@@ -23276,7 +23291,7 @@ const runToggleWriteAction = async (action, obj = null) => {
 
 const runSetWriteAction = async (action, obj = null) => {
   if (!action) return;
-  if (isViewOnlyRuntime()) return;
+  if (isViewOnlyRuntime() && action.connection_id !== "_local") return;
   const connectionId = String(action.connection_id || "").trim();
   const tagName = String(action.tag || "").trim();
   if (!connectionId || !tagName) return;
@@ -35210,7 +35225,7 @@ if (hmiSvg) {
 		        return;
 		      }
 		      if (obj?.action?.type === "toggle-write") {
-		        if (writesDisabled) return;
+		        if (writesDisabled && obj.action.connection_id !== "_local") return;
 			        runToggleWriteAction(obj.action, obj).catch((error) => {
 		          console.error("[toggle-write] failed:", error);
 	        });
