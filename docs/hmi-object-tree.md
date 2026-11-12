@@ -21,6 +21,7 @@ visible while working.
 - Layer locks and hidden-layer protections remain in effect.
 
 Explorer uses compact 11 px rows and starts docked to the left of the canvas.
+Its floating or docked preference is remembered in this browser.
 The workspace uses separate columns for Explorer, the canvas, and right-docked
 Properties. Docked panels reduce the canvas area so objects remain reachable by
 scrolling. Properties docks on the right; drag its inside edge to resize

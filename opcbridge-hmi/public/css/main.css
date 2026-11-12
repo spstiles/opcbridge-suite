@@ -4179,6 +4179,24 @@ body.runtime-mode #editor-pane {
   line-height: 1;
 }
 
+/* Keep the custom palette button reachable in narrow Properties columns. */
+.prop-row:has(> .prop-inline > input[type="color"]) {
+  grid-template-columns: 110px minmax(0, 1fr);
+}
+.prop-inline:has(> input[type="color"]) {
+  min-width: 0;
+}
+.prop-inline > input[type="color"],
+.prop-inline > .swatch-btn {
+  flex-shrink: 0;
+}
+.prop-row .prop-inline:has(> input[type="color"]) > input[type="text"] {
+  flex: 1 1 0;
+  width: 0;
+  min-width: 0;
+  max-width: none;
+}
+
 .swatch-btn:hover {
   background: #2a3448;
 }

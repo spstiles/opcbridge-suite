@@ -19011,10 +19011,13 @@ const setObjectExplorerOpen = (open, persist = true) => {
   }
   if (open) refreshObjectExplorer();
 };
-const setObjectExplorerDocked = (docked) => {
+const setObjectExplorerDocked = (docked, persist = true) => {
   const panel = document.getElementById("objectExplorer");
   if (!panel) return;
   panel.classList.toggle("is-floating", !docked);
+  if (persist) {
+    try { window.localStorage.setItem("opcbridge-hmi.objectExplorer.docked", String(Boolean(docked))); } catch {}
+  }
   panel.style.left = ""; panel.style.top = "";
   const button = document.getElementById("objectExplorerDockBtn");
   if (button) {
@@ -19022,6 +19025,11 @@ const setObjectExplorerDocked = (docked) => {
     button.title = docked ? "Float Object Explorer" : "Dock Object Explorer";
     button.setAttribute("aria-label", button.title);
   }
+};
+const restoreObjectExplorerDock = () => {
+  let docked = true;
+  try { docked = window.localStorage.getItem("opcbridge-hmi.objectExplorer.docked") !== "false"; } catch {}
+  setObjectExplorerDocked(docked, false);
 };
 const OBJECT_EXPLORER_WIDTH_KEY = "opcbridge-hmi.objectExplorer.width";
 const applyObjectExplorerWidth = (width, persist = false) => {
@@ -19075,6 +19083,7 @@ const initializeObjectExplorerResize = () => {
     applyObjectExplorerWidth(panel.getBoundingClientRect().width + (event.key === "ArrowLeft" ? -1 : 1) * (event.shiftKey ? 1 : 10), true);
   });
 };
+restoreObjectExplorerDock();
 restoreObjectExplorerWidth();
 initializeObjectExplorerResize();
 window.addEventListener("resize", () => {

@@ -248,3 +248,32 @@ test('a search does not hide the selected canvas object or its parent hierarchy'
   assert.deepEqual(filtered.map(row=>row.path),[[0]]);
   assert.deepEqual(filtered[0].children.map(row=>row.path),[[0,1]]);
 });
+
+test('Explorer restores floating and docked preferences across reloads without rewriting storage', () => {
+  const storage = new Map();
+  let writes = 0;
+  function reload() {
+    const classes = new Set();
+    const panel = {style:{},classList:{toggle:(name,on)=>on?classes.add(name):classes.delete(name)}};
+    const button = {setAttribute(){}};
+    const ctx = vm.createContext({document:{getElementById:id=>id==='objectExplorer'?panel:button},
+      window:{localStorage:{getItem:key=>storage.get(key)??null,setItem:(key,value)=>{writes++;storage.set(key,value);}}}});
+    const start = source.indexOf('const setObjectExplorerDocked =');
+    vm.runInContext(source.slice(start,source.indexOf('const OBJECT_EXPLORER_WIDTH_KEY =',start)),ctx);
+    vm.runInContext('restoreObjectExplorerDock()',ctx);
+    return {ctx,classes,button};
+  }
+  let page = reload();
+  assert.equal(page.classes.has('is-floating'),false);
+  assert.equal(writes,0);
+  vm.runInContext('setObjectExplorerDocked(false)',page.ctx);
+  page = reload();
+  assert.equal(page.classes.has('is-floating'),true);
+  assert.equal(page.button.title,'Dock Object Explorer');
+  assert.equal(writes,1);
+  vm.runInContext('setObjectExplorerDocked(true)',page.ctx);
+  page = reload();
+  assert.equal(page.classes.has('is-floating'),false);
+  assert.equal(page.button.title,'Float Object Explorer');
+  assert.equal(writes,2);
+});

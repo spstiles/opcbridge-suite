@@ -15,7 +15,7 @@ function setup(savedWidth) {
     window:{innerWidth:2000,localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},
       addEventListener:(type,fn)=>listeners.set(type,fn),removeEventListener:type=>listeners.delete(type)} });
   const start=source.indexOf('const OBJECT_EXPLORER_WIDTH_KEY =');
-  vm.runInContext(source.slice(start,source.indexOf('\nrestoreObjectExplorerWidth();',start)),ctx);
+  vm.runInContext(source.slice(start,source.indexOf('\nrestoreObjectExplorerDock();',start)),ctx);
   vm.runInContext('restoreObjectExplorerWidth(); initializeObjectExplorerResize()',ctx);
   const event = extra => ({button:0,pointerId:1,clientX:260,preventDefault(){},stopPropagation(){},...extra});
   return {ctx,panel,handle,body,listeners,storage,attributes,event,float:()=>{floating=true;}};
