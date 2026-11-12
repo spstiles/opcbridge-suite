@@ -42,7 +42,7 @@ async function editor(kind, definitionType = 'tag', initialMapping = null) {
   await vm.runInContext('renderTargetAliasEditor(kind, "Detail", action)', ctx);
   const card = host.children.find(child => child.children?.[0]?.textContent === 'Command *');
   const sourceSelect = card.children[1].children[1];
-  return { owner, first, action, card, sourceSelect, config: () => ctx.compactTagBindingConfigs[0],
+  return { ctx, owner, first, action, card, sourceSelect, config: () => ctx.compactTagBindingConfigs[0],
     refresh: async () => { ctx.action = owner.actions[selectedIndex]; await vm.runInContext('renderTargetAliasEditor(kind, "Detail", action)', ctx); },
     dirty: () => dirty, toast: () => toast,
     changeObject: () => { selected = { actions: [{ type: 'popup' }] }; },
@@ -118,4 +118,29 @@ test('alias connection selection remains visible after the asynchronous properti
   assert.equal(binding.editorConnectionInput.value, 'PLC_TWO');
   assert.equal(binding.editorTagInput.value, 'Pump.Start');
   assert.equal(fixture.dirty(), true);
+});
+
+test('actions without screen targets clear aliases and invalidate a pending target lookup', async () => {
+  for (const kind of ['button', 'group']) {
+    const f = await editor(kind);
+    const host = f.ctx.buttonTargetAliases;
+    let resolveLookup;
+    let lookups = 0;
+    let cancelled = 0;
+    f.ctx.getScreenForAliases = () => { lookups++; return new Promise(resolve => { resolveLookup = resolve; }); };
+    f.config().cancelPending = () => { cancelled++; };
+    const pending = vm.runInContext('renderTargetAliasEditor(kind, "Detail", action)', f.ctx);
+    for (const type of ['close-popup', 'history-back', 'history-forward', 'auth', 'alarm-filter', 'set-write', 'toggle-write', 'momentary-write', 'prompt-write']) {
+      f.ctx.noTargetAction = {type};
+      await vm.runInContext('renderTargetAliasEditor(kind, "Detail", noTargetAction)', f.ctx);
+      assert.equal(host.hidden, true, type);
+      assert.equal(host.textContent, '', type);
+      assert.equal(f.ctx.compactTagBindingConfigs.length, 0, type);
+    }
+    resolveLookup({});
+    await pending;
+    assert.equal(host.hidden, true, 'stale lookup cannot reopen aliases');
+    assert.equal(lookups, 1, 'non-target actions never fetch a screen');
+    assert.equal(cancelled, 1);
+  }
 });

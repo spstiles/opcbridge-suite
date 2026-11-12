@@ -17193,6 +17193,15 @@ const renderTargetAliasEditor = async (kind, screenId, action) => {
   const host = kind === "button" ? buttonTargetAliases : groupTargetAliases;
   if (!host) return;
   const sequence = ++targetAliasRenderSequence;
+  host.textContent = "";
+  host.classList.toggle("is-hidden", true);
+  host.hidden = true;
+  for (let index = compactTagBindingConfigs.length - 1; index >= 0; index -= 1) {
+    if (!compactTagBindingConfigs[index].id.startsWith(`target-alias:${kind}:`)) continue;
+    compactTagBindingConfigs[index].cancelPending?.();
+    compactTagBindingConfigs.splice(index, 1);
+  }
+  if (!["navigate", "popup", "load-viewport"].includes(action?.type) || !String(screenId || "").trim()) return;
   const screen = await getScreenForAliases(screenId);
   if (sequence !== targetAliasRenderSequence) return;
   const definitions = getEffectiveScreenAliases(screen);
