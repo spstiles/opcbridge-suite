@@ -12,7 +12,7 @@ function fixture(){
   close(){this.readyState=3;}
   open(){this.readyState=1;this.onopen?.();}
  }
- const context=vm.createContext({WebSocket:Socket,setTimeout:(fn,delay)=>{timers.set(++timerId,{fn,delay});return timerId;},clearTimeout:id=>timers.delete(id),
+ const context=vm.createContext({isEditMode:false,WebSocket:Socket,setTimeout:(fn,delay)=>{timers.set(++timerId,{fn,delay});return timerId;},clearTimeout:id=>timers.delete(id),
   document:{visibilityState:'visible'},getWsUrl:()=> 'ws://test:8090',updateWsStatus:()=>{},
   collectActiveWsSubscriptions:()=>['PLC:Flow'],wsTagKeyToQueryItem:()=>({connection_id:'PLC',name:'Flow'}),normalizeTagCacheKey:(c,n)=>`${c}.${n}`,
   scheduleTagSeedRefresh:()=>{seedCount++;}});

@@ -7039,6 +7039,10 @@ let referenceHealthRefreshTimer = null;
 let systemReferenceHealthResults = new Map();
 let systemReferenceHealthScanPromise = null;
 let systemReferenceHealthScanGeneration = 0;
+let systemReferenceHealthHasScan = false;
+let systemReferenceHealthStale = false;
+let systemReferenceHealthRevision = 0;
+let systemReferenceHealthProgress = "";
 let pendingSystemReferenceIssue = null;
 
 const invalidateReferenceHealthCache = () => {
@@ -7047,9 +7051,9 @@ const invalidateReferenceHealthCache = () => {
 };
 
 const invalidateSystemReferenceHealth = () => {
-  systemReferenceHealthResults.clear();
-  systemReferenceHealthScanGeneration += 1;
-  systemReferenceHealthScanPromise = null;
+  // Keep the last results available; invalidation never starts a scan.
+  systemReferenceHealthStale = true;
+  systemReferenceHealthRevision += 1;
   renderSystemReferenceHealthBadge();
 };
 
@@ -7057,11 +7061,19 @@ const scheduleReferenceHealthRefresh = (delay = 250) => {
   if (referenceHealthRefreshTimer !== null) window.clearTimeout(referenceHealthRefreshTimer);
   referenceHealthRefreshTimer = window.setTimeout(() => {
     referenceHealthRefreshTimer = null;
+    if (typeof isCompactTagBindingBusy === "function" && isCompactTagBindingBusy()) {
+      scheduleReferenceHealthRefresh(250);
+      return;
+    }
     invalidateReferenceHealthCache();
     if (!isEditMode || !currentScreenObj) return;
     renderReferenceHealthBadge();
     if (currentScreenId) {
       systemReferenceHealthResults.set(currentScreenId, getReferenceHealthIssues().map((issue) => ({ ...issue })));
+      if (systemReferenceHealthScanPromise) {
+        systemReferenceHealthStale = true;
+        systemReferenceHealthRevision += 1;
+      }
       renderSystemReferenceHealthBadge();
     }
     const activeObjects = getActiveObjects();
@@ -7465,6 +7477,10 @@ const getReferenceHealthIssues = () => {
 };
 
 const renderReferenceHealthBadge = () => {
+  if (typeof compactTagEditDepth !== "undefined" && compactTagEditDepth > 0) {
+    scheduleReferenceHealthRefresh();
+    return;
+  }
   if (!referenceHealthBadge) return;
   const count = getReferenceHealthIssues().length;
   referenceHealthBadge.innerHTML = `<span aria-hidden="true">⚠</span> Issues: ${count}`;
@@ -7475,16 +7491,27 @@ const renderReferenceHealthBadge = () => {
   referenceHealthBadge.setAttribute("aria-label", `Reference Health: ${count} issue${count === 1 ? "" : "s"}`);
 };
 
+const getSystemReferenceHealthSummary = () => {
+  if (systemReferenceHealthScanPromise) return `${systemReferenceHealthProgress || "Checking saved screens…"} Previous results remain available below.`;
+  if (!systemReferenceHealthHasScan) return "System scan not run. Select Scan All Screens to check saved screens.";
+  const count = [...systemReferenceHealthResults.values()].reduce((total, issues) => total + issues.length, 0);
+  return `${count} item${count === 1 ? "" : "s"} need attention. ${systemReferenceHealthStale ? "Results are out of date. Select Scan All Screens to refresh." : "Showing cached results; opening this list does not rescan screens."}`;
+};
+
 const renderSystemReferenceHealthBadge = () => {
-  if (!systemReferenceHealthBadge) return;
   const count = [...systemReferenceHealthResults.values()].reduce((total, issues) => total + issues.length, 0);
   const isLoading = Boolean(systemReferenceHealthScanPromise);
-  systemReferenceHealthBadge.innerHTML = `<span aria-hidden="true">⚠</span> System Issues: ${isLoading && !systemReferenceHealthResults.size ? "…" : count}`;
-  systemReferenceHealthBadge.classList.toggle("is-active", count > 0);
-  systemReferenceHealthBadge.title = isLoading
-    ? "Checking saved screens for unresolved references"
-    : (count ? `View ${count} unresolved reference${count === 1 ? "" : "s"} across all screens` : "All saved screen references are valid");
-  systemReferenceHealthBadge.setAttribute("aria-label", isLoading ? "System Reference Health: checking screens" : `System Reference Health: ${count} issue${count === 1 ? "" : "s"}`);
+  if (systemReferenceHealthBadge) {
+    const status = isLoading ? "Scanning…" : !systemReferenceHealthHasScan ? "Not scanned" : `${count}${systemReferenceHealthStale ? " (out of date)" : ""}`;
+    systemReferenceHealthBadge.innerHTML = `<span aria-hidden="true">⚠</span> System Issues: ${status}`;
+    systemReferenceHealthBadge.classList.toggle("is-active", count > 0);
+    systemReferenceHealthBadge.title = getSystemReferenceHealthSummary();
+    systemReferenceHealthBadge.setAttribute("aria-label", `System Reference Health: ${status}`);
+  }
+  const summary = referenceHealthOverlay?.querySelector("[data-system-ref-summary]");
+  if (summary) summary.textContent = getSystemReferenceHealthSummary();
+  const scanButton = referenceHealthOverlay?.querySelector("[data-system-ref-scan]");
+  if (scanButton) scanButton.disabled = isLoading;
 };
 
 const evaluateReferenceHealthForScreen = (screen) => {
@@ -7504,9 +7531,13 @@ const evaluateReferenceHealthForScreen = (screen) => {
 };
 
 const scanSystemReferenceHealth = async ({ force = false } = {}) => {
-  if (systemReferenceHealthScanPromise && !force) return systemReferenceHealthScanPromise;
+  if (systemReferenceHealthScanPromise) return systemReferenceHealthScanPromise;
+  if (systemReferenceHealthHasScan && !force) return systemReferenceHealthResults;
   const generation = ++systemReferenceHealthScanGeneration;
-  systemReferenceHealthResults.clear();
+  const revision = systemReferenceHealthRevision;
+  const nextResults = new Map();
+  let failed = false;
+  systemReferenceHealthProgress = "Loading saved screens…";
   const scan = (async () => {
     const loadedScreens = [];
     for (const screenItem of availableScreens || []) {
@@ -7527,28 +7558,42 @@ const scanSystemReferenceHealth = async ({ force = false } = {}) => {
         screenCache.set(screenItem.ref, parsed);
         loadedScreens.push({ screenItem, parsed });
       } catch (error) {
+        failed = true;
+        nextResults.set(screenItem.ref, [{ severity: "warning", category: "screen", message: `Could not load screen: ${error.message}`, source: { value: screenItem.ref } }]);
         console.warn(`[reference-health] Could not load ${screenItem.ref}:`, error);
       }
+      systemReferenceHealthProgress = `Loaded ${loadedScreens.length} of ${availableScreens.length} saved screens…`;
       renderSystemReferenceHealthBadge();
       await new Promise((resolve) => window.requestAnimationFrame(resolve));
     }
     // Evaluate only after every screen is cached so target-screen aliases are
     // validated consistently regardless of file ordering.
+    let checked = 0;
     for (const { screenItem, parsed } of loadedScreens) {
       if (generation !== systemReferenceHealthScanGeneration) return;
       try {
         const issues = evaluateReferenceHealthForScreen(parsed);
-        if (issues.length) systemReferenceHealthResults.set(screenItem.ref, issues);
+        nextResults.set(screenItem.ref, issues);
       } catch (error) {
+        failed = true;
+        nextResults.set(screenItem.ref, [{ severity: "warning", category: "screen", message: `Could not check screen: ${error.message}`, source: { value: screenItem.ref } }]);
         console.warn(`[reference-health] Could not evaluate ${screenItem.ref}:`, error);
       }
+      systemReferenceHealthProgress = `Checked ${++checked} of ${loadedScreens.length} saved screens…`;
       renderSystemReferenceHealthBadge();
       await new Promise((resolve) => window.requestAnimationFrame(resolve));
+    }
+    if (generation === systemReferenceHealthScanGeneration) {
+      systemReferenceHealthResults = nextResults;
+      systemReferenceHealthHasScan = true;
+      systemReferenceHealthStale = failed || revision !== systemReferenceHealthRevision;
     }
   })().finally(() => {
     if (generation === systemReferenceHealthScanGeneration) {
       systemReferenceHealthScanPromise = null;
+      systemReferenceHealthProgress = "";
       renderSystemReferenceHealthBadge();
+      if (referenceHealthOverlay?.querySelector("[data-system-ref-summary]")) renderCachedSystemReferenceHealth(referenceHealthOverlay);
     }
   });
   systemReferenceHealthScanPromise = scan;
@@ -7957,29 +8002,35 @@ const openSystemReferenceIssue = (screenId, issue) => {
   applyScreenSelection(screenItem.ref, screenItem.path);
 };
 
-const openSystemReferenceHealth = async () => {
+const openSystemReferenceHealth = () => {
   closeReferenceHealth();
   const overlay = document.createElement("div");
   overlay.className = "reference-health-overlay";
   overlay.setAttribute("role", "dialog");
   overlay.setAttribute("aria-modal", "true");
-  overlay.innerHTML = `<section class="reference-health-panel"><header><div><h2>System Reference Health</h2><p data-system-ref-summary>Checking saved screens…</p></div><button type="button" data-ref-close>Close</button></header><div class="reference-health-list"><div class="reference-health-empty">Checking saved screens…</div></div></section>`;
+  overlay.innerHTML = `<section class="reference-health-panel"><header><div><h2>System Reference Health</h2><p data-system-ref-summary></p></div><button type="button" data-system-ref-scan>Scan All Screens</button><button type="button" data-ref-close>Close</button></header><div class="reference-health-list"><div class="reference-health-empty">Checking saved screens…</div></div></section>`;
   overlay.querySelector("[data-ref-close]")?.addEventListener("click", closeReferenceHealth);
   overlay.addEventListener("click", (event) => { if (event.target === overlay) closeReferenceHealth(); });
   document.body.appendChild(overlay);
   referenceHealthOverlay = overlay;
-  await scanSystemReferenceHealth();
+  overlay.querySelector("[data-system-ref-scan]")?.addEventListener("click", () => {
+    void scanSystemReferenceHealth({ force: true });
+  });
+  renderCachedSystemReferenceHealth(overlay);
+  renderSystemReferenceHealthBadge();
+};
+
+const renderCachedSystemReferenceHealth = (overlay) => {
   if (referenceHealthOverlay !== overlay) return;
   const groups = [...systemReferenceHealthResults.entries()]
     .filter(([, issues]) => issues.length)
     .sort(([left], [right]) => left.localeCompare(right, undefined, { numeric: true, sensitivity: "base" }));
-  const total = groups.reduce((sum, [, issues]) => sum + issues.length, 0);
   const summaryText = overlay.querySelector("[data-system-ref-summary]");
-  if (summaryText) summaryText.textContent = `${total} item${total === 1 ? "" : "s"} across ${groups.length} screen${groups.length === 1 ? "" : "s"} need attention.`;
+  if (summaryText) summaryText.textContent = getSystemReferenceHealthSummary();
   const list = overlay.querySelector(".reference-health-list");
   list.textContent = "";
   if (!groups.length) {
-    list.innerHTML = '<div class="reference-health-empty">All saved screen references are valid.</div>';
+    list.innerHTML = `<div class="reference-health-empty">${!systemReferenceHealthHasScan ? "No system scan results yet. Select Scan All Screens." : systemReferenceHealthStale ? "No issues in the cached results. Results are out of date." : "All checked screen references are valid."}</div>`;
   } else {
     groups.forEach(([screenId, issues]) => {
       const group = document.createElement("details");
@@ -12713,6 +12764,10 @@ const scheduleWsSubscribeRefresh = () => {
   if (wsSubscribeTimer) return;
   wsSubscribeTimer = setTimeout(() => {
     wsSubscribeTimer = null;
+    if (isEditMode && typeof isCompactTagBindingBusy === "function" && isCompactTagBindingBusy()) {
+      scheduleWsSubscribeRefresh();
+      return;
+    }
     updateWsSubscriptions();
     scheduleTagSeedRefresh();
   }, 100);
@@ -13633,7 +13688,7 @@ const loadTags = async () => {
     tagsCacheVersion += 1;
     refreshTagBindingCatalogOptions();
     invalidateReferenceHealthCache();
-    if (isEditMode) void scanSystemReferenceHealth({ force: true });
+    invalidateSystemReferenceHealth();
     const repairedScreenReferences = repairScreenTagConnections(currentScreenObj);
     if (repairedScreenReferences > 0) {
       reconcileReferenceHealthMetadata();
@@ -16738,6 +16793,11 @@ const openPopup = (screenId, requestedOptions = null) => {
 };
 
 const renderScreen = ({ refreshReferenceHealth = true } = {}) => {
+  if (isEditMode && typeof compactTagEditDepth !== "undefined" && compactTagEditDepth > 0) {
+    compactTagRenderPending = true;
+    return;
+  }
+  if (typeof compactTagRenderPending !== "undefined") compactTagRenderPending = false;
   runtimeRenderIndex = null;
   syncEditorPaneCanvasGesture();
   if (!hmiSvg || !currentScreenObj) return;
@@ -18745,6 +18805,10 @@ const renderSelectedReferenceProperties = (obj) => {
 };
 
 const updatePropertiesPanel = () => {
+  if (isEditMode && typeof compactTagEditDepth !== "undefined" && compactTagEditDepth > 0) {
+    compactTagRenderPending = true;
+    return;
+  }
   if (isEditMode && currentScreenObj?.layers) {
     selectedIndices = selectedIndices.filter(index => objectOnEditableLayer(getActiveObjects()?.[index]));
   }
@@ -20752,7 +20816,7 @@ const saveJsoncEditor = async () => {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     screenSaveSync.notify({ ref: currentScreenId, path: currentScreenPath });
     invalidateSystemReferenceHealth();
-    if (isEditMode && tagCatalogLoaded) void scanSystemReferenceHealth({ force: true });
+
     if (editorStatus) editorStatus.textContent = "Saved.";
     setDirty(false);
   } catch (error) {
@@ -20948,7 +21012,7 @@ async function refreshScreensList() {
         : "Startup screen not found.";
       showStartupEmptyScreen(reason);
     }
-    if (isEditMode && tagCatalogLoaded) void scanSystemReferenceHealth({ force: true });
+
   } catch (error) {
     if (isEditMode) {
       if (editorStatus) editorStatus.textContent = `Failed to list screens: ${error.message}`;
@@ -26819,6 +26883,38 @@ function renderCompactTagBindingRows() {
   });
 }
 
+// Persist edits immediately, but do not rebuild the canvas or replace controls
+// between choosing a connection and entering the tag next to it.
+let compactTagEditDepth = 0;
+let compactTagRenderPending = false;
+let compactTagRefreshTimer = null;
+
+function isCompactTagBindingBusy() {
+  return compactTagEditDepth > 0
+    || Boolean(typeof activeCompactTagBindingId !== "undefined" && activeCompactTagBindingId)
+    || Boolean(document.activeElement?.closest?.(".compact-binding-row"));
+}
+
+function scheduleCompactTagRefresh() {
+  if (!compactTagRenderPending || compactTagRefreshTimer !== null) return;
+  compactTagRefreshTimer = window.setTimeout(() => {
+    compactTagRefreshTimer = null;
+    if (!compactTagRenderPending) return;
+    if (isCompactTagBindingBusy()) { scheduleCompactTagRefresh(); return; }
+    compactTagRenderPending = false;
+    renderScreen({ refreshReferenceHealth: false });
+  }, 200);
+}
+
+function applyCompactTagEdit(apply) {
+  compactTagEditDepth += 1;
+  try { return apply(); }
+  finally {
+    compactTagEditDepth -= 1;
+    scheduleCompactTagRefresh();
+  }
+}
+
 function registerCompactTagBinding(config) {
   if (!config?.read || !config?.apply || !config?.id) return;
   const existingIndex = compactTagBindingConfigs.findIndex((entry) => entry.id === config.id);
@@ -26873,20 +26969,25 @@ function registerCompactTagBinding(config) {
     if (pendingEditTimer !== null) window.clearTimeout(pendingEditTimer);
     pendingEditTimer = null;
   };
-  editorConnectionInput.addEventListener("change", () => config.apply(readEditedBinding()));
+  editorConnectionInput.addEventListener("change", () => {
+    cancelPending();
+    applyCompactTagEdit(() => config.apply(readEditedBinding()));
+  });
   if (typeof config.applyLive === "function") {
     editorTagInput.addEventListener("input", () => {
       cancelPending();
       pendingEditTimer = window.setTimeout(() => {
         pendingEditTimer = null;
-        config.applyLive(readEditedBinding());
+        applyCompactTagEdit(() => config.applyLive(readEditedBinding()));
       }, 350);
     });
   }
   editorTagInput.addEventListener("change", () => {
     cancelPending();
-    if (typeof config.applyLive === "function") config.applyLive(readEditedBinding());
-    else config.apply(readEditedBinding());
+    applyCompactTagEdit(() => {
+      if (typeof config.applyLive === "function") config.applyLive(readEditedBinding());
+      else config.apply(readEditedBinding());
+    });
   });
 
   row.append(keyEl, editorConnectionInput, editorTagInput, button);
