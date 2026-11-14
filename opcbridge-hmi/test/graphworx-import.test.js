@@ -452,7 +452,7 @@ test("collapses a flashing bordered GraphWorX alarm label into one native text o
   assert.equal(banner.borderStyle, "outset");
   assert.equal(banner.visibility.defaultVisible, false);
   assert.equal(banner.visibility.rules[0].tag, sourceTag);
-  assert.equal(banner.visibility.rules[0].invert, true);
+  assert.equal(banner.visibility.rules[0].invert, false);
   assert.equal(banner.visibility.rules[0].visible, undefined);
   assert.equal(banner.visibility.rules[0].flashEnabled, true);
   assert.equal(banner.visibility.rules[0].flashRate, "slow");

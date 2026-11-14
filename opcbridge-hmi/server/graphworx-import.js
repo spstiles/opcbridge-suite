@@ -706,6 +706,8 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
       .filter((item) => String(item.sourceExpression || "").trim())
       .map((item) => {
       const binding = unresolvedBinding(item.sourceExpression);
+      const equalZero = String(item.comparison || "").trim().toLowerCase() === "equalzero";
+      if (equalZero && binding.sourceType === "expression") binding.expression = `(${binding.expression}) == 0`;
       const target = String(item.target || "").toLowerCase();
       const strokeTarget = obj.type === "line" || obj.type === "pipe" || target.includes("stroke") || target.includes("border") || (obj.type === "text" && target.includes("background"));
       const textTarget = obj.type === "group" && target.includes("foreground");
@@ -713,8 +715,8 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
       return {
         ...binding,
         sourceTarget: item.target || "",
-        mode: String(item.animationMode || "").toLowerCase() === "discrete" ? "threshold" : "",
-        threshold: 0,
+        mode: equalZero ? "equals" : (String(item.animationMode || "").toLowerCase() === "discrete" ? "threshold" : ""),
+        ...(equalZero ? { match: "0" } : {}),
         flashEnabled: toggleRate > 0,
         flashRate: toggleRate > 0 && toggleRate <= 500 ? "fast" : "slow",
         flashWhen: true,
@@ -739,11 +741,14 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
       const toggleRate = num(hidden.periodicToggleRate, 0);
       const comparison = String(hidden.comparison || "").trim().toLowerCase();
       const equalityToZero = comparison.includes("equalzero") && !comparison.includes("notequal");
+      const binding = unresolvedBinding(hidden.sourceExpression);
+      if (equalityToZero && binding.sourceType === "expression") binding.expression = `(${binding.expression}) == 0`;
+      // A flashing alarm whose inactive state is hidden should show/flash on
+      // its activation condition. Plain Hide rules still reverse that condition.
+      const flashWhileActive = toggleRate > 0 && hidden.dynamicStateWhenToggleOff;
       return {
-        ...unresolvedBinding(hidden.sourceExpression),
-        // GwxHide is the inverse of the equivalent show condition. Keep one
-        // native visibility model and represent that difference with Invert.
-        invert: true,
+        ...binding,
+        invert: !flashWhileActive,
         ...(equalityToZero ? { mode: "equals", match: "0" } : {}),
         flashEnabled: toggleRate > 0,
         flashRate: toggleRate > 0 && toggleRate <= 500 ? "fast" : "slow",
