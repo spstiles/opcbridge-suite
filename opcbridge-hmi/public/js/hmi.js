@@ -1,3 +1,8 @@
+// These are read by the synchronous editor startup below.
+let compactTagEditDepth = 0;
+let compactTagRenderPending = false;
+let compactTagRefreshTimer = null;
+
 const toolbar = document.getElementById("toolbar");
 const editorPane = document.getElementById("editor-pane");
 const editorResizer = document.getElementById("editor-resizer");
@@ -26885,9 +26890,6 @@ function renderCompactTagBindingRows() {
 
 // Persist edits immediately, but do not rebuild the canvas or replace controls
 // between choosing a connection and entering the tag next to it.
-let compactTagEditDepth = 0;
-let compactTagRenderPending = false;
-let compactTagRefreshTimer = null;
 
 function isCompactTagBindingBusy() {
   return compactTagEditDepth > 0

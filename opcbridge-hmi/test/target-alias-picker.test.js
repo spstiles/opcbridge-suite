@@ -35,6 +35,7 @@ async function editor(kind, definitionType = 'tag', initialMapping = null) {
     tagPickerConnectionId: value => value,
     openCompactTagBindingModal: id => { opened = id; },
     showHmiToast: message => { toast = message; }, renderReferenceHealthBadge() {} });
+  vm.runInContext(source.slice(0, source.indexOf('const toolbar =')), ctx);
   vm.runInContext(source.slice(source.indexOf('function registerCompactTagBinding('), source.indexOf('function updateButtonWriteBinding(')), ctx);
   vm.runInContext(source.slice(source.indexOf('function renderCompactTagBindingRows('), source.indexOf('function registerCompactTagBinding(')), ctx);
   vm.runInContext(source.slice(source.indexOf('let targetAliasRenderSequence ='), source.indexOf('const renderIndicatorStatesEditor =')), ctx);

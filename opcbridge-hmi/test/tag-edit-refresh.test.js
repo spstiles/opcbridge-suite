@@ -13,7 +13,8 @@ function setup(){
     renderReferenceHealthBadge:()=>counts.health++,getActiveObjects:()=>[],selectedIndices:[],renderSelectedReferenceProperties(){},
     updateWsSubscriptions:()=>counts.subscriptions++,scheduleTagSeedRefresh:()=>counts.seeds++});
   function include(start,end){const a=source.indexOf(start);vm.runInContext(source.slice(a,source.indexOf(end,a)),ctx);}
-  include('let compactTagEditDepth =','function registerCompactTagBinding(');
+  vm.runInContext(source.slice(0, source.indexOf('const toolbar =')), ctx);
+  include('function isCompactTagBindingBusy()','function registerCompactTagBinding(');
   let a=source.indexOf('const renderScreen =');
   vm.runInContext(source.slice(a,source.indexOf('  runtimeRenderIndex = null;',a))+'paint();\n};',ctx);
   a=source.indexOf('const updatePropertiesPanel =');
@@ -46,4 +47,20 @@ test('picker keeps deferred work pending and a normal redraw absorbs it without 
 test('failed edits restore the transaction depth so later screen updates are not suppressed',()=>{
   const f=setup();assert.throws(()=>vm.runInContext(`applyCompactTagEdit(()=>{throw Error('edit failed')})`,f.ctx),/edit failed/);
   vm.runInContext('renderScreen()',f.ctx);assert.equal(f.counts.renders,1);assert.equal(f.timers.size,0);
+});
+
+
+test('refresh state is initialized before synchronous editor startup invokes rendering',()=>{
+  const ctx=vm.createContext({isEditMode:true});
+  const renderStart=source.indexOf('const renderScreen =');
+  const propertiesStart=source.indexOf('const updatePropertiesPanel =');
+  const earlyRender=source.slice(renderStart,source.indexOf('  runtimeRenderIndex = null;',renderStart))+'};';
+  const earlyProperties=source.slice(propertiesStart,source.indexOf('  if (isEditMode && currentScreenObj?.layers)',propertiesStart))+'};';
+  // Keep the application's statement order, with an early startup render before
+  // the shared binding controls initialize. typeof on an uninitialized let throws.
+  const declarations=source.match(/^let compactTag(?:EditDepth|RenderPending|RefreshTimer).*$/gm).join('\n');
+  const beforeStartup=source.indexOf('let compactTagEditDepth')<source.indexOf('bindEditorTabs();');
+  const program=beforeStartup?declarations+'\n'+earlyRender+'\n'+earlyProperties+'\nrenderScreen();updatePropertiesPanel();'
+    :earlyRender+'\n'+earlyProperties+'\nrenderScreen();updatePropertiesPanel();\n'+declarations;
+  assert.doesNotThrow(()=>vm.runInContext(program,ctx));
 });
