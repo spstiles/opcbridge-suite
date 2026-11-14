@@ -11041,7 +11041,7 @@ const getRotationPivot = (obj, boundsOverride = null, offset = { x: 0, y: 0 }) =
   };
 };
 
-const getRotationAutomationValue = (obj) => {
+const getRotationAutomationValue = (obj, rampPhase = null) => {
   if (!obj || isEditMode) return 0;
   const sourceAutomation = obj.rotationAutomation;
   const automation = normalizeRotationAutomationState(sourceAutomation);
@@ -11057,6 +11057,12 @@ const getRotationAutomationValue = (obj) => {
     numeric = getStableAutomationNumber(automation, raw, 0, sourceAutomation || automation);
   }
   if (numeric === null) return 0;
+  if (Number(automation.rampPeriodMs) > 0) {
+    const phase = rampPhase == null
+      ? ((document.timeline?.currentTime ?? performance.now()) % automation.rampPeriodMs) / automation.rampPeriodMs
+      : rampPhase;
+    numeric *= Number(automation.rampMaximum || 100) * phase;
+  }
   const inputMin = Number.isFinite(Number(automation.inputMin)) ? Number(automation.inputMin) : 0;
   const inputMax = Number.isFinite(Number(automation.inputMax)) ? Number(automation.inputMax) : 1;
   const angleStart = Number.isFinite(Number(automation.angleStart)) ? Number(automation.angleStart) : 0;
@@ -11070,20 +11076,34 @@ const getRotationAutomationValue = (obj) => {
   }
   let delta = angleEnd - angleStart;
   if (direction === "cw") {
-    delta = ((angleEnd - angleStart) % 360 + 360) % 360;
+    delta = Math.abs(delta) >= 360 ? Math.abs(delta) : ((delta % 360 + 360) % 360);
   } else if (direction === "ccw") {
-    delta = -(((angleStart - angleEnd) % 360 + 360) % 360);
+    delta = Math.abs(delta) >= 360 ? -Math.abs(delta) : -(((angleStart - angleEnd) % 360 + 360) % 360);
   } else {
     delta = ((angleEnd - angleStart + 540) % 360) - 180;
   }
   return angleStart + (delta * t);
 };
 
-const getObjectRotationDegrees = (obj) => {
+const getObjectRotationDegrees = (obj, rampPhase = null) => {
   const multiStateRotation = getMultiStateRotationOverride(obj);
   if (multiStateRotation !== null) return multiStateRotation;
   const base = Number.isFinite(Number(obj?.rotation)) ? Number(obj.rotation) : 0;
-  return base + getRotationAutomationValue(obj);
+  return base + getRotationAutomationValue(obj, rampPhase);
+};
+
+const animateImportedRotationRamp = (element, obj) => {
+  const period = Number(obj?.rotationAutomation?.rampPeriodMs);
+  if (isEditMode || !(period > 0) || !element?.animate) return false;
+  const from = getObjectRotationDegrees(obj, 0), to = getObjectRotationDegrees(obj, 1);
+  if (from === to) return false;
+  const pivot = getRotationPivot(obj);
+  element.style.transformOrigin = `${Number(pivot?.localX ?? obj.w / 2)}px ${Number(pivot?.localY ?? obj.h / 2)}px`;
+  const animation = element.animate([{ transform: `rotate(${from}deg)` }, { transform: `rotate(${to}deg)` }],
+    { duration: period, iterations: Infinity, easing: "linear" });
+  // Match the browser timeline phase across tag updates and popup redraws.
+  animation.startTime = 0;
+  return true;
 };
 
 const supportsMotionPose = (obj) => Boolean(obj && MOTION_POSE_TYPES.has(String(obj.type || "")));
@@ -15022,7 +15042,12 @@ const renderObjectContentInto = (parent, obj, inheritedGroupColorOverrides = nul
     const h = Number(obj.h ?? 0);
     const groupEl = document.createElementNS(ns, "g");
     let transform = `translate(${x} ${y})`;
-    if (hasRotation) {
+    let drawingHost = groupEl;
+    const rampHost = !isEditMode && Number(obj.rotationAutomation?.rampPeriodMs) > 0
+      ? document.createElementNS(ns, "g") : null;
+    const hasRamp = rampHost && animateImportedRotationRamp(rampHost, obj);
+    if (hasRamp) { groupEl.appendChild(rampHost); drawingHost = rampHost; }
+    if (hasRotation && !hasRamp) {
       const pivot = getRotationPivot(obj);
       const localX = Number(pivot?.localX ?? w / 2);
       const localY = Number(pivot?.localY ?? h / 2);
@@ -15032,7 +15057,7 @@ const renderObjectContentInto = (parent, obj, inheritedGroupColorOverrides = nul
     parent.appendChild(groupEl);
     const nextInheritedGroupColorOverrides = mergeGroupColorOverrides(inheritedGroupColorOverrides, getGroupColorOverrides(obj));
     const children = Array.isArray(obj.children) ? obj.children : [];
-    children.forEach((child) => renderObjectIntoWithOffset(groupEl, child, 0, 0, nextInheritedGroupColorOverrides));
+    children.forEach((child) => renderObjectIntoWithOffset(drawingHost, child, 0, 0, nextInheritedGroupColorOverrides));
     return;
   }
   if (obj.type === "image") {

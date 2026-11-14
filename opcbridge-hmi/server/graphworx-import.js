@@ -217,10 +217,39 @@ const sampleGraphWorxPathFigures = (figures, curveSteps = 12) => {
         });
       }
     } else if (upper === "A") {
-      // Preserve the arc endpoint when importing into the editable spline.
-      // Intermediate spline points still produce a curved, selectable path.
-      take(); take(); take(); take(); take();
-      push(point());
+      let rx = Math.abs(take()), ry = Math.abs(take());
+      const phi = take() * Math.PI / 180;
+      const largeArc = Boolean(take()), sweep = Boolean(take());
+      const origin = { ...current };
+      const end = point();
+      if (!rx || !ry || (origin.x === end.x && origin.y === end.y)) {
+        push(end);
+        continue;
+      }
+      const cos = Math.cos(phi), sin = Math.sin(phi);
+      const dx = (origin.x - end.x) / 2, dy = (origin.y - end.y) / 2;
+      const xp = cos * dx + sin * dy, yp = -sin * dx + cos * dy;
+      const scale = Math.max(1, Math.sqrt(xp * xp / (rx * rx) + yp * yp / (ry * ry)));
+      rx *= scale; ry *= scale;
+      const denominator = rx * rx * yp * yp + ry * ry * xp * xp;
+      const factor = (largeArc === sweep ? -1 : 1) * Math.sqrt(Math.max(0,
+        (rx * rx * ry * ry - denominator) / denominator));
+      const cxp = factor * rx * yp / ry, cyp = -factor * ry * xp / rx;
+      const cx = cos * cxp - sin * cyp + (origin.x + end.x) / 2;
+      const cy = sin * cxp + cos * cyp + (origin.y + end.y) / 2;
+      const startAngle = Math.atan2((yp - cyp) / ry, (xp - cxp) / rx);
+      const endAngle = Math.atan2((-yp - cyp) / ry, (-xp - cxp) / rx);
+      let delta = endAngle - startAngle;
+      if (sweep && delta < 0) delta += Math.PI * 2;
+      if (!sweep && delta > 0) delta -= Math.PI * 2;
+      const steps = Math.max(2, Math.ceil(Math.abs(delta) / (Math.PI / 2) * curveSteps));
+      for (let step = 1; step <= steps; step += 1) {
+        const angle = startAngle + delta * step / steps;
+        push(step === steps ? end : {
+          x: cx + cos * rx * Math.cos(angle) - sin * ry * Math.sin(angle),
+          y: cy + sin * rx * Math.cos(angle) + cos * ry * Math.sin(angle)
+        });
+      }
     } else if (upper === "Z") {
       push({ ...start });
       command = "";
@@ -380,7 +409,12 @@ const sourceMetadata = (sourceType, node, extra = {}) => {
       levelCompatible: analog && (vertical || horizontal)
     };
   });
-  const rotations = descendants(node, (name) => name === "gwx:GwxRotation").map((item) => ({ kind: "rotation", sourceExpression: String(item.DataSource || "") }));
+  const rotations = descendants(node, (name) => name === "gwx:GwxRotation").map((item) => ({
+    kind: "rotation", sourceExpression: String(item.DataSource || ""),
+    inputMin: num(item.LowLimitSource, 0), inputMax: num(item.HighLimitSource, 100),
+    angleStart: num(item.StartAngle, 0), angleEnd: num(item.EndAngle, 0),
+    direction: String(item.Clockwise || "true").toLowerCase() === "false" ? "ccw" : "cw"
+  }));
   const processPoints = descendants(node, (name) => name === "gwx:GwxProcessPoint").map((item) => ({
     kind: "states",
     sourceExpression: String(item.DataSource || ""),
@@ -719,7 +753,23 @@ const convertGraphWorx = (xml, { filename = "Imported.gdfx" } = {}) => {
     });
     if (hiddenRules.length) obj.visibility = { enabled: true, defaultVisible: false, rules: hiddenRules, selectedRuleIndex: 0 };
     const rotation = dynamics.rotations?.[0];
-    if (rotation) obj.rotationAutomation = unresolvedBinding(rotation.sourceExpression);
+    if (rotation) {
+      // Recognize the run-status multiplied by a local rotation ramp used by
+      // GraphWorX equipment symbols. Only the run status needs OPC mapping.
+      const ramp = rotation.sourceExpression.match(/^x\s*=\s*\{\{([^{}]+)\}\}\s*\*\s*\{\{localsim:ramp:Rotation:::::(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)\}\}\s*$/i);
+      const supportedRamp = ramp && Number(ramp[2]) > 0 && Number(ramp[3]) > 0;
+      obj.rotationAutomation = {
+        ...unresolvedBinding(supportedRamp ? ramp[1] : rotation.sourceExpression),
+        inputMin: rotation.inputMin, inputMax: rotation.inputMax,
+        angleStart: rotation.angleStart, angleEnd: rotation.angleEnd, direction: rotation.direction,
+        ...(supportedRamp ? { rampPeriodMs: Number(ramp[2]), rampMaximum: Number(ramp[3]) } : {})
+      };
+      if (supportedRamp) {
+        for (const ref of obj.externalReferences || []) {
+          if (ref.automation === "rotation" && ref.source.value === rotation.sourceExpression) ref.source.value = ramp[1];
+        }
+      }
+    }
     const size = dynamics.sizes?.find((item) => item.levelCompatible);
     if (size) {
       obj.levelAutomation = {

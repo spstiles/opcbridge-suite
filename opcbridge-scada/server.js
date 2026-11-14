@@ -2790,6 +2790,8 @@ function requireUiAuth(req, res) {
 }
 
 function isAllowedOpcbridgePath(upstreamPathname) {
+  // Read-only saved connections/tags used by alarm CSV import and export.
+  if (upstreamPathname === '/workspace/config') return true;
   if (upstreamPathname === '/' || upstreamPathname === '/dashboard' || upstreamPathname === '/editor') return true;
   if (upstreamPathname === '/health' || upstreamPathname === '/tags' || upstreamPathname === '/tags/query' || upstreamPathname === '/events') return true;
   if (['/polling/demand', '/polling/demand/register', '/polling/demand/release'].includes(upstreamPathname)) return true;
