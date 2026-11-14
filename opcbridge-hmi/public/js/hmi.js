@@ -27600,10 +27600,9 @@ const initializeRotationControls = () => {
     };
     const syncSourceVisibility = (sourceType) => {
       const showExpression = sourceType === "expression";
-      connectionRow.classList.toggle("is-hidden", showExpression);
-      connectionRow.hidden = showExpression;
-      tagRow.classList.toggle("is-hidden", showExpression);
-      tagRow.hidden = showExpression;
+      const binding = getCompactTagBindingConfig(`rotation-${definition.id}`);
+      binding?.row?.classList.toggle("is-hidden", showExpression);
+      if (binding?.row) binding.row.hidden = showExpression;
       expressionRow.classList.toggle("is-hidden", !showExpression);
       expressionRow.hidden = !showExpression;
     };
@@ -27649,10 +27648,12 @@ const initializeRotationControls = () => {
     });
     registerCompactTagBinding({
       id: `rotation-${definition.id}`,
+      container: autoFields,
+      beforeEl: expressionRow,
+      buttonLabel: "Source",
       connectionInput,
       tagInput,
       modalTitle: `${definition.title} Tag`,
-      inlineOnly: true,
       read: () => ({
         connection_id: connectionIdFromFriendlyInput(connectionInput),
         tag: String(tagInput.value || "").trim()
@@ -27777,12 +27778,13 @@ const syncRotationControls = (obj) => {
     setSelectValueSafe(control.sourceTypeSelect, automation.sourceType || "tag");
     setTagBindingFieldValues(control.connectionInput, control.tagInput, automation);
     const unresolvedSource = automation.status === "unresolved" || Boolean(automation.sourceType !== "expression" && automation.sourceReference && !automation.connection_id);
-    control.connectionInput.classList.toggle("reference-error", unresolvedSource);
-    control.tagInput.classList.toggle("reference-error", unresolvedSource);
-    control.connectionRow.classList.toggle("is-hidden", automation.sourceType === "expression");
-    control.connectionRow.hidden = automation.sourceType === "expression";
-    control.tagRow.classList.toggle("is-hidden", automation.sourceType === "expression");
-    control.tagRow.hidden = automation.sourceType === "expression";
+    const binding = getCompactTagBindingConfig(`rotation-${control.id}`);
+    binding?.editorConnectionInput?.classList.toggle("reference-error", unresolvedSource);
+    binding?.editorTagInput?.classList.toggle("reference-error", unresolvedSource);
+    if (binding?.row) {
+      binding.row.classList.toggle("is-hidden", automation.sourceType === "expression");
+      binding.row.hidden = automation.sourceType === "expression";
+    }
     control.expressionRow.classList.toggle("is-hidden", automation.sourceType !== "expression");
     control.expressionRow.hidden = automation.sourceType !== "expression";
     const expressionSummary = formatAutomationExpressionForDisplay(automation.expression).trim();
