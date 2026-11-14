@@ -47,7 +47,9 @@ function runtime(direction='cw'){
   const ctx=vm.createContext({obj:object,isEditMode:false,document:{timeline:{currentTime:5000}},tagValueCache:new Map([['PLC.Run',1]]),
     normalizeTagCacheKey:(conn,tag)=>`${conn}.${tag}`,getStableAutomationNumber:(_,value)=>Number(value),
     getMultiStateRotationOverride:()=>null,getRotationPivot:()=>({localX:50,localY:50})});
-  let start=source.indexOf('const normalizeRotationAutomationState =');
+  let start=source.indexOf('const coerceTagBoolean =');
+  vm.runInContext(source.slice(start,source.indexOf('\n};',start)+3),ctx);
+  start=source.indexOf('const normalizeRotationAutomationState =');
   vm.runInContext(source.slice(start,source.indexOf('const normalizeMotionAutomationState =',start)),ctx);
   start=source.indexOf('const getRotationAutomationValue =');
   vm.runInContext(source.slice(start,source.indexOf('const supportsMotionPose =',start)),ctx);
@@ -68,9 +70,52 @@ test('full-turn ramps rotate over time in both directions and stop with the run 
 test('mounted ramp uses browser animation with a stable timeline and skips stopped equipment',()=>{
   const ctx=runtime();let keyframes,options;
   const animation={};ctx.element={style:{},animate:(frames,settings)=>{keyframes=frames;options=settings;return animation;}};
-  assert.equal(vm.runInContext('animateImportedRotationRamp(element,obj)',ctx),true);
+  assert.equal(vm.runInContext('animateRotationAutomation(element,obj)',ctx),true);
   assert.equal(options.duration,20000);assert.equal(options.iterations,Infinity);
   assert.equal(keyframes[1].transform,'rotate(360deg)');assert.equal(animation.startTime,0);
   assert.equal(ctx.element.style.transformOrigin,'50px 50px');
-  ctx.tagValueCache.set('PLC.Run',0);assert.equal(vm.runInContext('animateImportedRotationRamp(element,obj)',ctx),false);
+  ctx.tagValueCache.set('PLC.Run',0);assert.equal(vm.runInContext('animateRotationAutomation(element,obj)',ctx),false);
+});
+
+
+test('editor-created continuous rotation uses its bit as enable and seconds per turn without analog mapping',()=>{
+  const ctx=runtime();
+  ctx.obj.rotationAutomation={enabled:true,mode:'continuous',connection_id:'PLC',tag:'Run',rampPeriodMs:4000,direction:'cw'};
+  ctx.document.timeline.currentTime=1000;
+  for(const value of [true,1,'true','1']){
+    ctx.tagValueCache.set('PLC.Run',value);
+    assert.equal(vm.runInContext('getRotationAutomationValue(obj)',ctx),90);
+  }
+  for(const value of [false,0,'false','0']){
+    ctx.tagValueCache.set('PLC.Run',value);
+    assert.equal(vm.runInContext('getRotationAutomationValue(obj)',ctx),0);
+  }
+  ctx.obj.rotationAutomation.sourceType='expression';ctx.evaluateAutomationExpression=()=>true;
+  assert.equal(vm.runInContext('getRotationAutomationValue(obj)',ctx),90);
+  ctx.obj.rotationAutomation.direction='ccw';assert.equal(vm.runInContext('getRotationAutomationValue(obj)',ctx),-90);
+});
+
+test('position mode remains an analog map even when switching from continuous with a retained period',()=>{
+  const ctx=runtime();ctx.obj.rotationAutomation={enabled:true,mode:'position',connection_id:'PLC',tag:'Run',rampPeriodMs:4000,inputMin:0,inputMax:100,angleStart:0,angleEnd:90,direction:'cw'};
+  ctx.tagValueCache.set('PLC.Run',50);assert.equal(vm.runInContext('getRotationAutomationValue(obj)',ctx),45);
+  ctx.element={animate(){throw Error('Position mode must not animate');}};
+  assert.equal(vm.runInContext('animateRotationAutomation(element,obj)',ctx),false);
+});
+
+test('continuous rotation wraps different object types once around their world pivot',()=>{
+  for(const type of ['group','rect','ellipse','text','line','button']){
+    const ctx=runtime();ctx.obj.type=type;ctx.obj.x=100;ctx.obj.y=200;
+    ctx.getRotationPivot=()=>({localX:50,localY:50,worldX:150,worldY:250});
+    let drawn,host;
+    ctx.getDisplayObject=obj=>obj;ctx.applyGroupColorOverridesToObject=obj=>obj;ctx.shouldPaintObject=()=>true;
+    ctx.document.createElementNS=()=>({style:{},animate:()=>({})});
+    ctx.parent={appendChild:child=>{host=child;}};ctx.record=value=>{drawn=value;};
+    const start=source.indexOf('const renderObjectContentInto =');
+    const end=source.indexOf('  const ns = "http://www.w3.org/2000/svg";',start);
+    vm.runInContext(source.slice(start,end)+'record({object:obj,parent});\n};',ctx);
+    vm.runInContext('renderObjectContentInto(parent,obj)',ctx);
+    assert.equal(drawn.parent,host,type);assert.equal(host.style.transformOrigin,'150px 250px',type);
+    assert.equal(drawn.object.rotationAutomation,undefined,type);
+    assert.ok(ctx.obj.rotationAutomation,'saved configuration remains intact');
+  }
 });

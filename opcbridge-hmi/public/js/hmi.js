@@ -1097,6 +1097,11 @@ const normalizeRotationAutomationState = (value) => {
   else next.angleEnd = Number(next.angleEnd);
   const direction = String(next.direction || "shortest").trim().toLowerCase();
   next.direction = ["shortest", "cw", "ccw"].includes(direction) ? direction : "shortest";
+  next.mode = next.mode === "continuous" || (next.mode !== "position" && Number(next.rampPeriodMs) > 0) ? "continuous" : "position";
+  if (next.mode === "continuous") {
+    next.rampPeriodMs = Number(next.rampPeriodMs) > 0 ? Math.max(100, Number(next.rampPeriodMs)) : 5000;
+    if (next.direction === "shortest") next.direction = "cw";
+  }
   if (next.enabled === undefined) next.enabled = true;
   return next;
 };
@@ -11104,20 +11109,23 @@ const getRotationAutomationValue = (obj, rampPhase = null) => {
   if (!automation || automation.enabled === false) return 0;
   let numeric = null;
   if (automation.sourceType === "expression") {
-    numeric = getStableAutomationNumber(automation, evaluateAutomationExpression(automation.expression), 0, sourceAutomation || automation);
+    const raw = evaluateAutomationExpression(automation.expression);
+    numeric = getStableAutomationNumber(automation, automation.mode === "continuous" && raw != null ? (coerceTagBoolean(raw) ? 1 : 0) : raw, 0, sourceAutomation || automation);
   } else {
     const connectionId = String(automation.connection_id || "").trim();
     const tag = String(automation.tag || "").trim();
     if (!connectionId || !tag) return 0;
     const raw = tagValueCache.get(normalizeTagCacheKey(connectionId, tag));
-    numeric = getStableAutomationNumber(automation, raw, 0, sourceAutomation || automation);
+    numeric = getStableAutomationNumber(automation, automation.mode === "continuous" && raw != null ? (coerceTagBoolean(raw) ? 1 : 0) : raw, 0, sourceAutomation || automation);
   }
   if (numeric === null) return 0;
-  if (Number(automation.rampPeriodMs) > 0) {
+  if (automation.mode === "continuous") {
+    const start = Number(automation.angleStart) || 0;
+    if (!coerceTagBoolean(numeric)) return start;
     const phase = rampPhase == null
       ? ((document.timeline?.currentTime ?? performance.now()) % automation.rampPeriodMs) / automation.rampPeriodMs
       : rampPhase;
-    numeric *= Number(automation.rampMaximum || 100) * phase;
+    return start + (automation.direction === "ccw" ? -360 : 360) * phase;
   }
   const inputMin = Number.isFinite(Number(automation.inputMin)) ? Number(automation.inputMin) : 0;
   const inputMax = Number.isFinite(Number(automation.inputMax)) ? Number(automation.inputMax) : 1;
@@ -11148,13 +11156,16 @@ const getObjectRotationDegrees = (obj, rampPhase = null) => {
   return base + getRotationAutomationValue(obj, rampPhase);
 };
 
-const animateImportedRotationRamp = (element, obj) => {
-  const period = Number(obj?.rotationAutomation?.rampPeriodMs);
-  if (isEditMode || !(period > 0) || !element?.animate) return false;
+const animateRotationAutomation = (element, obj, worldCoordinates = false) => {
+  const automation = normalizeRotationAutomationState(obj?.rotationAutomation);
+  const period = Number(automation.rampPeriodMs);
+  if (isEditMode || automation.mode !== "continuous" || automation.enabled === false || !(period > 0) || !element?.animate) return false;
   const from = getObjectRotationDegrees(obj, 0), to = getObjectRotationDegrees(obj, 1);
   if (from === to) return false;
   const pivot = getRotationPivot(obj);
-  element.style.transformOrigin = `${Number(pivot?.localX ?? obj.w / 2)}px ${Number(pivot?.localY ?? obj.h / 2)}px`;
+  const px = worldCoordinates ? pivot?.worldX : pivot?.localX;
+  const py = worldCoordinates ? pivot?.worldY : pivot?.localY;
+  element.style.transformOrigin = `${Number(px ?? obj.w / 2)}px ${Number(py ?? obj.h / 2)}px`;
   const animation = element.animate([{ transform: `rotate(${from}deg)` }, { transform: `rotate(${to}deg)` }],
     { duration: period, iterations: Infinity, easing: "linear" });
   // Match the browser timeline phase across tag updates and popup redraws.
@@ -14989,6 +15000,15 @@ const renderObjectContentInto = (parent, obj, inheritedGroupColorOverrides = nul
   obj = getDisplayObject(obj);
   obj = applyGroupColorOverridesToObject(obj, inheritedGroupColorOverrides);
   if (!shouldPaintObject(obj)) return;
+  if (!isEditMode && obj.rotationAutomation && normalizeRotationAutomationState(obj.rotationAutomation).mode === "continuous") {
+    const rotationHost = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    if (animateRotationAutomation(rotationHost, obj, true)) {
+      parent.appendChild(rotationHost);
+      parent = rotationHost;
+      // The outer host owns rotation; draw the object and its shadows once.
+      obj = { ...obj, rotation: 0, rotationAutomation: undefined };
+    }
+  }
   const ns = "http://www.w3.org/2000/svg";
   const xhtml = "http://www.w3.org/1999/xhtml";
   const browserFlash = getBrowserVisibilityFlash(obj);
@@ -15102,12 +15122,7 @@ const renderObjectContentInto = (parent, obj, inheritedGroupColorOverrides = nul
     const h = Number(obj.h ?? 0);
     const groupEl = document.createElementNS(ns, "g");
     let transform = `translate(${x} ${y})`;
-    let drawingHost = groupEl;
-    const rampHost = !isEditMode && Number(obj.rotationAutomation?.rampPeriodMs) > 0
-      ? document.createElementNS(ns, "g") : null;
-    const hasRamp = rampHost && animateImportedRotationRamp(rampHost, obj);
-    if (hasRamp) { groupEl.appendChild(rampHost); drawingHost = rampHost; }
-    if (hasRotation && !hasRamp) {
+    if (hasRotation) {
       const pivot = getRotationPivot(obj);
       const localX = Number(pivot?.localX ?? w / 2);
       const localY = Number(pivot?.localY ?? h / 2);
@@ -15117,7 +15132,7 @@ const renderObjectContentInto = (parent, obj, inheritedGroupColorOverrides = nul
     parent.appendChild(groupEl);
     const nextInheritedGroupColorOverrides = mergeGroupColorOverrides(inheritedGroupColorOverrides, getGroupColorOverrides(obj));
     const children = Array.isArray(obj.children) ? obj.children : [];
-    children.forEach((child) => renderObjectIntoWithOffset(drawingHost, child, 0, 0, nextInheritedGroupColorOverrides));
+    children.forEach((child) => renderObjectIntoWithOffset(groupEl, child, 0, 0, nextInheritedGroupColorOverrides));
     return;
   }
   if (obj.type === "image") {
@@ -27309,7 +27324,7 @@ const updateSelectedObjectRotationConfig = (patch) => {
       ? Boolean(String(merged.expression || "").trim())
       : (String(merged.connection_id || "").trim() && String(merged.tag || "").trim());
     const isDefault =
-      !hasSource &&
+      !hasSource && merged.mode !== "continuous" &&
       Number(merged.inputMin ?? 0) === 0 &&
       Number(merged.inputMax ?? 1) === 1 &&
       Number(merged.angleStart ?? 0) === 0 &&
@@ -27338,6 +27353,7 @@ const getRotationAutomationSummary = (automation) => {
     if (!connectionId && !tag) return "(unbound)";
     summary = connectionId && tag ? `${connectionId} / ${tag}` : (connectionId || tag);
   }
+  if (normalized.mode === "continuous") return `${summary} · Continuous · ${normalized.rampPeriodMs / 1000}s/turn · ${normalized.direction.toUpperCase()}`;
   const inputMin = Number.isFinite(Number(normalized.inputMin)) ? Number(normalized.inputMin) : 0;
   const inputMax = Number.isFinite(Number(normalized.inputMax)) ? Number(normalized.inputMax) : 1;
   const angleStart = Number.isFinite(Number(normalized.angleStart)) ? Number(normalized.angleStart) : 0;
@@ -27445,6 +27461,16 @@ const initializeRotationControls = () => {
     sourceTypeRow.appendChild(sourceTypeLabel);
     sourceTypeRow.appendChild(sourceTypeSelect);
 
+    const modeRow = document.createElement("div"); modeRow.className = "prop-row";
+    const modeLabel = document.createElement("label"); modeLabel.textContent = "Rotation Mode";
+    const modeSelect = document.createElement("select");
+    modeSelect.innerHTML = '<option value="position">Position</option><option value="continuous">Continuous</option>';
+    modeRow.append(modeLabel, modeSelect);
+    const periodRow = document.createElement("div"); periodRow.className = "prop-row is-hidden"; periodRow.hidden = true;
+    const periodLabel = document.createElement("label"); periodLabel.textContent = "Seconds / Turn";
+    const periodInput = document.createElement("input"); periodInput.type = "number"; periodInput.min = "0.1"; periodInput.step = "0.1";
+    periodRow.append(periodLabel, periodInput);
+
     const connectionRow = document.createElement("div");
     connectionRow.className = "prop-row";
     const connectionLabel = document.createElement("label");
@@ -27545,7 +27571,9 @@ const initializeRotationControls = () => {
     directionRow.appendChild(directionLabel);
     directionRow.appendChild(directionSelect);
 
+    autoFields.appendChild(modeRow);
     autoFields.appendChild(sourceTypeRow);
+    autoFields.appendChild(periodRow);
     autoFields.appendChild(connectionRow);
     autoFields.appendChild(tagRow);
     autoFields.appendChild(expressionRow);
@@ -27570,6 +27598,7 @@ const initializeRotationControls = () => {
       enabledInput,
       autoFields,
       sourceTypeSelect,
+      modeSelect, periodInput, periodRow, inputMinRow, inputMaxRow, angleEndRow,
       connectionRow,
       connectionInput,
       tagRow,
@@ -27623,6 +27652,21 @@ const initializeRotationControls = () => {
     enabledInput.addEventListener("change", () => {
       syncAutoVisibility(enabledInput.checked);
       updateSelectedObjectRotationConfig({ rotationAutomation: { enabled: enabledInput.checked } });
+    });
+    modeSelect.addEventListener("change", () => {
+      const mode = modeSelect.value === "continuous" ? "continuous" : "position";
+      updateSelectedObjectRotationConfig({ rotationAutomation: {
+        mode, enabled: true,
+        ...(mode === "continuous" ? {
+          rampPeriodMs: Math.max(100, (Number(periodInput.value) || 5) * 1000),
+          direction: directionSelect.value === "ccw" ? "ccw" : "cw"
+        } : {})
+      } });
+    });
+    periodInput.addEventListener("change", () => {
+      const seconds = Number(periodInput.value);
+      if (!Number.isFinite(seconds) || seconds < 0.1) { periodInput.reportValidity(); return; }
+      updateSelectedObjectRotationConfig({ rotationAutomation: { mode: "continuous", rampPeriodMs: seconds * 1000, enabled: true } });
     });
     sourceTypeSelect.addEventListener("change", () => {
       const sourceType = sourceTypeSelect.value === "expression" ? "expression" : "tag";
@@ -27796,6 +27840,15 @@ const syncRotationControls = (obj) => {
     setInputValueSafe(control.angleStartInput, Number.isFinite(Number(automation.angleStart)) ? Number(automation.angleStart) : 0);
     setInputValueSafe(control.angleEndInput, Number.isFinite(Number(automation.angleEnd)) ? Number(automation.angleEnd) : 0);
     setSelectValueSafe(control.directionSelect, String(automation.direction || "shortest"));
+    const continuous = automation.mode === "continuous";
+    setSelectValueSafe(control.modeSelect, automation.mode);
+    setInputValueSafe(control.periodInput, (Number(automation.rampPeriodMs) || 5000) / 1000);
+    control.periodRow.classList.toggle("is-hidden", !continuous); control.periodRow.hidden = !continuous;
+    [control.inputMinRow, control.inputMaxRow, control.angleEndRow].forEach(row => {
+      row.classList.toggle("is-hidden", continuous); row.hidden = continuous;
+    });
+    const shortest = control.directionSelect.querySelector('option[value="shortest"]');
+    if (shortest) { shortest.hidden = continuous; shortest.disabled = continuous; }
   });
 };
 

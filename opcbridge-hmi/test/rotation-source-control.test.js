@@ -51,3 +51,15 @@ test('rotation source switching hides the shared tag row only for expressions',(
     assert.equal(binding.connectionInput.parentNode.hidden,true,'legacy field stays hidden');
   }
 });
+
+
+test('editor can create continuous rotation with a direction and adjust its period',()=>{
+  const f=setup();const control=f.ctx.rotationControlConfigs.find(control=>control.id==='group');
+  control.modeSelect.value='continuous';control.directionSelect.value='ccw';control.periodInput.value='8';
+  control.modeSelect.listeners.change();
+  assert.deepEqual(JSON.parse(JSON.stringify(f.patch())),{rotationAutomation:{mode:'continuous',enabled:true,rampPeriodMs:8000,direction:'ccw'}});
+  control.periodInput.value='2.5';control.periodInput.listeners.change();
+  assert.equal(f.patch().rotationAutomation.rampPeriodMs,2500);
+  control.modeSelect.value='position';control.modeSelect.listeners.change();
+  assert.equal(f.patch().rotationAutomation.mode,'position');
+});
