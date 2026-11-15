@@ -57,11 +57,25 @@
     const selected = new Set(selectedPaths.map(path => path.join('.')));
     const scrollTop = container.scrollTop;
     let selectedRow;
+    const focusedPath = container.contains?.(doc.activeElement)
+      ? doc.activeElement?.getAttribute('data-object-path') : null;
+    const rows = [];
+    const selectRow = entry => {
+      if (!entry || onSelect(entry.node.path) === false) return;
+      for (const item of rows) {
+        const active = item === entry;
+        item.li.setAttribute('aria-selected', active ? 'true' : 'false');
+        item.row.classList.toggle('is-selected', active);
+        item.button.tabIndex = active ? 0 : -1;
+      }
+      entry.button.focus?.({ preventScroll: true });
+      entry.row.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+    };
     for (const path of selectedPaths) for (let depth = 1; depth < path.length; depth++) expanded.add(path.slice(0, depth).join('.'));
     container.replaceChildren();
     const list = doc.createElement('ul'); list.className = 'object-tree-list'; list.setAttribute('role', 'tree');
     list.setAttribute('aria-label', 'Screen objects');
-    const draw = (nodes, parent) => nodes.forEach(node => {
+    const draw = (nodes, parent, parentEntry = null) => nodes.forEach(node => {
       const key = node.path.join('.');
       const li = doc.createElement('li'); li.setAttribute('role', 'treeitem');
       li.setAttribute('aria-selected', selected.has(key) ? 'true' : 'false');
@@ -76,25 +90,56 @@
       const button = doc.createElement('button'); button.type = 'button'; button.className = `object-tree-object${node.automations.length ? ' is-linked' : ''}`;
       button.textContent = node.label;
       button.title = `${node.label}\nSelect to show Properties`;
-      button.addEventListener('click', () => {
-        if (onSelect(node.path) === false) return;
-        for (const item of list.querySelectorAll('[aria-selected]')) item.setAttribute('aria-selected', item === li ? 'true' : 'false');
-        for (const item of list.querySelectorAll('.object-tree-row')) item.classList.toggle('is-selected', item === row);
-      });
+      button.setAttribute('data-object-path', key);
+      toggle.setAttribute('data-object-path', key);
+      button.tabIndex = selected.has(key) || (!selected.size && !rows.length) ? 0 : -1;
+      const entry = { node, li, row, button, parent: parentEntry, children: null, toggle };
+      rows.push(entry);
+      const setOpen = open => {
+        if (!entry.children) return;
+        if (open) expanded.add(key); else expanded.delete(key);
+        entry.children.hidden = !open;
+        toggle.textContent = open ? '▾' : '▸';
+        toggle.setAttribute('aria-label', `${open ? 'Collapse' : 'Expand'} ${node.label}`);
+        li.setAttribute('aria-expanded', String(open));
+      };
+      button.addEventListener('click', () => selectRow(entry));
+      const navigate = event => {
+        if (event.altKey || event.ctrlKey || event.metaKey || !['ArrowUp','ArrowDown','ArrowRight','ArrowLeft'].includes(event.key)) return;
+        event.preventDefault();
+        event.stopPropagation(); // Explorer navigation must not nudge canvas objects.
+        if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+          // A focused disclosure button can belong to an unselected object.
+          if (li.getAttribute('aria-selected') !== 'true') selectRow(entry);
+          if (event.key === 'ArrowRight') {
+            if (entry.children?.hidden) setOpen(true);
+            else if (entry.children) selectRow(rows.find(item => item.parent === entry));
+          } else if (entry.children && !entry.children.hidden) setOpen(false);
+          else selectRow(entry.parent);
+          return;
+        }
+        const visible = rows.filter(item => {
+          for (let parent = item.parent; parent; parent = parent.parent) if (parent.children.hidden) return false;
+          return true;
+        });
+        const index = visible.indexOf(entry);
+        const next = Math.max(0, Math.min(visible.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1)));
+        selectRow(visible[next]);
+      };
+      button.addEventListener('keydown', navigate);
+      toggle.addEventListener('keydown', navigate);
       button.addEventListener('dblclick', () => onSelect(node.path, { tab: 'properties' }));
       row.append(toggle, button); li.appendChild(row); parent.appendChild(li);
       if (hasChildren) {
         const children = doc.createElement('ul'); children.setAttribute('role', 'group'); children.hidden = !open;
-        toggle.addEventListener('click', () => {
-          if (expanded.has(key)) expanded.delete(key); else expanded.add(key);
-          children.hidden = !children.hidden; toggle.textContent = children.hidden ? '▸' : '▾';
-          li.setAttribute('aria-expanded', children.hidden ? 'false' : 'true');
-        });
-        draw(node.children, children); li.appendChild(children);
+        entry.children = children;
+        toggle.addEventListener('click', () => setOpen(children.hidden));
+        draw(node.children, children, entry); li.appendChild(children);
       }
     });
     draw(model(objects, query, [], layers, selectedPaths), list); container.appendChild(list);
     container.scrollTop = scrollTop;
+    if (focusedPath != null) rows.find(entry => entry.node.path.join('.') === focusedPath)?.button.focus?.({ preventScroll: true });
     if (revealSelection) selectedRow?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
     if (!list.children.length) { const empty = doc.createElement('p'); empty.className = 'prop-help'; empty.textContent = query ? 'No matching objects.' : 'This screen has no objects.'; container.appendChild(empty); }
   }

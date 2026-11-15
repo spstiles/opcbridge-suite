@@ -56,6 +56,8 @@ test('separate explorer renders expandable rows and selects objects without repl
   const doc = { createElement(tag) {
     const node = { tag, ownerDocument: doc, children: [], attributes: {}, className: '',
       setAttribute(key,value) { this.attributes[key] = value; },
+      getAttribute(key) { return this.attributes[key] ?? null; },
+      focus() { doc.activeElement = this; },
       appendChild(child) { this.children.push(child); }, append(...children) { this.children.push(...children); },
       replaceChildren(...children) { this.children = children; }, addEventListener(event,handler) { this[event] = handler; },
       querySelectorAll(selector) {
@@ -67,7 +69,7 @@ test('separate explorer renders expandable rows and selects objects without repl
     return node;
   } };
   const container = doc.createElement('div'); const expanded = new Set(); const calls = [];
-  tree.render({ container, objects: nested(), selectedPath: [0,0], expanded, onSelect: (...args) => { calls.push(args); } });
+  tree.render({ container, objects: [...nested(), {type:'rect'}], selectedPath: [0,0], expanded, onSelect: (...args) => { calls.push(args); } });
   assert.ok(expanded.has('0'), 'selected object ancestors expand automatically');
   const buttons = container.querySelectorAll('*').filter(node => node.tag === 'button');
   const object = buttons.find(node => node.className.includes('object-tree-object') && node.textContent === 'Ellipse');
@@ -80,6 +82,23 @@ test('separate explorer renders expandable rows and selects objects without repl
   assert.equal(object.textContent, 'Ellipse');
   const unlinked = buttons.find(node => node.className === 'object-tree-object' && node.textContent === 'Group');
   assert.ok(unlinked, 'parent artwork is not marked linked merely because a child is linked');
+  const key = (button, name) => {
+    let prevented = false, stopped = false;
+    button.keydown({key:name,preventDefault(){prevented=true;},stopPropagation(){stopped=true;}});
+    assert.ok(prevented && stopped, 'tree arrows must not reach canvas movement shortcuts');
+  };
+  const rectangle = buttons.find(node => node.textContent === 'Rectangle');
+  key(object, 'ArrowDown');assert.deepEqual(calls.at(-1), [[1]]);assert.equal(doc.activeElement, rectangle);
+  key(rectangle, 'ArrowDown');assert.deepEqual(calls.at(-1), [[1]], 'stop at the bottom');
+  key(rectangle, 'ArrowUp');assert.deepEqual(calls.at(-1), [[0,0]]);
+  key(object, 'ArrowLeft');assert.deepEqual(calls.at(-1), [[0]], 'left from a leaf selects its parent');
+  key(unlinked, 'ArrowLeft');assert.equal(expanded.has('0'), false);
+  key(unlinked, 'ArrowDown');assert.deepEqual(calls.at(-1), [[1]], 'skip collapsed children');
+  key(rectangle, 'ArrowUp');assert.deepEqual(calls.at(-1), [[0]]);
+  key(unlinked, 'ArrowRight');assert.equal(expanded.has('0'), true);
+  key(unlinked, 'ArrowRight');assert.deepEqual(calls.at(-1), [[0,0]], 'right from an expanded group selects its first child');
+  assert.equal(doc.activeElement, object);
+
 });
 
 
