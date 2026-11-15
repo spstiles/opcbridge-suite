@@ -5,7 +5,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '../public/js/hmi.js'), 'utf8');
 function element() {
-  return { children: [], classList: { toggle() {} },
+  return { children: [], setAttribute(key,value){this[key]=value;}, replaceChildren(){this.children=[];}, classList: { toggle() {} },
     append(...children) { this.children.push(...children); }, appendChild(child) { this.children.push(child); },
     addEventListener(event, handler) { this[event] = handler; } };
 }
@@ -23,7 +23,7 @@ async function editor(kind, definitionType = 'tag', initialMapping = null) {
   let toast;
   const ctx = vm.createContext({ buttonTargetAliases: host, groupTargetAliases: host,
     getScreenForAliases: async () => ({}), getEffectiveScreenAliases: () => [{ name: 'Command', type: definitionType, required: true }],
-    compactTagBindingConfigs: [], savedAliasDefinitionChanges: new Map(), aliasTokenName: value => /^\{alias:[^}]+\}$/.test(String(value || '')),
+    HmiScreenTags: require('../public/js/screen-tags'), currentScreenObj:{}, compactTagBindingConfigs: [], savedAliasDefinitionChanges: new Map(), aliasTokenName: value => /^\{alias:[^}]+\}$/.test(String(value || '')),
     document: { createElement: element }, setFriendlyConnectionInputValue: (input, value) => { input.value = value; },
     connectionIdFromFriendlyInput: input => input.value,
     getAutomationObject: () => selected, getEditedClickAction: obj => obj?.actions[selectedIndex],

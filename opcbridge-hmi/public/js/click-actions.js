@@ -16,13 +16,14 @@
       if (action.type === 'load-viewport' && !action.viewportId?.trim()) fail('choose a viewport.');
     }
   };
-  const run = async (action, execute) => {
+  const run = async (action, execute, confirm = async () => false) => {
     // Capture before any asynchronous operation or navigation mutates the screen.
     const actions = JSON.parse(JSON.stringify(list(action)));
     validate(actions);
     let completed = 0;
     for (const step of actions) {
       try {
+        if (step.requireConfirmation && !await confirm(step)) return completed;
         await execute(step, completed);
         completed++;
       } catch (cause) {

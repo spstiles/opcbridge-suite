@@ -56,3 +56,13 @@ test('invalid or interactive sequences fail before any action runs', async () =>
     assert.equal(called, false);
   }
 });
+
+test('confirmation gates each action and Cancel stops the remaining sequence', async () => {
+  const calls=[];const action={type:'sequence',actions:[{type:'set-write',connection_id:'PLC',tag:'Reset',onValue:1,requireConfirmation:true,confirmationMessage:'Reset flow data?'},{type:'navigate',screenId:'Done'}]};
+  assert.equal(await actions.run(action,async step=>calls.push(step.type)),0, "a confirmed action cannot run without a confirmation handler");
+  let resolveConfirmation;
+  const pending=actions.run(action,async step=>calls.push(step.type),()=>new Promise(resolve=>{resolveConfirmation=resolve;}));
+  assert.deepEqual(calls,[]);resolveConfirmation(false);assert.equal(await pending,0);assert.deepEqual(calls,[]);
+  assert.equal(await actions.run(action,async step=>calls.push(step.type),async step=>step.confirmationMessage==='Reset flow data?'),2);
+  assert.deepEqual(calls,['set-write','navigate']);
+});

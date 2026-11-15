@@ -310,7 +310,8 @@ const getEditedClickAction = (obj) => {
 const replaceEditedClickAction = (obj, action) => {
   const actions = HmiClickActions.list(obj.action).slice();
   const index = Math.min(clickActionSelection.get(obj) || 0, Math.max(0, actions.length - 1));
-  actions[index] = action;
+  const previous = actions[index] || {};
+  actions[index] = { requireConfirmation: previous.requireConfirmation, confirmationMessage: previous.confirmationMessage, ...action };
   obj.action = HmiClickActions.pack(actions);
 };
 const renderClickActionList = (obj) => {
@@ -356,6 +357,17 @@ const renderClickActionList = (obj) => {
     const help = document.createElement('div'); help.className = 'prop-help';
     help.textContent = 'Actions run top to bottom. A failure stops the remaining actions. Momentary writes, prompts, and login/logout currently require a single action.';
     host.append(help);
+    const action = actions[selected];
+    if (action) {
+      const checkbox=document.createElement('input');checkbox.type='checkbox';checkbox.checked=Boolean(action.requireConfirmation);
+      const label=document.createElement('label');label.className='prop-inline';label.append(checkbox,document.createTextNode('Require Confirmation'));host.appendChild(label);
+      const message=document.createElement('input');message.type='text';message.placeholder='Are you sure?';message.value=action.confirmationMessage||'';message.setAttribute('aria-label','Confirmation Message');
+      const messageRow=document.createElement('div');messageRow.className='prop-row';messageRow.hidden=!checkbox.checked;
+      const messageLabel=document.createElement('label');messageLabel.textContent='Confirmation Message';messageRow.append(messageLabel,message);host.appendChild(messageRow);
+      const save=()=>{recordHistory();replaceEditedClickAction(obj,{...getEditedClickAction(obj),requireConfirmation:checkbox.checked,confirmationMessage:message.value.trim()});messageRow.hidden=!checkbox.checked;setDirty(true);renderScreen();};
+      checkbox.addEventListener('change',save);message.addEventListener('change',save);
+      if(action.type==='momentary-write') { const note=document.createElement('div');note.className='prop-help';note.textContent='With confirmation, Confirm sends an on/off pulse.';note.hidden=!checkbox.checked;host.appendChild(note);checkbox.addEventListener('change',()=>{note.hidden=!checkbox.checked;}); }
+    }
     for (const option of buttonActionSelect.options) {
       option.disabled = actions.length > 1 && !HmiClickActions.supported.has(option.value);
     }
@@ -6180,11 +6192,12 @@ const resolveAliasObject = (source, context) => {
     });
   };
   visit(clone);
-  return clone;
+  return typeof HmiScreenTags === "undefined" ? clone : HmiScreenTags.resolve(clone, context?.["$screenTags"]);
 };
 
-const buildAliasContext = (screen, mappings = {}, parentContext = {}) => {
+const buildAliasContext = (screen, mappings = {}, parentContext = {}, instance = "main") => {
   const context = {};
+  if (typeof HmiScreenTags !== "undefined" && typeof screenTagStore !== "undefined") context["$screenTags"] = screenTagStore.context(instance, screen);
   getEffectiveScreenAliases(screen).forEach((definition) => {
     const mapping = mappings?.[definition.name];
     if (mapping?.sourceType === "tag" || (definition.type === "tag" && mapping?.sourceType !== "text")) {
@@ -6192,6 +6205,7 @@ const buildAliasContext = (screen, mappings = {}, parentContext = {}) => {
       context[definition.name] = forwarded && parentContext?.[forwarded]
         ? parentContext[forwarded]
         : { connection_id: String(mapping?.connection_id || ""), tag: String(mapping?.tag || "") };
+      if (typeof HmiScreenTags !== "undefined") HmiScreenTags.resolve(context[definition.name], parentContext?.["$screenTags"]);
       return;
     }
     let value = mapping && Object.prototype.hasOwnProperty.call(mapping, "value") ? mapping.value : definition.defaultValue;
@@ -8558,7 +8572,7 @@ const downloadObjectReferenceMappings = () => {
 const knownMappedTag = (replacement) => {
   const parsed = parseMappedTagReference(replacement);
   if (!parsed) return false;
-  if (parsed.connection_id === "_local") return Boolean(parsed.tag);
+  if (["_local", "_screen"].includes(parsed.connection_id)) return HmiScreenTags.definitions(currentScreenObj).some(item => item.name === parsed.tag);
   return knownTagKeysCache.has(normalizeWsTagKey(parsed.connection_id, parsed.tag));
 };
 
@@ -8848,6 +8862,7 @@ let runtimeRenderDeferredTimer = null;
 let runtimePointerInteractionUntilMs = 0;
 const tagValueCache = new Map();
 const tagQualityCache = new Map();
+const screenTagStore = HmiScreenTags.createStore(tagValueCache, tagQualityCache);
 const tagQualityLabelCache = new Map();
 const activeTagInfoCache = new Map();
 let tagsCache = [];
@@ -9507,22 +9522,23 @@ const renderLayerVisibilityControls = (layer, act) => {
     layer.visibility = normalizeVisibilityState(next);
     expandedLayerVisibility.add(layer.id);
   });
-  const sourceType = field("Source", select([["tag", "Tag"], ["expression", "Expression"]], vis.sourceType === "expression" ? "expression" : "tag"));
+  const sourceType = field("Source", select([["tag", "Tag"], ["expression", "Expression"], ["screen", "Screen Tag"]], vis.sourceType === "expression" ? "expression" : vis.connection_id === "_screen" ? "screen" : "tag"));
   sourceType.onchange = () => update(sourceType.value === "expression"
     ? { sourceType: "expression" }
-    : { sourceType: "tag", mode: "equals", match: "1" });
+    : { sourceType: "tag", mode: "equals", match: "1", connection_id:sourceType.value === "screen" ? "_screen" : "",tag:"" });
   const connection = document.createElement("select");
   populateConnectionSelect(connection);
   setConnectionSelectValue(connection, vis.connection_id || "", vis.tag);
   const tag = document.createElement("select");
   const empty = document.createElement("option"); empty.value = ""; empty.textContent = "Select tag…"; tag.append(empty);
-  const names = new Set(tagsCache.filter(item => tagPickerMatchesConnection(item, connection.value)).map(item => String(item.name || "")));
+  const names = new Set(sourceType.value === "screen" ? HmiScreenTags.definitions(currentScreenObj).map(item=>item.name) : tagsCache.filter(item => tagPickerMatchesConnection(item, connection.value)).map(item => String(item.name || "")));
   if (vis.tag) names.add(vis.tag);
   for (const name of [...names].sort((a, b) => a.localeCompare(b))) {
     const option = document.createElement("option"); option.value = name; option.textContent = tagPickerName(tagPickerConnectionId(connection.value), name); tag.append(option);
   }
   tag.value = vis.tag || "";
-  field("Connection", connection); field("Tag", tag);
+  field("Connection", connection);connection.closest(".layer-runtime-field")?.classList.toggle("is-hidden",sourceType.value === "screen");
+  field("Tag", tag);
   if (sourceType.value === "expression") {
     const expression = document.createElement("textarea");
     expression.rows = 3; expression.value = vis.expression || "";
@@ -9558,7 +9574,7 @@ const renderLayerVisibilityControls = (layer, act) => {
     };
   } else {
     connection.onchange = () => update({ connection_id: tagPickerConnectionId(connection.value), tag: "" });
-    tag.onchange = () => update({ connection_id: tagPickerConnectionId(connection.value), tag: tag.value });
+    tag.onchange = () => update({ connection_id: sourceType.value === "screen" ? "_screen" : tagPickerConnectionId(connection.value), tag: tag.value });
     const comparison = field("Show when", select([["equals", "Equals"], ["threshold", "At or above"]], vis.mode === "threshold" ? "threshold" : "equals"));
     comparison.onchange = () => update({ mode: comparison.value });
     const value = document.createElement("input"); value.type = comparison.value === "threshold" ? "number" : "text";
@@ -12096,12 +12112,12 @@ function renderAnimatorEditor(obj) {
       title: "Animator Expression", value: config.expression || "",
       apply: expression => commit(() => config.expression = expression)
     })));
-  } else {
-    registerCompactTagBinding({ id: "animator-source", container: form,
+  }
+  registerCompactTagBinding({ id: "animator-source", sourceSelect: sourceType, container: form,
       buttonLabel: "Source", modalTitle: "Animator Source Tag",
       read: () => ({ connection_id: config.connection_id || "", tag: config.tag || "" }),
       apply: binding => commit(() => Object.assign(config, binding)) });
-  }
+  if (config.sourceType === "expression") getCompactTagBindingConfig("animator-source")?.row?.classList.add("is-hidden");
   if (config.mode === "value") {
     input("Start Value", "startValue");
     input("Stop Value", "stopValue");
@@ -12658,7 +12674,7 @@ const collectActiveWsSubscriptions = () => {
           if (child) {
             const aliasSource = viewportAliasMappings.get(String(viewport.id || ""))
               || { mappings: viewport.aliases || {}, parentContext: currentScreenAliasContext };
-            collectTagKeysFromValue(resolveAliasObject(child, buildAliasContext(child, aliasSource.mappings, aliasSource.parentContext)), out);
+            collectTagKeysFromValue(resolveAliasObject(child, buildAliasContext(child, aliasSource.mappings, aliasSource.parentContext, `viewport:${viewport.id}`)), out);
           }
         }
         visitViewports(viewport.children);
@@ -12670,7 +12686,7 @@ const collectActiveWsSubscriptions = () => {
   // Include popup screen if open and loaded.
   if (typeof currentPopupScreenId !== "undefined" && currentPopupScreenId) {
     const child = screenCache.get(currentPopupScreenId);
-    if (child) collectTagKeysFromValue(resolveAliasObject(child, buildAliasContext(child, currentPopupOptions?.aliases || {}, currentPopupOptions?.parentAliasContext || currentScreenAliasContext)), out);
+    if (child) collectTagKeysFromValue(resolveAliasObject(child, buildAliasContext(child, currentPopupOptions?.aliases || {}, currentPopupOptions?.parentAliasContext || currentScreenAliasContext, "popup")), out);
   }
 
   return Array.from(out).sort();
@@ -12682,7 +12698,7 @@ const wsTagKeyToQueryItem = (key) => {
   if (sep <= 0 || sep >= raw.length - 1) return null;
   const connection_id = raw.slice(0, sep).trim();
   const name = raw.slice(sep + 1).trim();
-  if (!connection_id || !name || connection_id === "_local") return null;
+  if (!connection_id || !name || ["_local", "_screen"].includes(connection_id)) return null;
   return { connection_id, name };
 };
 
@@ -13469,7 +13485,7 @@ const openTextBindingModal = (placeholderKey, objectType = "text") => {
   textBindingModalKey = key;
   textBindingModalObjectType = objectType;
   if (textBindingTitle) textBindingTitle.textContent = `${objectType === "button" ? "Button Label" : "Text"} Binding {${key}}`;
-  if (textBindingSourceTypeSelect) textBindingSourceTypeSelect.value = binding?.sourceType === "expression" ? "expression" : "tag";
+  if (textBindingSourceTypeSelect) textBindingSourceTypeSelect.value = binding?.sourceType === "expression" ? "expression" : ["_screen","_local"].includes(binding?.connection_id) ? "screen" : "tag";
   if (textBindingPropertySelect) textBindingPropertySelect.value = binding?.property === "quality" ? "quality" : "value";
   setTagBindingFieldValues(textBindingConnectionInput, textBindingTagInput, binding);
   setInputValueSafe(textBindingExpressionInput, formatAutomationExpressionForDisplay(binding?.expression || ""));
@@ -16479,6 +16495,7 @@ const loadViewportTarget = (viewportId, screenId, action = null, parentContext =
     (obj) => obj?.type === "viewport" && obj.id === viewportId
   );
   if (!viewport) return;
+  screenTagStore.release(`viewport:${viewportId}`);
 
   if (!isEditMode) {
     const id = String(viewportId || "").trim();
@@ -16517,6 +16534,7 @@ const viewportGoBack = (viewportId) => {
   if (!id) return false;
   const entry = viewportScreenHistoryById.get(id);
   if (!entry || entry.index <= 0) return false;
+  screenTagStore.release(`viewport:${id}`);
   entry.index -= 1;
   viewportScreenHistoryById.set(id, entry);
   const historyItem = entry.stack[entry.index];
@@ -16540,6 +16558,7 @@ const viewportGoForward = (viewportId) => {
   if (!id) return false;
   const entry = viewportScreenHistoryById.get(id);
   if (!entry || entry.index < 0 || entry.index >= entry.stack.length - 1) return false;
+  screenTagStore.release(`viewport:${id}`);
   entry.index += 1;
   viewportScreenHistoryById.set(id, entry);
   const historyItem = entry.stack[entry.index];
@@ -16559,6 +16578,7 @@ const viewportGoForward = (viewportId) => {
 };
 
 const closePopup = () => {
+  screenTagStore.release("popup");
   if (!popupOverlay) return;
   popupOverlay.classList.add("is-hidden");
   popupOverlay.classList.remove("is-nonmodal", "is-positioned", "is-movable");
@@ -16590,6 +16610,7 @@ const closePopup = () => {
 };
 
 const beginPopup = (screenId, options = {}) => {
+  screenTagStore.release("popup");
   const id = String(screenId || "").trim();
   if (!id) return;
   popupScreenHistory = [{ screenId: id, options: { ...options } }];
@@ -16608,6 +16629,7 @@ const navigatePopupTo = (screenId, action = {}) => {
   popupScreenHistory = popupScreenHistory.slice(0, popupScreenHistoryIndex + 1);
   popupScreenHistory.push({ screenId: id, options });
   popupScreenHistoryIndex = popupScreenHistory.length - 1;
+  screenTagStore.release("popup");
   openPopup(id, options);
   return true;
 };
@@ -16615,6 +16637,7 @@ const navigatePopupTo = (screenId, action = {}) => {
 const popupGoHistory = (offset) => {
   const nextIndex = popupScreenHistoryIndex + offset;
   if (nextIndex < 0 || nextIndex >= popupScreenHistory.length) return false;
+  screenTagStore.release("popup");
   popupScreenHistoryIndex = nextIndex;
   const entry = popupScreenHistory[nextIndex];
   openPopup(entry.screenId, entry.options);
@@ -16632,6 +16655,19 @@ const navigatePopupOpener = (screenId, action = {}) => {
   }
   runtimeNavigateTo(id, action, popupAliasContext);
   return true;
+};
+
+const confirmRuntimeClick = async action => {
+  const screen = currentScreenObj, popup = currentPopupScreenId, scope = currentPopupAliasContext?.["$screenTags"];
+  if (!await HmiActionConfirmation.request(action)) return false;
+  return !isEditMode && screen === currentScreenObj && popup === currentPopupScreenId && scope === currentPopupAliasContext?.["$screenTags"];
+};
+const runConfirmedMomentary = async (action, obj) => {
+  try {
+    await apiWriteTag({connection_id:action.connection_id,tag:action.tag,value:action.onValue,audit:{action:'momentary-write-press',object_id:obj?.id||''}});
+  } finally {
+    await apiWriteTag({connection_id:action.connection_id,tag:action.tag,value:action.offValue,audit:{action:'momentary-write-release',object_id:obj?.id||''}});
+  }
 };
 
 const activeClickSequences = new Set();
@@ -16690,7 +16726,7 @@ const startClickSequence = (obj, context = {}) => {
     if (context.popup) popupGoHistory(back ? -1 : 1);
     else if (context.viewportId) (back ? viewportGoBack : viewportGoForward)(context.viewportId);
     else await (back ? runtimeGoBack : runtimeGoForward)();
-  }).catch(error => window.alert(`Click actions stopped.\n${error.message}`))
+  }, confirmRuntimeClick).catch(error => window.alert(`Click actions stopped.\n${error.message}`))
     .finally(() => activeClickSequences.delete(key));
 };
 
@@ -16893,7 +16929,7 @@ const openPopup = (screenId, requestedOptions = null) => {
     setImageHref(bgImg, imgUrl(popupBgImage));
     popupSvg.appendChild(bgImg);
   }
-  const popupAliasContext = buildAliasContext(child, currentPopupOptions.aliases, currentPopupOptions.parentAliasContext);
+  const popupAliasContext = buildAliasContext(child, currentPopupOptions.aliases, currentPopupOptions.parentAliasContext, "popup");
   currentPopupAliasContext = popupAliasContext;
   HmiLayers.entries(child).forEach(({ object: childObj }) => {
     if (!shouldDrawLayer(HmiLayers.layerOf(child, childObj), popupAliasContext)) return;
@@ -17237,7 +17273,7 @@ const renderScreen = ({ refreshReferenceHealth = true } = {}) => {
           }
           HmiLayers.entries(child).forEach(({ object: childObj }) => {
             const aliasSource = viewportAliasMappings.get(String(obj.id || "")) || { mappings: obj.aliases || {}, parentContext: currentScreenAliasContext };
-            const aliasContext = buildAliasContext(child, aliasSource.mappings, aliasSource.parentContext);
+            const aliasContext = buildAliasContext(child, aliasSource.mappings, aliasSource.parentContext, `viewport:${obj.id}`);
             viewportAliasContexts.set(String(obj.id || ""), aliasContext);
             if (!shouldDrawLayer(HmiLayers.layerOf(child, childObj), aliasContext)) return;
             renderObjectInto(scaledGroup, resolveAliasObject(childObj, aliasContext));
@@ -17352,6 +17388,7 @@ const syncPropertiesFromScreen = () => {
   if (screenBorderColorTextInput) screenBorderColorTextInput.value = border?.color || "";
   if (screenBorderWidthInput) screenBorderWidthInput.value = Number(border?.width ?? 1);
   renderScreenAliasDefinitions();
+  renderScreenTagDefinitions();
 };
 
 const renderScreenAliasDefinitions = () => {
@@ -17394,6 +17431,47 @@ const renderScreenAliasDefinitions = () => {
     screenAliasDefinitions.appendChild(card);
   });
 };
+
+const renderScreenTagDefinitions = () => {
+  const host = document.getElementById("screenTagDefinitions");
+  if (!host || !currentScreenObj) return;
+  host.replaceChildren();
+  const definitions = HmiScreenTags.definitions(currentScreenObj);
+  definitions.forEach((definition, index) => {
+    const card = document.createElement("div"); card.className = "screen-tag-card";
+    const row = (title, control) => { const row = document.createElement("div"); row.className = "prop-row";const label=document.createElement("label");label.textContent=title;row.append(label,control);return row; };
+    const name = document.createElement("input");name.type="text";name.value=definition.name;name.setAttribute("aria-label", "Screen tag name");
+    const type = document.createElement("select");type.innerHTML='<option value="boolean">Boolean</option><option value="number">Number</option><option value="text">Text</option>';type.value=definition.type;type.setAttribute("aria-label","Screen tag type");
+    const initial = document.createElement("input"); initial.type=definition.type==='boolean'?'checkbox':definition.type==='number'?'number':'text';initial.step='any';
+    if(initial.type==='checkbox')initial.checked=HmiScreenTags.coerce('boolean',definition.initialValue);else initial.value=HmiScreenTags.coerce(definition.type,definition.initialValue ?? (definition.type==='number'?0:''));
+    initial.setAttribute("aria-label","Screen tag initial value");
+    const commit = () => {
+      const nextName=name.value.trim();
+      if(!HmiScreenTags.validName(nextName)||definitions.some((item,i)=>i!==index&&item.name===nextName)){
+        name.setCustomValidity("Use a unique name beginning with a letter or underscore, followed by letters, numbers, dots, underscores or hyphens.");name.reportValidity();return;
+      }
+      name.setCustomValidity("");
+      let value;try{value=HmiScreenTags.coerce(type.value,initial.type==='checkbox'?initial.checked:initial.value);}catch(error){showHmiToast(error.message);return;}
+      const next=definitions.map(item=>({...item}));next[index]={name:nextName,type:type.value,initialValue:value};
+      recordHistory();
+      if(nextName!==definition.name){
+        HmiScreenTags.renameBindings(currentScreenObj, definition.name, nextName);
+      }
+      currentScreenObj.screenTags=next;renderScreen();syncEditorFromScreen();setDirty(true);
+    };
+    name.addEventListener('input',()=>name.setCustomValidity(''));name.addEventListener('change',commit);initial.addEventListener('change',commit);
+    type.addEventListener('change',()=>{const next=definitions.map(item=>({...item}));next[index]={...definition,type:type.value,initialValue:type.value==='boolean'?false:type.value==='number'?0:''};updateScreenProperty({screenTags:next});});
+    const remove=document.createElement('button');remove.type='button';remove.className='panel-btn';remove.textContent='Remove';
+    remove.disabled=Boolean(definition.imported);if(definition.imported)remove.title='Remove or remap the imported local-variable bindings first.';
+    remove.addEventListener('click',()=>updateScreenProperty({screenTags:definitions.filter((_,i)=>i!==index)}));
+    card.append(row('Name',name),row('Type',type),row('Initial Value',initial),remove);host.appendChild(card);
+  });
+};
+document.getElementById("screenTagAddBtn")?.addEventListener("click",()=>{
+  if(!currentScreenObj)return;const tags=HmiScreenTags.definitions(currentScreenObj);let index=1;
+  while(tags.some(tag=>tag.name===`Tag${index}`))index++;
+  updateScreenProperty({screenTags:[...tags,{name:`Tag${index}`,type:'boolean',initialValue:false}]});
+});
 
 const getSelectedActionOwner = (kind) => {
   const objects = getActiveObjects();
@@ -18175,7 +18253,7 @@ const syncPropertiesFromSelection = () => {
     if (polylinePropsTitle) polylinePropsTitle.textContent = obj.type === "pipe" ? "Pipe" : "Polyline";
     if (polylineStrokeWidthLabel) polylineStrokeWidthLabel.textContent = obj.type === "pipe" ? "Thickness" : "Stroke Width";
     if (pipePropertyRows) pipePropertyRows.classList.toggle("is-hidden", obj.type !== "pipe");
-    syncPipePointCoordinates();
+    syncPathPointCoordinates();
     const pipePoints = Array.isArray(obj.points) ? obj.points : [];
     if (pipeXInput) pipeXInput.value = pipePoints.length ? Math.min(...pipePoints.map((point) => Number(point?.x ?? 0))) : 0;
     if (pipeYInput) pipeYInput.value = pipePoints.length ? Math.min(...pipePoints.map((point) => Number(point?.y ?? 0))) : 0;
@@ -18209,6 +18287,7 @@ const syncPropertiesFromSelection = () => {
 	    if (polygonStrokeInput) polygonStrokeInput.value = strokeValue;
 	    if (polygonStrokeTextInput) polygonStrokeTextInput.value = obj.stroke || "";
 	    if (polygonStrokeWidthInput) polygonStrokeWidthInput.value = Number(obj.strokeWidth ?? 1);
+      syncPathPointCoordinates();
       if (polygonPointsInput) setInputValueSafe(polygonPointsInput, polygonPointsText(obj.points));
 
 	    const fillAuto = obj.fillAutomation || {};
@@ -18740,7 +18819,7 @@ const renderMultiStateEditor = (obj) => {
     setDirty(true);
   };
   registerCompactTagBinding({
-    id: "multi-state-source",
+    id: "multi-state-source", sourceSelect: sourceTypeSelect,
     container: form,
     beforeEl: expressionRow,
     buttonLabel: "Source",
@@ -19543,16 +19622,16 @@ const updatePolylineProperty = (patch) => {
   setDirty(true);
 };
 
-const syncPipePointCoordinates = () => {
-  const host = document.getElementById("pipePointCoordinates");
+const syncPointCoordinateEditor = (objectType, hostId) => {
+  const host = document.getElementById(hostId);
   if (!host) return;
   const obj = selectedIndices.length === 1 ? getActiveObjects()?.[selectedIndices[0]] : null;
-  if (!obj || obj.type !== "pipe") { host.replaceChildren(); host.pipeObject = null; return; }
+  if (!obj || obj.type !== objectType) { host.replaceChildren(); host.pointObject = null; return; }
   const points = obj.points || [];
-  if (host.pipeObject !== obj || host.children.length !== points.length) {
-    host.replaceChildren(); host.pipeObject = obj;
+  if (host.pointObject !== obj || host.children.length !== points.length) {
+    host.replaceChildren(); host.pointObject = obj;
     points.forEach((point, index) => {
-      const row = document.createElement("div"); row.className = "pipe-point-row";
+      const row = document.createElement("div"); row.className = "point-coordinate-row";
       const select = document.createElement("button"); select.type = "button";
       select.textContent = String(index + 1); select.title = `Select point ${index + 1}`;
       const selectPoint = () => {
@@ -19571,7 +19650,8 @@ const syncPipePointCoordinates = () => {
           if (input.value.trim() === "" || !Number.isFinite(value)) { input.value = obj.points[index][axis]; return; }
           if (getActiveObjects()?.[selectedIndices[0]] !== obj || obj.points[index][axis] === value) return;
           const next = obj.points.map((point, i) => i === index ? { ...point, [axis]: value } : { ...point });
-          updatePolylineProperty({ points: next });
+          if (objectType === "polygon") updatePolygonProperty({ points: next });
+          else updatePolylineProperty({ points: next });
           updateSelectionOverlays();
         });
         label.appendChild(input); row.appendChild(label);
@@ -19587,6 +19667,11 @@ const syncPipePointCoordinates = () => {
       if (document.activeElement !== input) input.value = points[index][axis ? "y" : "x"];
     });
   });
+};
+
+const syncPathPointCoordinates = () => {
+  syncPointCoordinateEditor("pipe", "pipePointCoordinates");
+  syncPointCoordinateEditor("polygon", "polygonPointCoordinates");
 };
 
 const updatePointObjectPosition = (axis, value, objectType) => {
@@ -19951,6 +20036,7 @@ const applyVisibilityDraftToObject = () => {
       if (polygonStrokeInput) polygonStrokeInput.value = strokeValue;
       if (polygonStrokeTextInput) setInputValueSafe(polygonStrokeTextInput, obj.stroke ?? "");
       if (polygonStrokeWidthInput) polygonStrokeWidthInput.value = Number(obj.strokeWidth ?? 1);
+      syncPathPointCoordinates();
       if (polygonPointsInput) setInputValueSafe(polygonPointsInput, polygonPointsText(obj.points));
     }
   }
@@ -21844,6 +21930,10 @@ const setMode = (next) => {
     };
   }
   isEditMode = next;
+  if (wasEditMode && !next) {
+    screenTagStore.clear();
+    currentScreenAliasContext = {...currentScreenAliasContext, "$screenTags": screenTagStore.context("main",currentScreenObj)};
+  }
   if (isEditMode && !wasEditMode && !tagCatalogLoaded) {
     loadTags();
   }
@@ -22353,6 +22443,7 @@ window.addEventListener("resize", () => {
 });
 
 const loadJsonc = async () => {
+  screenTagStore.clear();
   if (!jsoncEditor) return;
   poseEditSession = null;
   if (!currentScreenPath) {
@@ -22364,6 +22455,7 @@ const loadJsonc = async () => {
       currentScreenAliasContext = pendingMainAliasNavigation?.screenId === currentScreenId
         ? (pendingMainAliasNavigation.resolvedContext || buildAliasContext(currentScreenObj, pendingMainAliasNavigation.mappings, pendingMainAliasNavigation.parentContext))
         : buildAliasContext(currentScreenObj, {}, {});
+      currentScreenAliasContext["$screenTags"] = screenTagStore.context("main", currentScreenObj);
       if (runtimeScreenHistoryIndex >= 0) runtimeScreenAliasHistory[runtimeScreenHistoryIndex] = currentScreenAliasContext;
       pendingMainAliasNavigation = null;
       screenCache.set(currentScreenId || "untitled", currentScreenObj);
@@ -22405,6 +22497,7 @@ const loadJsonc = async () => {
       currentScreenAliasContext = pendingMainAliasNavigation?.screenId === currentScreenId
         ? (pendingMainAliasNavigation.resolvedContext || buildAliasContext(currentScreenObj, pendingMainAliasNavigation.mappings, pendingMainAliasNavigation.parentContext))
         : buildAliasContext(currentScreenObj, {}, {});
+      currentScreenAliasContext["$screenTags"] = screenTagStore.context("main", currentScreenObj);
       if (runtimeScreenHistoryIndex >= 0) runtimeScreenAliasHistory[runtimeScreenHistoryIndex] = currentScreenAliasContext;
       pendingMainAliasNavigation = null;
       const migrateButtonFlags = (objects) => {
@@ -22624,7 +22717,7 @@ if (popupSvg) {
     const actionHost = event.target instanceof Element ? event.target.closest("[data-hmi-popup-action]") : null;
     if (!actionHost || !popupSvg.contains(actionHost)) return;
     const action = actionHost.__hmiPopupAction;
-    if (action?.type !== "momentary-write" || isViewOnlyRuntime()) return;
+    if (action?.type !== "momentary-write" || action.requireConfirmation || (isViewOnlyRuntime() && action.connection_id !== "_local")) return;
     const object = actionHost.__hmiPopupObject;
     popupMomentaryPress = { pointerId: event.pointerId, action, object };
     try {
@@ -22648,10 +22741,15 @@ if (popupSvg) {
   popupSvg.addEventListener("pointercancel", (event) => releasePopupMomentary(event.pointerId));
   popupSvg.addEventListener("pointerleave", () => releasePopupMomentary(null));
 
-  popupSvg.addEventListener("click", (event) => {
+  popupSvg.addEventListener("click", async (event) => {
     const actionHost = event.target instanceof Element ? event.target.closest("[data-hmi-popup-action]") : null;
     if (!actionHost || !popupSvg.contains(actionHost)) return;
     const action = actionHost.__hmiPopupAction;
+    if (action?.type !== 'sequence' && !await confirmRuntimeClick(action)) return;
+    if (action?.type === 'momentary-write' && action.requireConfirmation) {
+      if (isViewOnlyRuntime() && action.connection_id !== '_local') return;
+      await runConfirmedMomentary(action, actionHost.__hmiPopupObject).catch(error=>showHmiToast(error.message));return;
+    }
     if (action?.type === "momentary-write" || runPopupScreenAction(action, actionHost.__hmiPopupObject)) {
       event.preventDefault();
       event.stopPropagation();
@@ -23357,11 +23455,12 @@ const getAuditContextForWrite = (connectionId, tagName, audit = {}) => {
 };
 
 const apiWriteTag = async ({ connection_id, tag, value, audit = {}, keepalive = false }) => {
+  if (connection_id === "_screen") throw new Error("Screen tag has no active screen instance.");
   if (connection_id === "_local") {
     const name = String(tag || "").trim();
     if (!name) throw new Error("Missing local variable name.");
-    const localValue = coerceTagBoolean(value) ? 1 : 0;
-    tagValueCache.set(normalizeTagCacheKey("_local", name), localValue);
+    const localValue = /^screen\d+:/.test(name) ? screenTagStore.write(name, value) : (coerceTagBoolean(value) ? 1 : 0);
+    if (!/^screen\d+:/.test(name)) tagValueCache.set(normalizeTagCacheKey("_local", name), localValue);
     if (!isEditMode) {
       renderScreen();
       if (currentPopupScreenId) openPopup(currentPopupScreenId);
@@ -24000,9 +24099,12 @@ document.addEventListener("click", event => {
 
 const syncTagBindingSourceMode = () => {
   const aliasMode = tagBindingSourceSelect?.value === "alias";
+  const screenMode = tagBindingSourceSelect?.value === "screen";
+  const screenRow = document.getElementById("tagBindingScreenRow");
+  if (screenRow) screenRow.hidden = !screenMode;
   if (tagBindingAliasRow) tagBindingAliasRow.hidden = !aliasMode;
   [tagBindingConnectionSelect, tagBindingTagSelect, tagBindingTagFilterInput, tagBindingTemplateInput, tagBindingAliasInsertSelect]
-    .forEach(input => { const row = input?.closest?.(".prop-row"); if (row) row.hidden = aliasMode; });
+    .forEach(input => { const row = input?.closest?.(".prop-row"); if (row) row.hidden = aliasMode || screenMode; });
 };
 tagBindingSourceSelect?.addEventListener("change", syncTagBindingSourceMode);
 tagBindingAliasNameInput?.addEventListener("input", () => tagBindingAliasNameInput.setCustomValidity(""));
@@ -24024,6 +24126,10 @@ if (tagBindingSaveBtn) {
         return;
       }
       tag = `{alias:${name}}`;
+    }
+    if (tagBindingSourceSelect?.value === "screen") {
+      connection_id = "_screen"; tag = document.getElementById("tagBindingScreenName")?.value || "";
+      if (!tag) return;
     }
     if (aliasTokenName(tag)) connection_id = "";
     if (config.connectionInput) setFriendlyConnectionInputValue(config.connectionInput, connection_id);
@@ -26851,6 +26957,7 @@ function getConnectionDisplayName(connectionId) {
   const id = String(connectionId || "").trim();
   if (!id) return "";
   if (id === ALARM_TAG_PICKER_ID) return "Alarms";
+  if (id === "_screen" || id === "_local") return "Screen Tags";
   refreshConnectionDisplayNameCache();
   const friendly = String(connectionDisplayNameCache.get(id) || "").trim();
   if (friendly) return friendly;
@@ -27012,7 +27119,7 @@ function openCompactTagBindingModal(id) {
   if (tagBindingTitle) tagBindingTitle.textContent = config.modalTitle || config.label || "Tag Binding";
   const binding = config.read();
   const aliasName = aliasTokenName(binding.tag);
-  if (tagBindingSourceSelect) tagBindingSourceSelect.value = aliasName ? "alias" : "tag";
+  if (tagBindingSourceSelect) tagBindingSourceSelect.value = binding.connection_id === "_screen" || binding.connection_id === "_local" ? "screen" : aliasName ? "alias" : "tag";
   if (tagBindingAliasNameInput) {
     tagBindingAliasNameInput.value = aliasName;
     tagBindingAliasNameInput.setCustomValidity("");
@@ -27023,6 +27130,15 @@ function openCompactTagBindingModal(id) {
       const option = document.createElement("option"); option.value = alias.name;
       tagBindingAliasNames.appendChild(option);
     });
+  }
+  const localSelect = document.getElementById("tagBindingScreenName");
+  if (localSelect) {
+    localSelect.replaceChildren();
+    const blank = document.createElement("option"); blank.value = ""; blank.textContent = "Select a screen tag";localSelect.appendChild(blank);
+    HmiScreenTags.definitions(currentScreenObj).forEach(tag => {
+      const option = document.createElement("option"); option.value = tag.name; option.textContent = `${tag.name} (${tag.type})`;localSelect.appendChild(option);
+    });
+    localSelect.value = binding.tag || "";
   }
   syncTagBindingSourceMode();
   if (tagBindingPropertySelect) {
@@ -27049,6 +27165,18 @@ function openCompactTagBindingModal(id) {
 function renderCompactTagBindingRows() {
   compactTagBindingConfigs.forEach((config) => {
     const binding = config.read();
+    const local = binding.connection_id === "_screen" || binding.connection_id === "_local";
+    if (config.screenSelect) {
+      const names=HmiScreenTags.definitions(currentScreenObj);
+      config.screenSelect.replaceChildren();
+      const blank=document.createElement('option');blank.value='';blank.textContent=names.length?'Select screen tag':'No screen tags defined';config.screenSelect.appendChild(blank);
+      names.forEach(tag=>{const option=document.createElement('option');option.value=tag.name;option.textContent=`${tag.name} (${tag.type})`;config.screenSelect.appendChild(option);});
+      config.screenSelect.value=binding.tag || '';config.screenSelect.hidden=!local;
+    }
+    config.row?.classList.toggle("is-screen-binding", local);
+    if (config.editorConnectionInput) config.editorConnectionInput.hidden=local;
+    if (config.editorTagInput) config.editorTagInput.hidden=local;
+    if (config.sourceSelect && config.sourceSelect.value !== 'expression') config.sourceSelect.value=local?'screen':'tag';
     if (config.editorConnectionInput) {
       setConnectionSelectValue(config.editorConnectionInput, binding.connection_id || "", binding.tag);
     }
@@ -27094,8 +27222,12 @@ function registerCompactTagBinding(config) {
     if (existing?.row?.parentNode) existing.row.parentNode.removeChild(existing.row);
     compactTagBindingConfigs.splice(existingIndex, 1);
   }
+  const sourceSelect = config.sourceSelect;
+  if (sourceSelect && ![...sourceSelect.options].some(option => option.value === "screen")) {
+    const option = document.createElement("option");option.value="screen";option.textContent="Screen Tag";sourceSelect.appendChild(option);
+  }
   const registeredConfig = {
-    ...config,
+    ...config, sourceSelect,
     read: () => {
       const binding = config.read();
       if (config.connectionInput) binding.connection_id = connectionIdFromFriendlyInput(config.connectionInput);
@@ -27104,6 +27236,12 @@ function registerCompactTagBinding(config) {
   };
   if (config.connectionInput) ensureFriendlyConnectionNames(config.connectionInput);
   if (config.inlineOnly) {
+    if (sourceSelect) sourceSelect.addEventListener("change", event => {
+      if (sourceSelect.value !== "screen") return;
+      event.stopImmediatePropagation();sourceSelect.value="tag";sourceSelect.dispatchEvent(new Event("change",{bubbles:true}));
+      config.apply({connection_id:"_screen",tag:HmiScreenTags.definitions(currentScreenObj)[0]?.name || ""});
+      sourceSelect.value="screen";openCompactTagBindingModal(config.id);
+    }, true);
     compactTagBindingConfigs.push({ ...registeredConfig, row: null, summaryEl: null });
     return;
   }
@@ -27160,7 +27298,20 @@ function registerCompactTagBinding(config) {
     });
   });
 
-  row.append(keyEl, editorConnectionInput, editorTagInput, button);
+  const screenSelect = document.createElement("select");screenSelect.className="automation-tag-input";screenSelect.setAttribute("aria-label", "Screen Tag");
+  screenSelect.addEventListener("change", () => applyCompactTagEdit(() => config.apply({connection_id:"_screen",tag:screenSelect.value})));
+  if (sourceSelect) sourceSelect.addEventListener("change", event => {
+    if (sourceSelect.value === "screen") {
+      event.stopImmediatePropagation();
+      sourceSelect.value="tag";sourceSelect.dispatchEvent(new Event("change", {bubbles:true}));
+      const tag=HmiScreenTags.definitions(currentScreenObj)[0]?.name || "";
+      applyCompactTagEdit(()=>config.apply({connection_id:"_screen",tag}));
+      sourceSelect.value="screen";renderCompactTagBindingRows();
+    } else if (sourceSelect.value === "tag" && config.read().connection_id === "_screen") {
+      applyCompactTagEdit(()=>config.apply({connection_id:"",tag:""}));
+    }
+  }, true);
+  row.append(keyEl, editorConnectionInput, editorTagInput, screenSelect, button);
 
   const beforeEl = config.beforeEl || null;
   if (beforeEl && beforeEl.parentNode === config.container) config.container.insertBefore(row, beforeEl);
@@ -27182,7 +27333,7 @@ function registerCompactTagBinding(config) {
     }
   }
 
-  compactTagBindingConfigs.push({ ...registeredConfig, row, summaryEl: null, editorConnectionInput, editorTagInput, cancelPending });
+  compactTagBindingConfigs.push({ ...registeredConfig, row, summaryEl: null, editorConnectionInput, editorTagInput, screenSelect, cancelPending });
 }
 
 function updateButtonWriteBinding(patch) {
@@ -27212,7 +27363,7 @@ function initializeCompactTagBindingRows() {
   if (compactTagBindingConfigs.length) return;
 
   registerCompactTagBinding({
-    id: "visibility",
+    id: "visibility", sourceSelect: visibilitySourceTypeSelect,
     container: visibilityFields,
     beforeEl: visibilityModeSelect?.closest(".prop-row"),
     connectionInput: visibilityConnectionInput,
@@ -27227,7 +27378,7 @@ function initializeCompactTagBindingRows() {
   });
 
   registerCompactTagBinding({
-    id: "rectColor",
+    id: "rectColor", sourceSelect: rectColorSourceTypeSelect,
     container: rectColorFields,
     beforeEl: rectColorModeSelect?.closest(".prop-row"),
     buttonLabel: "Source",
@@ -27248,7 +27399,7 @@ function initializeCompactTagBindingRows() {
   });
 
   registerCompactTagBinding({
-    id: "textBindingModal",
+    id: "textBindingModal", sourceSelect: textBindingSourceTypeSelect,
     connectionInput: textBindingConnectionInput,
     tagInput: textBindingTagInput,
     modalTitle: "Binding Tag",
@@ -27844,7 +27995,7 @@ const initializeRotationControls = () => {
       });
     });
     registerCompactTagBinding({
-      id: `rotation-${definition.id}`,
+      id: `rotation-${definition.id}`, sourceSelect: sourceTypeSelect,
       container: autoFields,
       beforeEl: expressionRow,
       buttonLabel: "Source",
@@ -28409,7 +28560,7 @@ const initializeMotionControls = () => {
       });
     });
     registerCompactTagBinding({
-      id: `motion-${definition.id}`,
+      id: `motion-${definition.id}`, sourceSelect: sourceTypeSelect,
       connectionInput,
       tagInput,
       modalTitle: `${definition.title} Tag`,
@@ -28946,7 +29097,7 @@ const initializeLevelAutomationControl = () => {
   fill.addEventListener("change", () => updateSelectedLevelAutomation({ fill: fill.value.trim() }));
   emptyFill.addEventListener("change", () => updateSelectedLevelAutomation({ emptyFill: emptyFill.value.trim() }));
   registerCompactTagBinding({
-    id: "levelAutomation", container: sectionEl, beforeEl: min.closest?.(".prop-row") || null,
+    id: "levelAutomation", sourceSelect: sourceType, container: sectionEl, beforeEl: min.closest?.(".prop-row") || null,
     buttonLabel: "Source", modalTitle: "Level Source Tag",
     read: () => {
       const objects = getActiveObjects();
@@ -30801,7 +30952,7 @@ const insertLibraryItemAt = (kind, point) => {
 };
 
 function updateSelectionOverlays() {
-  syncPipePointCoordinates();
+  syncPathPointCoordinates();
   if (!selectionLayer || !renderedElementMeta.length) return;
   selectionLayer.textContent = "";
   if (resizeLayer) resizeLayer.textContent = "";
@@ -32017,7 +32168,7 @@ const findRuntimeChildMetaInViewport = (viewportObj, viewportIndex, point) => {
   const localX = (point.x - transform.x - transform.offsetX) / transform.scale;
   const localY = (point.y - transform.y - transform.offsetY) / transform.scale;
   const aliasSource = viewportAliasMappings.get(String(viewportObj.id || "")) || { mappings: viewportObj.aliases || {}, parentContext: currentScreenAliasContext };
-  const aliasContext = buildAliasContext(child, aliasSource.mappings, aliasSource.parentContext);
+  const aliasContext = buildAliasContext(child, aliasSource.mappings, aliasSource.parentContext, `viewport:${viewportObj.id}`);
   const hit = findHitInObjectList(child.objects, { x: localX, y: localY }, [], child, aliasContext);
   if (!hit?.path) return null;
   return {
@@ -32079,7 +32230,7 @@ const getObjectFromMeta = (meta) => {
     const viewport = getActiveObjects()?.[meta.index];
     const aliasSource = viewportAliasMappings.get(String(viewport?.id || ""))
       || { mappings: viewport?.aliases || {}, parentContext: currentScreenAliasContext };
-    return resolveAliasObject(object, buildAliasContext(child, aliasSource.mappings, aliasSource.parentContext));
+    return resolveAliasObject(object, buildAliasContext(child, aliasSource.mappings, aliasSource.parentContext, `viewport:${viewport?.id}`));
   }
   const root = getActiveObjects()?.[meta.index];
   if (!root) return null;
@@ -32375,7 +32526,7 @@ const findRuntimeGroupHotspot = (point) => {
           y: (testPoint.y - childOriginY) / transform.scale
         };
         const aliasSource = viewportAliasMappings.get(String(obj.id || "")) || { mappings: obj.aliases || {}, parentContext: aliasContext };
-        const childAliases = buildAliasContext(child, aliasSource.mappings, aliasSource.parentContext);
+        const childAliases = buildAliasContext(child, aliasSource.mappings, aliasSource.parentContext, `viewport:${obj.id}`);
         const nested = findInList(child.objects, 0, 0, [], childPoint, child, childAliases);
         if (nested) {
           return {
@@ -35396,7 +35547,7 @@ if (hmiSvg) {
     const hitMeta = getMetaAtPoint(point);
     if (!hitMeta) return;
     const obj = getObjectFromMeta(hitMeta);
-    if (obj?.action?.type !== "momentary-write") return;
+    if (obj?.action?.type !== "momentary-write" || obj.action.requireConfirmation) return;
     momentaryWriter.press(event.pointerId, obj.action, obj);
   });
 
@@ -35429,7 +35580,7 @@ if (hmiSvg) {
     if (document.hidden) releaseMomentary(null);
   });
 
-	  hmiSvg.addEventListener("click", (event) => {
+	  hmiSvg.addEventListener("click", async (event) => {
 	    if (!isEditMode) {
 	      const point = getScreenPoint(event);
 	      if (!point) return;
@@ -35446,6 +35597,7 @@ if (hmiSvg) {
           const hotspot = findRuntimeGroupHotspot(point);
 	          if (hotspot) {
 	            const action = hotspot.obj.action || {};
+              if (action.type !== "sequence" && !await confirmRuntimeClick(action)) return;
               if (action.type === 'sequence') {
                 startClickSequence(hotspot.obj, {viewportId: hotspot.viewportId});
                 return;
@@ -35491,6 +35643,11 @@ if (hmiSvg) {
           }
         }
 		      if (!hitMeta) return;
+          if (obj?.action?.type && obj.action.type !== 'sequence' && !await confirmRuntimeClick(obj.action)) return;
+          if (obj?.action?.type === 'momentary-write' && obj.action.requireConfirmation) {
+            if (isViewOnlyRuntime() && obj.action.connection_id !== '_local') return;
+            await runConfirmedMomentary(obj.action,obj).catch(error=>showHmiToast(error.message));return;
+          }
           if (obj?.action?.type === 'sequence') {
             const viewport = hitMeta.type === 'viewport' ? currentScreenObj?.objects?.[hitMeta.index] : null;
             startClickSequence(obj, {viewportId: viewport?.id});
@@ -35584,13 +35741,13 @@ if (hmiSvg) {
 	        });
 	      }
 	      if (obj?.action?.type === "set-write") {
-	        if (writesDisabled) return;
+	        if (writesDisabled && obj.action.connection_id !== "_local") return;
 		        runSetWriteAction(obj.action, obj).catch((error) => {
 	          console.error("[set-write] failed:", error);
 	        });
 	      }
 	      if (obj?.action?.type === "prompt-write") {
-	        if (writesDisabled) return;
+	        if (writesDisabled && obj.action.connection_id !== "_local") return;
 	        openSetpointPrompt(obj.action);
 	      }
 	      return;

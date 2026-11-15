@@ -26,6 +26,7 @@ test('Edit/Run round trip restores editor scroll and ignores stale transitions/s
     'setRuntimeHistoryBase', 'initViewportHistoriesForCurrentScreen', 'applyScale', 'renderScreen',
     'refreshScreensList', 'updateSelectionOverlays', 'updatePropertiesPanel', 'updateGroupBreadcrumb',
     'ensureRuntimeHistoryForCurrentScreen']) ctx[name] = noop;
+  ctx.currentScreenAliasContext={};ctx.screenTagStore={clear(){},context(){return "test:";}};ctx.buildAliasContext=()=>({});
   vm.createContext(ctx);
   vm.runInContext(code, ctx);
   const mode = value => vm.runInContext(`setMode(${value})`, ctx);

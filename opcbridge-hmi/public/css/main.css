@@ -4552,9 +4552,19 @@ body.edit-mode #editor-pane[data-dock="right"] #editor-resizer { left: 0; }
 .object-explorer-resizer:hover, .object-explorer-resizer:focus-visible { background: rgba(59, 130, 246, 0.35); outline: none; }
 .object-explorer.is-floating .object-explorer-resizer { display: none; }
 
-.pipe-point-coordinates { display: flex; flex-direction: column; gap: 4px; max-height: 260px; overflow-y: auto; margin-bottom: 10px; }
-.pipe-point-row { display: grid; grid-template-columns: 30px minmax(0, 1fr) minmax(0, 1fr); gap: 6px; align-items: center; padding: 3px; border: 1px solid transparent; border-radius: 4px; }
-.pipe-point-row.is-selected { border-color: #4aa3ff; background: rgba(74, 163, 255, .12); }
-.pipe-point-row label { display: flex; gap: 4px; align-items: center; font-size: 11px; min-width: 0; }
-.pipe-point-row input { width: 100%; min-width: 0; }
-.pipe-point-row button { padding: 3px; font-size: 11px; }
+.point-coordinates { display: flex; flex-direction: column; gap: 4px; max-height: 260px; overflow-y: auto; margin-bottom: 10px; }
+.point-coordinate-row { display: grid; grid-template-columns: 30px minmax(0, 1fr) minmax(0, 1fr); gap: 6px; align-items: center; padding: 3px; border: 1px solid transparent; border-radius: 4px; }
+.point-coordinate-row.is-selected { border-color: #4aa3ff; background: rgba(74, 163, 255, .12); }
+.point-coordinate-row label { display: flex; gap: 4px; align-items: center; font-size: 11px; min-width: 0; }
+.point-coordinate-row input { width: 100%; min-width: 0; }
+.point-coordinate-row button { padding: 3px; font-size: 11px; }
+
+.screen-tag-card { border: 1px solid #50545c; border-radius: 5px; padding: 9px; margin: 8px 0; background: rgba(255,255,255,.025); }
+
+.action-confirmation { background: #242830; color: #eceff4; border: 1px solid #606875; border-radius: 8px; padding: 20px; width: min(420px, 85vw); }
+.action-confirmation::backdrop { background: rgba(0,0,0,.6); }
+.action-confirmation p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.action-confirmation .prop-inline { justify-content: flex-end; gap: 8px; }
+
+.text-binding-inline-row.is-screen-binding { grid-template-columns: 56px minmax(0, 1fr) auto; }
+.compact-binding-row [hidden] { display: none !important; }
