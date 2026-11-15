@@ -6,7 +6,7 @@ const source=fs.readFileSync(`${__dirname}/../public/js/hmi.js`,'utf8');
 class Node{
   constructor(name){this.localName=name;this.attributes={};this.children=[];this.classList={toggle(){}};this.listeners={};this.value='';}
   setAttribute(k,v){this.attributes[k]=String(v);}getAttribute(k){return this.attributes[k]??null;}
-  appendChild(n){n.parent=this;this.children.push(n);return n;}append(...nodes){nodes.forEach(n=>this.appendChild(n));}
+  appendChild(n){n.parent=this;n.parentNode=this;this.children.push(n);return n;}append(...nodes){nodes.forEach(n=>this.appendChild(n));}
   querySelectorAll(){return this.children.flatMap(n=>[...(['path','polygon','polyline','rect','circle','ellipse','text'].includes(n.localName)?[n]:[]),...n.querySelectorAll()]);}
   querySelector(){return null;}closest(name){let p=this;while(p){if(name==='defs'&&p.localName==='defs')return p;if(name==='.prop-row'&&p.className==='prop-row')return p;p=p.parent;}return null;}
   cloneNode(deep){const clone=new Node(this.localName);clone.attributes={...this.attributes};if(deep)this.children.forEach(n=>clone.appendChild(n.cloneNode(true)));return clone;}
@@ -32,8 +32,9 @@ test('group Level fills follow 0%, 50%, 100% while keeping the original silhouet
   for(const [value,height,y] of [[0,0,172],[72,86,86],[144,172,0]]){
     const f=fixture(value);assert.equal(Number(f.overlay.getAttribute('height')),height);assert.equal(Number(f.overlay.getAttribute('y')),y);
     assert.equal(f.overlay.getAttribute('fill'),'#3a7bd5');assert.equal(f.polygon.getAttribute('fill'),'none');
-    const mask=f.defs.children[0].children[0];assert.equal(mask.children[0].getAttribute('fill'),'#ffffff');
-    assert.equal(mask.children[1].getAttribute('fill'),'none','open outlines must not become filled regions');
+    const mask=f.defs.children[0];assert.equal(mask.children.length,1);
+    assert.equal(mask.children[0].localName,'polygon','clipPath must contain geometry directly, never a group');
+    assert.equal(mask.children[0].getAttribute('fill'),'#ffffff');
     assert.equal(mask.children[0].getAttribute('points'),f.polygon.getAttribute('points'));
     assert.equal(f.border.children[0].getAttribute('fill'),'none');assert.equal(f.border.children[1].getAttribute('stroke'),'#000000');
   }

@@ -14556,19 +14556,28 @@ const appendLevelAutomationOverlay = (parent, obj, shapeEl, bounds) => {
   const groupShape = String(shapeEl.localName || shapeEl.tagName || "").toLowerCase() === "g";
   const filledShapes = groupShape ? [...shapeEl.querySelectorAll("path,polygon,polyline,rect,circle,ellipse,text")]
     .filter(shape => !shape.closest("defs") && !["none", "transparent"].includes(String(shape.getAttribute("fill") || "").toLowerCase())) : [];
-  const clipShape = shapeEl.cloneNode(groupShape);
   if (groupShape) {
-    for (const shape of clipShape.querySelectorAll("path,polygon,polyline,rect,circle,ellipse,text")) {
-      const filled = !["none", "transparent"].includes(String(shape.getAttribute("fill") || "").toLowerCase());
-      shape.setAttribute("fill", filled ? "#ffffff" : "none");
-      shape.setAttribute("stroke", "none");
+    // clipPath accepts individual geometry, not nested groups. Flatten each
+    // filled shape while preserving its ancestor transforms in local order.
+    for (const shape of filledShapes) {
+      const clipShape = shape.cloneNode(true);
+      const transforms = [];
+      for (let node = shape; node && node !== shapeEl; node = node.parentNode) {
+        const transform = node.getAttribute("transform");
+        if (transform) transforms.unshift(transform);
+      }
+      if (transforms.length) clipShape.setAttribute("transform", transforms.join(" "));
+      clipShape.setAttribute("fill", "#ffffff");
+      clipShape.setAttribute("stroke", "none");
+      clipPath.appendChild(clipShape);
     }
     if (config.emptyFill) for (const shape of filledShapes) setSvgPaint(shape, "fill", config.emptyFill, bounds, parent);
   } else {
+    const clipShape = shapeEl.cloneNode(false);
     clipShape.setAttribute("fill", "#ffffff");
     clipShape.setAttribute("stroke", "none");
+    clipPath.appendChild(clipShape);
   }
-  clipPath.appendChild(clipShape);
   defs.appendChild(clipPath);
   let fx = x, fy = y, fw = width, fh = height;
   if (config.direction === "up") { fy = y + height * (1 - fraction); fh = height * fraction; }
