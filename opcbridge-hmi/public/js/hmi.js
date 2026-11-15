@@ -19628,6 +19628,32 @@ const syncPointCoordinateEditor = (objectType, hostId) => {
   const obj = selectedIndices.length === 1 ? getActiveObjects()?.[selectedIndices[0]] : null;
   if (!obj || obj.type !== objectType) { host.replaceChildren(); host.pointObject = null; return; }
   const points = obj.points || [];
+  const minimumPoints = objectType === "polygon" ? 3 : 2;
+  const applyPoints = next => {
+    if (objectType === "polygon") updatePolygonProperty({ points: next });
+    else updatePolylineProperty({ points: next });
+    updateSelectionOverlays();
+  };
+  const add = document.getElementById(`${hostId}AddBtn`);
+  if (add) add.onclick = () => {
+    if (selectedIndices.length !== 1 || getActiveObjects()?.[selectedIndices[0]] !== obj) return;
+    const current = obj.points || [];
+    const last = current[current.length - 1] || { x: 0, y: 0 };
+    let point;
+    if (objectType === "polygon" && current.length > 1) {
+      point = { x: (Number(last.x) + Number(current[0].x)) / 2, y: (Number(last.y) + Number(current[0].y)) / 2 };
+    } else {
+      const previous = current[current.length - 2] || last;
+      const dx = Number(last.x) - Number(previous.x), dy = Number(last.y) - Number(previous.y);
+      const distance = Math.hypot(dx, dy);
+      point = { x: Number(last.x) + (distance ? 40 * dx / distance : 40), y: Number(last.y) + (distance ? 40 * dy / distance : 0) };
+    }
+    selectedPolygonVertex = { groupDepth: groupEditStack.length, objectIndex: selectedIndices[0], vertexIndex: current.length };
+    applyPoints([...current, point]);
+    const row = host.children[current.length];
+    row?.scrollIntoView?.({ block: "nearest" });
+    row?.querySelector?.("input")?.focus?.();
+  };
   if (host.pointObject !== obj || host.children.length !== points.length) {
     host.replaceChildren(); host.pointObject = obj;
     points.forEach((point, index) => {
@@ -19655,6 +19681,25 @@ const syncPointCoordinateEditor = (objectType, hostId) => {
           updateSelectionOverlays();
         });
         label.appendChild(input); row.appendChild(label);
+      }
+      {
+        row.classList.add("has-point-remove");
+        const remove = document.createElement("button"); remove.type = "button";
+        remove.textContent = "×"; remove.title = `Remove point ${index + 1}`;
+        remove.setAttribute("aria-label", `Remove point ${index + 1}`);
+        remove.disabled = points.length <= minimumPoints;
+        if (remove.disabled) remove.title = objectType === "polygon" ? "A polygon needs at least three points" : "A pipe needs at least two points";
+        remove.addEventListener("click", () => {
+          if (selectedIndices.length !== 1 || getActiveObjects()?.[selectedIndices[0]] !== obj || obj.points.length <= minimumPoints || !obj.points[index]) return;
+          const next = obj.points.filter((_, i) => i !== index);
+          if (selectedPolygonVertex?.groupDepth === groupEditStack.length && selectedPolygonVertex.objectIndex === selectedIndices[0]) {
+            const selected = selectedPolygonVertex.vertexIndex;
+            selectedPolygonVertex = { ...selectedPolygonVertex, vertexIndex: selected === index ? Math.min(index, next.length - 1) : selected > index ? selected - 1 : selected };
+          }
+          applyPoints(next);
+          host.children[Math.min(index, next.length - 1)]?.firstElementChild?.focus?.();
+        });
+        row.appendChild(remove);
       }
       host.appendChild(row);
     });

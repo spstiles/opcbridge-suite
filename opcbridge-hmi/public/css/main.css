@@ -4568,3 +4568,5 @@ body.edit-mode #editor-pane[data-dock="right"] #editor-resizer { left: 0; }
 
 .text-binding-inline-row.is-screen-binding { grid-template-columns: 56px minmax(0, 1fr) auto; }
 .compact-binding-row [hidden] { display: none !important; }
+
+.point-coordinate-row.has-point-remove { grid-template-columns: 30px minmax(0, 1fr) minmax(0, 1fr) 24px; }
