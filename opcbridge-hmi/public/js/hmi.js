@@ -1227,7 +1227,7 @@ const syncRectColorUiFromDraft = (obj, draft) => {
   const flashEnabled = Boolean(next.flashEnabled);
   if (rectColorFlashEnabledInput) rectColorFlashEnabledInput.checked = flashEnabled;
   if (rectColorFlashRateSelect) rectColorFlashRateSelect.value = next.flashRate === "fast" ? "fast" : "slow";
-  if (rectColorFlashWhenSelect) rectColorFlashWhenSelect.value = next.flashWhen === false ? "false" : "true";
+  if (rectColorReverseFlashInput) rectColorReverseFlashInput.checked = next.flashWhen === false;
   if (rectColorFields) {
     const show = next.enabled !== false;
     rectColorFields.classList.toggle("is-hidden", !show);
@@ -4348,7 +4348,7 @@ const rectColorExpressionEditBtn = document.getElementById("rectColorExpressionE
 const rectColorFlashRateRow = document.getElementById("rectColorFlashRateRow");
 const rectColorFlashRateSelect = document.getElementById("rectColorFlashRate");
 const rectColorFlashWhenRow = document.getElementById("rectColorFlashWhenRow");
-const rectColorFlashWhenSelect = document.getElementById("rectColorFlashWhen");
+const rectColorReverseFlashInput = document.getElementById("rectColorFlashWhen");
 const rectColorFillEnabledInput = document.getElementById("rectColorFillEnabled");
 const rectColorStrokeEnabledInput = document.getElementById("rectColorStrokeEnabled");
 const rectColorFillRow = document.getElementById("rectColorFillRow");
@@ -26544,7 +26544,7 @@ if (rectColorFlashEnabledInput) {
     updateRectColorDraft({
       flashEnabled: rectColorFlashEnabledInput.checked,
       flashRate: rectColorFlashRateSelect?.value === "fast" ? "fast" : "slow",
-      flashWhen: rectColorFlashWhenSelect?.value === "false" ? false : true
+      flashWhen: !rectColorReverseFlashInput?.checked
     });
   });
 }
@@ -26555,9 +26555,9 @@ if (rectColorFlashRateSelect) {
   });
 }
 
-if (rectColorFlashWhenSelect) {
-  rectColorFlashWhenSelect.addEventListener("change", () => {
-    updateRectColorDraft({ flashEnabled: true, flashWhen: rectColorFlashWhenSelect.value === "false" ? false : true });
+if (rectColorReverseFlashInput) {
+  rectColorReverseFlashInput.addEventListener("change", () => {
+    updateRectColorDraft({ flashEnabled: true, flashWhen: !rectColorReverseFlashInput.checked });
   });
 }
 
