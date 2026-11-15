@@ -18,3 +18,9 @@ Edit mode leaves the object stationary. Animation follows the browser timeline
 so data redraws do not restart its phase. Existing imported GraphWorX rotation
 ramps open in Continuous mode with their saved period; existing analog mappings
 open in Position mode. Changing modes preserves the input and angle ranges.
+
+During incremental runtime updates, a continuously rotating drawing is retained
+when its own settings, tag inputs, and inherited colors are unchanged. Updates to
+surrounding equipment do not recreate its animation. Changes to its run source,
+timing, or appearance rebuild it as needed. Full-screen rebuilds still recreate
+the drawing with the same browser timeline phase.

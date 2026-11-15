@@ -65,7 +65,7 @@ test('region painting replaces its own definitions and keeps old content on fail
     remove() { this.parent.children = this.parent.children.filter(n => n !== this); }
   }
   const host = new Node();
-  const ctx = vm.createContext({ runtimeObjectDefs: null,
+  const ctx = vm.createContext({ runtimeObjectDefs: null, isEditMode: true, continuousRotationRepaint: null,
     document: { createElementNS: () => new Node() }, host,
     renderObjectInto: (node) => node.appendChild(new Node())
   });

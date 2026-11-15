@@ -108,7 +108,9 @@ test('continuous rotation wraps different object types once around their world p
     ctx.getRotationPivot=()=>({localX:50,localY:50,worldX:150,worldY:250});
     let drawn,host;
     ctx.getDisplayObject=obj=>obj;ctx.applyGroupColorOverridesToObject=obj=>obj;ctx.shouldPaintObject=()=>true;
-    ctx.document.createElementNS=()=>({style:{},animate:()=>({})});
+    ctx.tagQualityCache=new Map();ctx.browserColorFlashPhase=null;ctx.runtimeObjectDefs=null;
+    ctx.collectTagKeysFromValue=()=>{};ctx.wsTagKeyToQueryItem=()=>null;
+    ctx.document.createElementNS=()=>({style:{},setAttribute(){},appendChild(){},animate:()=>({})});
     ctx.parent={appendChild:child=>{host=child;}};ctx.record=value=>{drawn=value;};
     const start=source.indexOf('const renderObjectContentInto =');
     const end=source.indexOf('  const ns = "http://www.w3.org/2000/svg";',start);

@@ -11157,6 +11157,22 @@ const getObjectRotationDegrees = (obj, rampPhase = null) => {
   return base + getRotationAutomationValue(obj, rampPhase);
 };
 
+// A running rotor can outlive a repaint of its surrounding equipment group.
+// Cache only while its own configuration, inherited paint and tag inputs match.
+const continuousRotationDrawings = new WeakMap();
+let continuousRotationRepaint = null;
+
+const rotationDrawingSignature = (obj, inherited) => {
+  const keys = new Set();
+  collectTagKeysFromValue(obj, keys);
+  const inputs = [...keys].sort().map(key => {
+    const item = wsTagKeyToQueryItem(key);
+    const cacheKey = item ? normalizeTagCacheKey(item.connection_id, item.name) : "";
+    return [key, tagValueCache.get(cacheKey), tagQualityCache.get(cacheKey)];
+  });
+  return JSON.stringify([obj, inherited, inputs, browserColorFlashPhase]);
+};
+
 const animateRotationAutomation = (element, obj, worldCoordinates = false) => {
   const automation = normalizeRotationAutomationState(obj?.rotationAutomation);
   const period = Number(automation.rampPeriodMs);
@@ -15002,12 +15018,32 @@ const renderObjectContentInto = (parent, obj, inheritedGroupColorOverrides = nul
   obj = applyGroupColorOverridesToObject(obj, inheritedGroupColorOverrides);
   if (!shouldPaintObject(obj)) return;
   if (!isEditMode && obj.rotationAutomation && normalizeRotationAutomationState(obj.rotationAutomation).mode === "continuous") {
+    const signature = rotationDrawingSignature(obj, inheritedGroupColorOverrides);
+    const candidates = continuousRotationRepaint?.candidates.get(signature);
+    const previous = candidates?.shift();
+    if (previous) {
+      const placeholder = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      parent.appendChild(placeholder);
+      continuousRotationRepaint.transfers.push({ placeholder, previous });
+      return;
+    }
     const rotationHost = document.createElementNS("http://www.w3.org/2000/svg", "g");
     if (animateRotationAutomation(rotationHost, obj, true)) {
+      rotationHost.setAttribute("data-hmi-continuous-rotation", "");
+      continuousRotationDrawings.set(rotationHost, signature);
       parent.appendChild(rotationHost);
-      parent = rotationHost;
-      // The outer host owns rotation; draw the object and its shadows once.
-      obj = { ...obj, rotation: 0, rotationAutomation: undefined };
+      // Keep gradients and shadow filters with the retained drawing, rather
+      // than referencing defs that its surrounding repaint will discard.
+      const previousDefs = runtimeObjectDefs;
+      const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+      rotationHost.appendChild(defs);
+      runtimeObjectDefs = defs;
+      try {
+        renderObjectContentInto(rotationHost, { ...obj, rotation: 0, rotationAutomation: undefined }, inheritedGroupColorOverrides);
+      } finally {
+        runtimeObjectDefs = previousDefs;
+      }
+      return;
     }
   }
   const ns = "http://www.w3.org/2000/svg";
@@ -16301,6 +16337,17 @@ const isIncrementalRuntimeObject = (obj) => {
 const paintRuntimeRegion = (host, obj) => {
   const previousDefs = runtimeObjectDefs;
   const oldAnimations = host.getAnimations?.({ subtree: true }) || [];
+  const previousRepaint = continuousRotationRepaint;
+  const repaint = { candidates: new Map(), transfers: [] };
+  if (!isEditMode) {
+    for (const drawing of host.querySelectorAll("[data-hmi-continuous-rotation]")) {
+      const signature = continuousRotationDrawings.get(drawing);
+      if (!signature) continue;
+      if (!repaint.candidates.has(signature)) repaint.candidates.set(signature, []);
+      repaint.candidates.get(signature).push(drawing);
+    }
+  }
+  continuousRotationRepaint = repaint;
   const staging = document.createElementNS("http://www.w3.org/2000/svg", "g");
   // Attach while painting so ownerSVGElement and paint coordinates remain valid.
   host.appendChild(staging);
@@ -16309,7 +16356,12 @@ const paintRuntimeRegion = (host, obj) => {
   runtimeObjectDefs = defs;
   try {
     renderObjectInto(staging, obj);
-    oldAnimations.forEach((animation) => animation.cancel());
+    const retainedAnimations = new Set();
+    for (const { placeholder, previous } of repaint.transfers) {
+      previous.getAnimations?.({ subtree: true }).forEach(animation => retainedAnimations.add(animation));
+      placeholder.replaceWith(previous);
+    }
+    oldAnimations.forEach((animation) => { if (!retainedAnimations.has(animation)) animation.cancel(); });
     host.replaceChildren(staging);
   } catch (error) {
     staging.getAnimations?.({ subtree: true }).forEach((animation) => animation.cancel());
@@ -16317,6 +16369,7 @@ const paintRuntimeRegion = (host, obj) => {
     throw error;
   } finally {
     runtimeObjectDefs = previousDefs;
+    continuousRotationRepaint = previousRepaint;
   }
 };
 
