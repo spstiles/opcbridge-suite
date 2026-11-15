@@ -1413,10 +1413,11 @@ const updateRectColorDraft = (patch) => {
   rules[selectedRuleIndex] = next;
   rectColorDraft = { rules, selectedRuleIndex };
   syncRectColorUiFromDraft(obj, rectColorDraft);
-  applyRectColorDraftToObject();
+  const sourceChanged = ["sourceType", "connection_id", "tag", "expression", "enabled"].some(key => key in patch);
+  applyRectColorDraftToObject({ sourceChanged });
 };
 
-const applyRectColorDraftToObject = () => {
+const applyRectColorDraftToObject = ({ sourceChanged = true } = {}) => {
   const activeObjects = getActiveObjects();
   const obj = getSelectedColorDynamicObject();
   if (!activeObjects || !obj || !isEditingAnyColorDynamic()) return false;
@@ -1529,9 +1530,9 @@ const applyRectColorDraftToObject = () => {
   else delete obj.colorAutomationRules;
   rectColorDraftObject = obj;
   rectColorDraft = normalizeRectColorDraft(obj, { rules, selectedRuleIndex: draft.selectedRuleIndex });
-  renderScreen();
+  if (!repaintEditorColorObject(obj)) renderScreen({ refreshReferenceHealth: false });
   syncEditorFromScreen();
-  setDirty(true);
+  setDirty(true, { refreshReferences: sourceChanged, refreshSubscriptions: sourceChanged });
   return true;
 };
 
@@ -16319,6 +16320,27 @@ const paintRuntimeRegion = (host, obj) => {
   }
 };
 
+// Repaint the owning top-level region so group inheritance, alias previews,
+// gradients and local coordinate systems stay consistent. Preserve the outer
+// host and Properties controls; only this object's drawing is replaced.
+const repaintEditorColorObject = (obj) => {
+  if (!isEditMode || !currentScreenObj || !obj) return false;
+  const owner = groupEditStack[0] || obj;
+  const index = currentScreenObj.objects?.indexOf(owner) ?? -1;
+  const host = renderedElementMeta.find(entry => entry.index === index)?.el;
+  if (index < 0 || !host?.isConnected) return false;
+  try {
+    const context = buildAliasPreviewContext(currentScreenObj);
+    paintRuntimeRegion(host, getDisplayObject(resolveAliasObject(owner, context)));
+    if (groupEditStack.length) buildGroupEditMeta();
+    updateSelectionOverlays();
+    return true;
+  } catch (error) {
+    console.warn("[editor color] Falling back to full redraw:", error);
+    return false;
+  }
+};
+
 const updateRuntimeObjects = (keys) => {
   const index = runtimeRenderIndex;
   if (!index || !index.safe || index.screen !== currentScreenObj || isEditMode || currentPopupScreenId) return false;
@@ -20772,7 +20794,7 @@ const toggleSwatches = (target, anchorEl) => {
   if (isOpen) return;
   openSwatchPopoverFloating(target, anchorEl);
 };
-const setDirty = (next) => {
+const setDirty = (next, { refreshReferences = true, refreshSubscriptions = true } = {}) => {
   if (poseEditSession && next) {
     const activeObjects = getActiveObjects();
     const selectedObj = (activeObjects && selectedIndices.length === 1)
@@ -20787,8 +20809,8 @@ const setDirty = (next) => {
     screenCache.set(currentScreenId, currentScreenObj);
   }
   if (next && currentScreenObj) {
-    scheduleWsSubscribeRefresh();
-    scheduleReferenceHealthRefresh();
+    if (refreshSubscriptions) scheduleWsSubscribeRefresh();
+    if (refreshReferences) scheduleReferenceHealthRefresh();
   }
 };
 
