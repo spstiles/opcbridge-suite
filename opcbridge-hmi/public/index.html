@@ -2282,11 +2282,9 @@
                   <option value="fast">Fast Blink</option>
                 </select>
               </div>
-              <div class="prop-row">
-                <label class="inline-check">
-                  <input id="visibilityFlashWhen" type="checkbox" />
-                  <span>Flash when condition is true</span>
-                </label>
+              <div id="visibilityFlashWhenRow" class="prop-row is-hidden" hidden>
+                <label for="visibilityFlashWhen" title="On when other objects at the same flash rate are off.">Reverse Flash Timing</label>
+                <input id="visibilityFlashWhen" type="checkbox" title="On when other objects at the same flash rate are off." />
               </div>
               <div id="visibilityActionRow" class="prop-row is-hidden">
                 <label>Actions</label>

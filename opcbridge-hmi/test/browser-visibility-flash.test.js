@@ -43,3 +43,25 @@ test('browser flash preserves phase, idle fallback, and hit-test visibility', ()
   assert.equal(vm.runInContext('getBrowserVisibilityFlash(obj)', ctx), null);
   assert.equal(vm.runInContext('shouldPaintObject(obj)', ctx), true);
 });
+
+test('reverse timing swaps visibility animation and hit-test phases without reversing the source condition', () => {
+  for (const [rate, halfPeriod] of [['slow',1000],['fast',500]]) {
+    const ctx=vm.createContext({isEditMode:false,document:{timeline:{currentTime:0}},evaluateVisibilityRule:rule=>rule.active});
+    for(const name of ['applyVisibilityFlash','getBrowserVisibilityFlash','shouldPaintObject','animateVisibilityFlash','shouldRenderObject']){
+      const start=source.indexOf(`const ${name} =`);
+      vm.runInContext(source.slice(start,source.indexOf('\n};',start)+3),ctx);
+    }
+    ctx.rule={enabled:true,active:true,flashEnabled:true,flashRate:rate,flashWhen:false};
+    ctx.obj={visibility:{enabled:true,defaultVisible:false,rules:[ctx.rule]}};
+    assert.equal(vm.runInContext('shouldRenderObject(obj)',ctx),false);
+    assert.equal(vm.runInContext('shouldPaintObject(obj)',ctx),true);
+    ctx.document.timeline.currentTime=halfPeriod;
+    assert.equal(vm.runInContext('shouldRenderObject(obj)',ctx),true);
+    let frames,options;const animation={};
+    ctx.element={animate:(nextFrames,nextOptions)=>{frames=nextFrames;options=nextOptions;return animation;}};
+    vm.runInContext('animateVisibilityFlash(element,getBrowserVisibilityFlash(obj))',ctx);
+    assert.equal(frames[0].visibility,'hidden');assert.equal(frames[1].visibility,'visible');
+    assert.equal(options.duration,halfPeriod*2);assert.equal(animation.startTime,0);
+    ctx.rule.active=false;assert.equal(vm.runInContext('shouldPaintObject(obj)',ctx),false);
+  }
+});

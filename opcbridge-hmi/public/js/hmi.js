@@ -1648,9 +1648,11 @@ const syncVisibilityUiFromState = (state) => {
     visibilityFlashRateSelect.value = vis.flashRate === "fast" ? "fast" : "slow";
     visibilityFlashRateSelect.disabled = !vis.flashEnabled;
   }
-  if (visibilityFlashWhenInput) {
-    visibilityFlashWhenInput.checked = vis.flashWhen !== false;
-    visibilityFlashWhenInput.disabled = !vis.flashEnabled;
+  if (visibilityReverseFlashInput) {
+    visibilityReverseFlashInput.checked = vis.flashWhen === false;
+    visibilityReverseFlashInput.disabled = !vis.flashEnabled;
+    const row = visibilityReverseFlashInput.closest(".prop-row");
+    if (row) { row.hidden = !vis.flashEnabled; row.classList.toggle("is-hidden", !vis.flashEnabled); }
   }
   if (visibilityExpressionSummary) {
     const expression = String(vis.expression || "").trim();
@@ -4573,7 +4575,7 @@ const visibilityMatchInput = document.getElementById("visibilityMatch");
 const visibilityInvertInput = document.getElementById("visibilityInvert");
 const visibilityFlashEnabledInput = document.getElementById("visibilityFlashEnabled");
 const visibilityFlashRateSelect = document.getElementById("visibilityFlashRate");
-const visibilityFlashWhenInput = document.getElementById("visibilityFlashWhen");
+const visibilityReverseFlashInput = document.getElementById("visibilityFlashWhen");
 const visibilitySourceTypeSelect = document.getElementById("visibilitySourceType");
 const visibilityExpressionRow = document.getElementById("visibilityExpressionRow");
 const visibilityExpressionSummary = document.getElementById("visibilityExpressionSummary");
@@ -10609,7 +10611,8 @@ const applyVisibilityFlash = (visibility, result, fallback) => {
   if (!visibility?.flashEnabled) return Boolean(result);
   const halfPeriod = visibility.flashRate === "fast" ? 500 : 1000;
   const now = document.timeline?.currentTime ?? performance.now();
-  return Math.floor(now / halfPeriod) % 2 === 0 ? Boolean(result) : Boolean(fallback);
+  const onPhase = (Math.floor(now / halfPeriod) % 2 === 0) !== (visibility.flashWhen === false);
+  return onPhase ? Boolean(result) : Boolean(fallback);
 };
 
 const getBrowserVisibilityFlash = (obj) => {
@@ -10638,10 +10641,12 @@ const animateVisibilityFlash = (element, flash, property = "visibility") => {
   if (!flash || flash.on === flash.off) return;
   const duration = flash.rule.flashRate === "fast" ? 1000 : 2000;
   const paint = (visible) => property === "opacity" ? (visible ? 1 : 0) : (visible ? "visible" : "hidden");
+  const on = flash.rule.flashWhen === false ? flash.off : flash.on;
+  const off = flash.rule.flashWhen === false ? flash.on : flash.off;
   const animation = element.animate([
-    { [property]: paint(flash.on), offset: 0, easing: "steps(1, end)" },
-    { [property]: paint(flash.off), offset: 0.5, easing: "steps(1, end)" },
-    { [property]: paint(flash.on), offset: 1 }
+    { [property]: paint(on), offset: 0, easing: "steps(1, end)" },
+    { [property]: paint(off), offset: 0.5, easing: "steps(1, end)" },
+    { [property]: paint(on), offset: 1 }
   ], { duration, iterations: Infinity });
   // Every object uses the same document timeline epoch, including replacements
   // and newly opened popups; unrelated redraws cannot restart a blink cycle.
@@ -14548,9 +14553,21 @@ const appendLevelAutomationOverlay = (parent, obj, shapeEl, bounds) => {
   const clipId = `levelClip${nextClipPathId++}`;
   const clipPath = document.createElementNS("http://www.w3.org/2000/svg", "clipPath");
   clipPath.setAttribute("id", clipId);
-  const clipShape = shapeEl.cloneNode(false);
-  clipShape.setAttribute("fill", "#ffffff");
-  clipShape.setAttribute("stroke", "none");
+  const groupShape = String(shapeEl.localName || shapeEl.tagName || "").toLowerCase() === "g";
+  const filledShapes = groupShape ? [...shapeEl.querySelectorAll("path,polygon,polyline,rect,circle,ellipse,text")]
+    .filter(shape => !shape.closest("defs") && !["none", "transparent"].includes(String(shape.getAttribute("fill") || "").toLowerCase())) : [];
+  const clipShape = shapeEl.cloneNode(groupShape);
+  if (groupShape) {
+    for (const shape of clipShape.querySelectorAll("path,polygon,polyline,rect,circle,ellipse,text")) {
+      const filled = !["none", "transparent"].includes(String(shape.getAttribute("fill") || "").toLowerCase());
+      shape.setAttribute("fill", filled ? "#ffffff" : "none");
+      shape.setAttribute("stroke", "none");
+    }
+    if (config.emptyFill) for (const shape of filledShapes) setSvgPaint(shape, "fill", config.emptyFill, bounds, parent);
+  } else {
+    clipShape.setAttribute("fill", "#ffffff");
+    clipShape.setAttribute("stroke", "none");
+  }
   clipPath.appendChild(clipShape);
   defs.appendChild(clipPath);
   let fx = x, fy = y, fw = width, fh = height;
@@ -14565,8 +14582,9 @@ const appendLevelAutomationOverlay = (parent, obj, shapeEl, bounds) => {
   levelRect.setAttribute("pointer-events", "none");
   setSvgPaint(levelRect, "fill", config.fill || "#3b82f6", bounds, parent);
   parent.appendChild(levelRect);
-  const border = shapeEl.cloneNode(false);
+  const border = shapeEl.cloneNode(groupShape);
   border.setAttribute("fill", "none");
+  if (groupShape) for (const shape of border.querySelectorAll("path,polygon,polyline,rect,circle,ellipse,text")) shape.setAttribute("fill", "none");
   border.setAttribute("pointer-events", "none");
   parent.appendChild(border);
 };
@@ -15169,7 +15187,11 @@ const renderObjectContentInto = (parent, obj, inheritedGroupColorOverrides = nul
     parent.appendChild(groupEl);
     const nextInheritedGroupColorOverrides = mergeGroupColorOverrides(inheritedGroupColorOverrides, getGroupColorOverrides(obj));
     const children = Array.isArray(obj.children) ? obj.children : [];
-    children.forEach((child) => renderObjectIntoWithOffset(groupEl, child, 0, 0, nextInheritedGroupColorOverrides));
+    const hasLevel = obj.levelAutomation && normalizeLevelAutomation(obj.levelAutomation).enabled;
+    const drawingHost = hasLevel ? document.createElementNS(ns, "g") : groupEl;
+    if (hasLevel) groupEl.appendChild(drawingHost);
+    children.forEach((child) => renderObjectIntoWithOffset(drawingHost, child, 0, 0, nextInheritedGroupColorOverrides));
+    if (hasLevel) appendLevelAutomationOverlay(groupEl, obj, drawingHost, { x: 0, y: 0, width: w, height: h });
     return;
   }
   if (obj.type === "image") {
@@ -26326,9 +26348,9 @@ if (visibilityFlashRateSelect) {
   });
 }
 
-if (visibilityFlashWhenInput) {
-  visibilityFlashWhenInput.addEventListener("change", () => {
-    updateVisibilityProperty({ flashWhen: visibilityFlashWhenInput.checked, enabled: true });
+if (visibilityReverseFlashInput) {
+  visibilityReverseFlashInput.addEventListener("change", () => {
+    updateVisibilityProperty({ flashWhen: !visibilityReverseFlashInput.checked, enabled: true });
   });
 }
 
@@ -28828,9 +28850,23 @@ const initializeLevelAutomationControl = () => {
   const clamp = makeInput("checkbox");
   const fill = makeInput(); fill.placeholder = "#3b82f6 or linear-gradient(...)";
   const emptyFill = makeInput(); emptyFill.placeholder = "Object fill";
+  const paintControl = (label, input, key, fallback) => {
+    const swatch = makeInput("color"); swatch.value = fallback;
+    const button = document.createElement("button"); button.type = "button";
+    button.className = "swatch-btn"; button.textContent = "🎨";
+    button.title = "Open color picker"; button.setAttribute("aria-label", `Choose ${label} color`);
+    const inline = document.createElement("div"); inline.className = "prop-inline";
+    inline.append(swatch, input, button);
+    swatch.addEventListener("input", () => updateSelectedLevelAutomation({ [key]: swatch.value }));
+    button.addEventListener("click", () => openPaintPicker({ title: label, value: input.value || fallback, fallback,
+      onApply: color => updateSelectedLevelAutomation({ [key]: color }) }));
+    return { row: makeRow(label, inline), swatch };
+  };
+  const fillControl = paintControl("Level Fill", fill, "fill", "#3b82f6");
+  const emptyControl = paintControl("Empty Fill", emptyFill, "emptyFill", "#202533");
   const enabledRow = makeRow("Enabled", enabled);
   const expressionRow = makeRow("Expression", expression);
-  sectionEl.append(title, enabledRow, makeRow("Source Type", sourceType), expressionRow, makeRow("Input Minimum", min), makeRow("Input Maximum", max), makeRow("Direction", direction), makeRow("Invert", invert), makeRow("Clamp", clamp), makeRow("Level Fill", fill), makeRow("Empty Fill", emptyFill));
+  sectionEl.append(title, enabledRow, makeRow("Source Type", sourceType), expressionRow, makeRow("Input Minimum", min), makeRow("Input Maximum", max), makeRow("Direction", direction), makeRow("Invert", invert), makeRow("Clamp", clamp), fillControl.row, emptyControl.row);
   const updateSourceRows = () => {
     const expressionMode = sourceType.value === "expression";
     const bindingRow = sectionEl.querySelector(".compact-binding-row");
@@ -28864,7 +28900,7 @@ const initializeLevelAutomationControl = () => {
     },
     apply: ({ connection_id, tag: tagName }) => updateSelectedLevelAutomation({ connection_id, tag: tagName, enabled: true })
   });
-  levelAutomationControl = { sectionEl, enabled, sourceType, expression, expressionRow, updateSourceRows, min, max, direction, invert, clamp, fill, emptyFill };
+  levelAutomationControl = { sectionEl, enabled, sourceType, expression, expressionRow, updateSourceRows, min, max, direction, invert, clamp, fill, emptyFill, fillSwatch: fillControl.swatch, emptyFillSwatch: emptyControl.swatch };
   automationSectionConfigs.push({ id: "level-automation", tab: "level", types: [...LEVEL_AUTOMATION_TYPES, "group"], sectionEl });
   return levelAutomationControl;
 };
@@ -28881,6 +28917,8 @@ const syncLevelAutomationControl = (obj) => {
   control.min.value = String(value.inputMin); control.max.value = String(value.inputMax);
   control.direction.value = value.direction; control.invert.checked = value.invert; control.clamp.checked = value.clamp;
   control.fill.value = value.fill; control.emptyFill.value = value.emptyFill;
+  if (control.fillSwatch) control.fillSwatch.value = isHexColor(value.fill) ? value.fill : "#3b82f6";
+  if (control.emptyFillSwatch) control.emptyFillSwatch.value = isHexColor(value.emptyFill) ? value.emptyFill : (isHexColor(obj.fill) ? obj.fill : "#202533");
 };
 
 const initializeAdditionalAutomationSections = () => {
