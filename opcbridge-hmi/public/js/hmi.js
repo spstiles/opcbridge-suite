@@ -18175,6 +18175,7 @@ const syncPropertiesFromSelection = () => {
     if (polylinePropsTitle) polylinePropsTitle.textContent = obj.type === "pipe" ? "Pipe" : "Polyline";
     if (polylineStrokeWidthLabel) polylineStrokeWidthLabel.textContent = obj.type === "pipe" ? "Thickness" : "Stroke Width";
     if (pipePropertyRows) pipePropertyRows.classList.toggle("is-hidden", obj.type !== "pipe");
+    syncPipePointCoordinates();
     const pipePoints = Array.isArray(obj.points) ? obj.points : [];
     if (pipeXInput) pipeXInput.value = pipePoints.length ? Math.min(...pipePoints.map((point) => Number(point?.x ?? 0))) : 0;
     if (pipeYInput) pipeYInput.value = pipePoints.length ? Math.min(...pipePoints.map((point) => Number(point?.y ?? 0))) : 0;
@@ -19540,6 +19541,52 @@ const updatePolylineProperty = (patch) => {
   renderScreen();
   syncEditorFromScreen();
   setDirty(true);
+};
+
+const syncPipePointCoordinates = () => {
+  const host = document.getElementById("pipePointCoordinates");
+  if (!host) return;
+  const obj = selectedIndices.length === 1 ? getActiveObjects()?.[selectedIndices[0]] : null;
+  if (!obj || obj.type !== "pipe") { host.replaceChildren(); host.pipeObject = null; return; }
+  const points = obj.points || [];
+  if (host.pipeObject !== obj || host.children.length !== points.length) {
+    host.replaceChildren(); host.pipeObject = obj;
+    points.forEach((point, index) => {
+      const row = document.createElement("div"); row.className = "pipe-point-row";
+      const select = document.createElement("button"); select.type = "button";
+      select.textContent = String(index + 1); select.title = `Select point ${index + 1}`;
+      const selectPoint = () => {
+        if (getActiveObjects()?.[selectedIndices[0]] !== obj) return;
+        selectedPolygonVertex = { groupDepth: groupEditStack.length, objectIndex: selectedIndices[0], vertexIndex: index };
+        updateSelectionOverlays();
+      };
+      select.addEventListener("click", selectPoint); row.appendChild(select);
+      for (const axis of ["x", "y"]) {
+        const label = document.createElement("label"); label.textContent = axis.toUpperCase();
+        const input = document.createElement("input"); input.type = "number"; input.step = "any";
+        input.setAttribute("aria-label", `Point ${index + 1} ${axis.toUpperCase()}`);
+        input.addEventListener("focus", selectPoint);
+        input.addEventListener("change", () => {
+          const value = Number(input.value);
+          if (input.value.trim() === "" || !Number.isFinite(value)) { input.value = obj.points[index][axis]; return; }
+          if (getActiveObjects()?.[selectedIndices[0]] !== obj || obj.points[index][axis] === value) return;
+          const next = obj.points.map((point, i) => i === index ? { ...point, [axis]: value } : { ...point });
+          updatePolylineProperty({ points: next });
+          updateSelectionOverlays();
+        });
+        label.appendChild(input); row.appendChild(label);
+      }
+      host.appendChild(row);
+    });
+  }
+  [...host.children].forEach((row, index) => {
+    const active = selectedPolygonVertex?.groupDepth === groupEditStack.length && selectedPolygonVertex?.objectIndex === selectedIndices[0] && selectedPolygonVertex?.vertexIndex === index;
+    row.classList.toggle("is-selected", active);
+    row.firstElementChild.setAttribute("aria-pressed", String(active));
+    [...row.querySelectorAll("input")].forEach((input, axis) => {
+      if (document.activeElement !== input) input.value = points[index][axis ? "y" : "x"];
+    });
+  });
 };
 
 const updatePointObjectPosition = (axis, value, objectType) => {
@@ -30754,6 +30801,7 @@ const insertLibraryItemAt = (kind, point) => {
 };
 
 function updateSelectionOverlays() {
+  syncPipePointCoordinates();
   if (!selectionLayer || !renderedElementMeta.length) return;
   selectionLayer.textContent = "";
   if (resizeLayer) resizeLayer.textContent = "";
