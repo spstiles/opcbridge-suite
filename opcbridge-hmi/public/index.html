@@ -1623,7 +1623,13 @@
             <div id="polylineGeometryRows">
               <div class="prop-row"><label for="polylineX">X</label><input id="polylineX" type="number" step="any" /></div>
               <div class="prop-row"><label for="polylineY">Y</label><input id="polylineY" type="number" step="any" /></div>
-              <div class="prop-row"><label for="polylinePoints">Vertices</label><textarea id="polylinePoints" rows="3" placeholder="x,y x,y x,y"></textarea></div>
+              <div class="prop-group-title">Points</div>
+              <p class="prop-help">Coordinates in the current group or screen. Match X for vertical sections; match Y for horizontal sections.</p>
+              <div id="polylinePointCoordinates" class="point-coordinates"></div>
+              <button id="polylinePointCoordinatesAddBtn" class="panel-btn" type="button">Add Point</button>
+              <details><summary class="prop-help">Edit points as text</summary>
+                <div class="prop-row"><label for="polylinePoints">Vertices</label><textarea id="polylinePoints" rows="3" placeholder="x,y x,y x,y"></textarea></div>
+              </details>
             </div>
 	            <div id="polylineFillRow" class="prop-row is-hidden">
 	              <label for="polylineFill">Fill</label>

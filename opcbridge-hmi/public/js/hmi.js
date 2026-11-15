@@ -19628,7 +19628,8 @@ const syncPointCoordinateEditor = (objectType, hostId) => {
   const obj = selectedIndices.length === 1 ? getActiveObjects()?.[selectedIndices[0]] : null;
   if (!obj || obj.type !== objectType) { host.replaceChildren(); host.pointObject = null; return; }
   const points = obj.points || [];
-  const minimumPoints = objectType === "polygon" ? 3 : 2;
+  const closed = objectType === "polygon" || (objectType === "polyline" && obj.closed);
+  const minimumPoints = closed ? 3 : 2;
   const applyPoints = next => {
     if (objectType === "polygon") updatePolygonProperty({ points: next });
     else updatePolylineProperty({ points: next });
@@ -19640,7 +19641,7 @@ const syncPointCoordinateEditor = (objectType, hostId) => {
     const current = obj.points || [];
     const last = current[current.length - 1] || { x: 0, y: 0 };
     let point;
-    if (objectType === "polygon" && current.length > 1) {
+    if (closed && current.length > 1) {
       point = { x: (Number(last.x) + Number(current[0].x)) / 2, y: (Number(last.y) + Number(current[0].y)) / 2 };
     } else {
       const previous = current[current.length - 2] || last;
@@ -19688,7 +19689,7 @@ const syncPointCoordinateEditor = (objectType, hostId) => {
         remove.textContent = "×"; remove.title = `Remove point ${index + 1}`;
         remove.setAttribute("aria-label", `Remove point ${index + 1}`);
         remove.disabled = points.length <= minimumPoints;
-        if (remove.disabled) remove.title = objectType === "polygon" ? "A polygon needs at least three points" : "A pipe needs at least two points";
+        if (remove.disabled) remove.title = `This ${objectType} needs at least ${minimumPoints} points`;
         remove.addEventListener("click", () => {
           if (selectedIndices.length !== 1 || getActiveObjects()?.[selectedIndices[0]] !== obj || obj.points.length <= minimumPoints || !obj.points[index]) return;
           const next = obj.points.filter((_, i) => i !== index);
@@ -19717,6 +19718,7 @@ const syncPointCoordinateEditor = (objectType, hostId) => {
 const syncPathPointCoordinates = () => {
   syncPointCoordinateEditor("pipe", "pipePointCoordinates");
   syncPointCoordinateEditor("polygon", "polygonPointCoordinates");
+  syncPointCoordinateEditor("polyline", "polylinePointCoordinates");
 };
 
 const updatePointObjectPosition = (axis, value, objectType) => {
