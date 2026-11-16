@@ -11997,6 +11997,7 @@ function scheduleAnimatorPainting() {
   if (animatorAnimationRequest !== null || !animatorMountedRegions.size) return;
   animatorAnimationRequest = requestAnimationFrame(now => {
     animatorAnimationRequest = null;
+    let animationSnapshot = null;
     for (const entry of animatorMountedRegions) {
       if (!entry.host.isConnected || entry.edit !== isEditMode) {
         animatorMountedRegions.delete(entry); continue;
@@ -12008,7 +12009,8 @@ function scheduleAnimatorPainting() {
       const drawing = HmiAnimator.display(entry.source, frame);
       delete drawing.animator;
       try {
-        const oldAnimations = entry.host.getAnimations?.({ subtree: true }) || [];
+        if (!animationSnapshot) animationSnapshot = document.getAnimations();
+        const oldAnimations = animationsWithin(entry.host, animationSnapshot);
         const staging = document.createElementNS("http://www.w3.org/2000/svg", "g");
         entry.host.append(staging);
         const previousDefs = runtimeObjectDefs;
@@ -12583,25 +12585,32 @@ let runtimeFullRenderRequested = false;
 let runtimeRenderIndex = null;
 let runtimeObjectDefs = null;
 
+let runtimeRenderTimer = null;
 const scheduleRuntimeRender = (changedKeys = null) => {
   if (changedKeys === null) runtimeFullRenderRequested = true;
   else for (const key of changedKeys) runtimeDirtyKeys.add(key);
-  if (wsRuntimeRenderRaf != null) return;
-  wsRuntimeRenderRaf = window.requestAnimationFrame(() => {
-    wsRuntimeRenderRaf = null;
-    if (!isEditMode && !isEditingGestureActive() && !isKeypadOpen) {
-      if (shouldDeferRuntimeScreenRender()) {
-        scheduleDeferredRuntimeScreenRender();
-        return;
+  if (wsRuntimeRenderRaf != null || runtimeRenderTimer !== null) return;
+  // Cache incoming values immediately, but let a burst settle before painting.
+  // Repeated paints between WebSocket messages can starve the receive queue on
+  // large displays. Browser-driven rotation, flashing and flow stay independent.
+  runtimeRenderTimer = setTimeout(() => {
+    runtimeRenderTimer = null;
+    wsRuntimeRenderRaf = window.requestAnimationFrame(() => {
+      wsRuntimeRenderRaf = null;
+      if (!isEditMode && !isEditingGestureActive() && !isKeypadOpen) {
+        if (shouldDeferRuntimeScreenRender()) {
+          scheduleDeferredRuntimeScreenRender();
+          return;
+        }
+        const keys = runtimeDirtyKeys;
+        const full = runtimeFullRenderRequested;
+        runtimeDirtyKeys = new Set();
+        runtimeFullRenderRequested = false;
+        if (full || !updateRuntimeObjects(keys)) renderScreen({ refreshReferenceHealth: false });
+        if (currentPopupScreenId) openPopup(currentPopupScreenId);
       }
-      const keys = runtimeDirtyKeys;
-      const full = runtimeFullRenderRequested;
-      runtimeDirtyKeys = new Set();
-      runtimeFullRenderRequested = false;
-      if (full || !updateRuntimeObjects(keys)) renderScreen({ refreshReferenceHealth: false });
-      if (currentPopupScreenId) openPopup(currentPopupScreenId);
-    }
-  });
+    });
+  }, 100);
 };
 
 const normalizeWsTagKey = (connectionId, tagName) => {
@@ -16410,9 +16419,15 @@ const isIncrementalRuntimeObject = (obj) => {
   return obj.type !== "group" || (obj.children || []).every(isIncrementalRuntimeObject);
 };
 
+function animationsWithin(element, snapshot) {
+  return snapshot
+    ? snapshot.filter(animation => element.contains(animation.effect?.target))
+    : (element.getAnimations?.({ subtree: true }) || []);
+}
+let runtimeAnimationSnapshot = null;
 const paintRuntimeRegion = (host, obj) => {
   const previousDefs = runtimeObjectDefs;
-  const oldAnimations = host.getAnimations?.({ subtree: true }) || [];
+  const oldAnimations = animationsWithin(host, runtimeAnimationSnapshot);
   const previousRepaint = continuousRotationRepaint;
   const repaint = { candidates: new Map(), transfers: [] };
   if (!isEditMode) {
@@ -16434,7 +16449,7 @@ const paintRuntimeRegion = (host, obj) => {
     renderObjectInto(staging, obj);
     const retainedAnimations = new Set();
     for (const { placeholder, previous } of repaint.transfers) {
-      previous.getAnimations?.({ subtree: true }).forEach(animation => retainedAnimations.add(animation));
+      animationsWithin(previous, runtimeAnimationSnapshot).forEach(animation => retainedAnimations.add(animation));
       placeholder.replaceWith(previous);
     }
     oldAnimations.forEach((animation) => { if (!retainedAnimations.has(animation)) animation.cancel(); });
@@ -16478,6 +16493,10 @@ const updateRuntimeObjects = (keys) => {
   for (const key of keys) if (index.layerTagKeys?.has(key)) return false;
   const affected = new Set();
   for (const key of keys) for (const region of index.byTag.get(key) || []) affected.add(region);
+  const previousAnimationSnapshot = runtimeAnimationSnapshot;
+  // Query once before changing any regions; repeated native queries force style
+  // work between each replacement on a large SVG screen.
+  runtimeAnimationSnapshot = affected.size ? (hmiSvg.getAnimations?.({ subtree: true }) || []) : [];
   try {
     for (const region of affected) {
       if (!region.host.isConnected) return false;
@@ -16487,6 +16506,8 @@ const updateRuntimeObjects = (keys) => {
   } catch (error) {
     console.warn("[runtime] incremental render failed; rebuilding screen", error);
     return false;
+  } finally {
+    runtimeAnimationSnapshot = previousAnimationSnapshot;
   }
 };
 

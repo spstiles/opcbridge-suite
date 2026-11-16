@@ -20,9 +20,11 @@ test('Animator scheduler repaints only changed mounted frames and releases detac
     runtimeObjectDefs: null,
     requestAnimationFrame: fn => { callback = fn; return 1; },
     getMultiStateSourceValue: () => true,
-    document: { createElementNS: () => ({ appendChild() {} }) },
+    document: { getAnimations: () => [], createElementNS: () => ({ appendChild() {} }) },
     renderObjectInto: (_, object) => painted.push(object.children[0].type), console
   });
+  const lookup = source.indexOf('function animationsWithin(');
+  vm.runInContext(source.slice(lookup, source.indexOf('const paintRuntimeRegion =',lookup)),ctx);
   const start = source.indexOf('function selectAnimatorMountedFrame(');
   const end = source.indexOf('function mountAnimator(', start);
   vm.runInContext(source.slice(start, end), ctx);

@@ -28,6 +28,7 @@ function fixture(){
   a=source.indexOf('const renderObjectContentInto =');
   vm.runInContext(source.slice(a,source.indexOf('  const ns = "http://www.w3.org/2000/svg";',a))+'draw(parent);\n};',ctx);
   ctx.renderObjectInto=(parent,obj)=>{vm.runInContext('renderObjectContentInto(parentArg,rotorArg)',Object.assign(ctx,{parentArg:parent,rotorArg:obj}));if(fail)throw Error('paint failure');};
+  a=source.indexOf('function animationsWithin(');vm.runInContext(source.slice(a,source.indexOf('const paintRuntimeRegion =',a)),ctx);
   a=source.indexOf('const paintRuntimeRegion =');vm.runInContext(source.slice(a,source.indexOf('// Repaint the owning top-level region',a)),ctx);
   return {ctx,host,rotor,created:()=>created,paint:()=>vm.runInContext('paintRuntimeRegion(host,rotor)',ctx),fail:()=>{fail=true;}};
 }

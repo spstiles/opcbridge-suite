@@ -5,6 +5,11 @@ const path = require('node:path');
 const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '../public/js/hmi.js'), 'utf8');
 const load = (ctx, name) => {
+  if (['paintRuntimeRegion','updateRuntimeObjects'].includes(name) && !ctx.animationsWithin) {
+    const start = source.indexOf('function animationsWithin(');
+    vm.runInContext(source.slice(start, source.indexOf('const paintRuntimeRegion =', start)), ctx);
+    ctx.hmiSvg = { getAnimations: () => [] };
+  }
   const start = source.indexOf(`const ${name} =`);
   vm.runInContext(source.slice(start, source.indexOf('\n};', start)+3), ctx);
 };
@@ -101,4 +106,16 @@ test('trends allow incremental updates, including inside groups', () => {
   assert.equal(vm.runInContext('isIncrementalRuntimeObject({type:"alarms-panel",panelMode:"trend"})', ctx), true);
   assert.equal(vm.runInContext('isIncrementalRuntimeObject({type:"group",children:[{type:"alarms-panel",panelMode:"trend"}]})', ctx), true);
   assert.equal(vm.runInContext('isIncrementalRuntimeObject({type:"alarms-panel",panelMode:"alarms"})', ctx), false);
+});
+
+test('one animation snapshot is shared across dirty regions and restored after failure',()=>{
+ const screen={},a={host:{isConnected:true},source:{id:'a'}},b={host:{isConnected:true},source:{id:'b'}};
+ let queries=0,fail=false;const seen=[];const animations=[{effect:{target:{}}}];
+ const ctx=vm.createContext({currentScreenObj:screen,currentPopupScreenId:null,isEditMode:false,currentScreenAliasContext:{},console:{warn(){}},
+  runtimeRenderIndex:{safe:true,screen,byTag:new Map([['PLC:X',new Set([a,b])]])},resolveAliasObject:o=>o,getDisplayObject:o=>o,
+  paintRuntimeRegion:()=>{seen.push(vm.runInContext('runtimeAnimationSnapshot',ctx));if(fail)throw Error('paint failure');}});
+ load(ctx,'updateRuntimeObjects');ctx.hmiSvg={getAnimations:()=>{queries++;return animations;}};
+ assert.equal(vm.runInContext('updateRuntimeObjects(["PLC:X"])',ctx),true);assert.equal(queries,1);assert.equal(seen.length,2);assert.equal(seen[0],animations);assert.equal(seen[1],animations);
+ assert.equal(vm.runInContext('runtimeAnimationSnapshot',ctx),null);
+ fail=true;assert.equal(vm.runInContext('updateRuntimeObjects(["PLC:X"])',ctx),false);assert.equal(vm.runInContext('runtimeAnimationSnapshot',ctx),null);
 });
