@@ -66,3 +66,24 @@ test('confirmation gates each action and Cancel stops the remaining sequence', a
   assert.equal(await actions.run(action,async step=>calls.push(step.type),async step=>step.confirmationMessage==='Reset flow data?'),2);
   assert.deepEqual(calls,['set-write','navigate']);
 });
+
+test('an empty rectangle Click tab offers confirmation and saves a valid default action', () => {
+  const fs=require('node:fs'),vm=require('node:vm');const source=fs.readFileSync(`${__dirname}/../public/js/hmi.js`,'utf8');
+  const node=()=>({children:[],handlers:{},classList:{toggle(){}},replaceChildren(){this.children=[];},append(...children){this.children.push(...children);},appendChild(child){this.children.push(child);},setAttribute(key,value){this[key]=value;},addEventListener(key,fn){this.handlers[key]=fn;}});
+  const host=node(),obj={type:'rect',clickEnabled:true};let dirty=false;
+  const context=vm.createContext({HmiClickActions:actions,usesFullClickEditor:()=>true,
+    document:{getElementById:id=>id==='buttonClickActionList'?host:null,createElement:node,createTextNode:text=>({text})},
+    buttonActionSelect:{options:[],value:'navigate'},recordHistory(){},setDirty:value=>{dirty=value;},renderScreen(){},syncEditorFromScreen(){},updatePropertiesPanel(){}});
+  const start=source.indexOf('const clickActionSelection =');
+  vm.runInContext(source.slice(start,source.indexOf('const objectDynamicTabPropertiesBtn =',start)),context);context.obj=obj;
+  vm.runInContext('renderClickActionList(obj)',context);
+  const checkbox=host.children.find(item=>item.children?.[0]?.type==='checkbox').children[0];
+  const messageRow=host.children.find(item=>item.children?.[1]?.placeholder==='Are you sure?');
+  assert.equal(checkbox.checked,false);assert.equal(messageRow.hidden,true);assert.equal(obj.action,undefined,'opening properties does not mutate the screen');
+  checkbox.checked=true;checkbox.handlers.change();assert.equal(obj.action.type,'navigate');assert.equal(obj.action.requireConfirmation,true);assert.equal(messageRow.hidden,false);assert.equal(dirty,true);
+  messageRow.children[1].value='Reset flow data?';messageRow.children[1].handlers.change();assert.equal(obj.action.confirmationMessage,'Reset flow data?');
+  host.children.find(item=>item.textContent==='Add Action').handlers.click();
+  assert.equal(obj.action.actions.length,2);assert.equal(obj.action.actions[0].requireConfirmation,true);assert.equal(obj.action.actions[0].confirmationMessage,'Reset flow data?');
+  vm.runInContext('clickActionSelection.set(obj,0);replaceEditedClickAction(obj,{type:"set-write",connection_id:"PLC",tag:"Reset",onValue:1})',context);
+  assert.equal(obj.action.actions[0].requireConfirmation,true);assert.equal(obj.action.actions[0].confirmationMessage,'Reset flow data?');
+});

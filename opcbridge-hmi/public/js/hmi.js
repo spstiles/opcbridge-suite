@@ -357,14 +357,14 @@ const renderClickActionList = (obj) => {
     const help = document.createElement('div'); help.className = 'prop-help';
     help.textContent = 'Actions run top to bottom. A failure stops the remaining actions. Momentary writes, prompts, and login/logout currently require a single action.';
     host.append(help);
-    const action = actions[selected];
-    if (action) {
+    const action = actions[selected] || {};
+    {
       const checkbox=document.createElement('input');checkbox.type='checkbox';checkbox.checked=Boolean(action.requireConfirmation);
       const label=document.createElement('label');label.className='prop-inline';label.append(checkbox,document.createTextNode('Require Confirmation'));host.appendChild(label);
       const message=document.createElement('input');message.type='text';message.placeholder='Are you sure?';message.value=action.confirmationMessage||'';message.setAttribute('aria-label','Confirmation Message');
       const messageRow=document.createElement('div');messageRow.className='prop-row';messageRow.hidden=!checkbox.checked;
       const messageLabel=document.createElement('label');messageLabel.textContent='Confirmation Message';messageRow.append(messageLabel,message);host.appendChild(messageRow);
-      const save=()=>{recordHistory();replaceEditedClickAction(obj,{...getEditedClickAction(obj),requireConfirmation:checkbox.checked,confirmationMessage:message.value.trim()});messageRow.hidden=!checkbox.checked;setDirty(true);renderScreen();};
+      const save=()=>{recordHistory();replaceEditedClickAction(obj,{type:buttonActionSelect?.value || "navigate",...getEditedClickAction(obj),requireConfirmation:checkbox.checked,confirmationMessage:message.value.trim()});actions.splice(0,actions.length,...HmiClickActions.list(obj.action));messageRow.hidden=!checkbox.checked;setDirty(true);renderScreen();};
       checkbox.addEventListener('change',save);message.addEventListener('change',save);
       if(action.type==='momentary-write') { const note=document.createElement('div');note.className='prop-help';note.textContent='With confirmation, Confirm sends an on/off pulse.';note.hidden=!checkbox.checked;host.appendChild(note);checkbox.addEventListener('change',()=>{note.hidden=!checkbox.checked;}); }
     }
@@ -12931,6 +12931,22 @@ const setSelectValueSafe = (select, value) => {
   select.value = value;
 };
 
+const setScreenTargetSelectValue = (select, value) => {
+  if (!select) return;
+  const target = String(value || "");
+  for (const option of [...select.options]) if (option.dataset.missingScreen) option.remove();
+  if (![...select.options].some(option => option.value === "")) {
+    const empty = document.createElement("option"); empty.value = ""; empty.textContent = "Select screen…";
+    select.appendChild(empty);
+  }
+  if (target && ![...select.options].some(option => option.value === target)) {
+    const missing = document.createElement("option"); missing.value = target;
+    missing.textContent = `Missing: ${target}`; missing.dataset.missingScreen = "true";
+    select.appendChild(missing);
+  }
+  select.value = target;
+};
+
 const isActiveElementWithin = (container) => {
   const active = document.activeElement;
   return Boolean(container && active && container.contains(active));
@@ -13108,9 +13124,7 @@ const refreshGroupActionScreenOptions = () => {
     opt.textContent = screenItem.id;
     groupActionScreenIdSelect.appendChild(opt);
   });
-  if (availableScreens.some((s) => s.id === previous)) {
-    groupActionScreenIdSelect.value = previous;
-  }
+  setScreenTargetSelectValue(groupActionScreenIdSelect, previous);
 };
 
 const setGroupActionRows = (actionType) => {
@@ -17761,7 +17775,7 @@ const syncPropertiesFromSelection = () => {
 	    if (groupActionTypeSelect) setSelectValueSafe(groupActionTypeSelect, actionType);
 	    setGroupActionRows(actionType);
 	    if (groupActionViewportIdSelect) setSelectValueSafe(groupActionViewportIdSelect, String(selectedAction?.viewportId || ""));
-	    if (groupActionScreenIdSelect) setSelectValueSafe(groupActionScreenIdSelect, String(selectedAction?.screenId || ""));
+	    setScreenTargetSelectValue(groupActionScreenIdSelect, selectedAction?.screenId);
       if (groupNavigationTargetSelect) setSelectValueSafe(groupNavigationTargetSelect, String(selectedAction?.navigationTarget || "current"));
       renderTargetAliasEditor("group", String(selectedAction?.screenId || ""), selectedAction || {});
       if (groupPopupModalInput) groupPopupModalInput.checked = selectedAction?.modal !== false;
@@ -17854,7 +17868,7 @@ const syncPropertiesFromSelection = () => {
     if (buttonValignSelect) buttonValignSelect.value = obj.valign || "middle";
   }
   if (usesFullClickEditor(obj)) {
-    if (buttonTargetSelect) buttonTargetSelect.value = selectedAction?.screenId || "";
+    setScreenTargetSelectValue(buttonTargetSelect, selectedAction?.screenId);
     if (buttonActionSelect) buttonActionSelect.value = selectedAction?.type || "navigate";
     if (buttonNavigationTargetSelect) setSelectValueSafe(buttonNavigationTargetSelect, String(selectedAction?.navigationTarget || "current"));
     refreshViewportIdOptions();
@@ -18014,7 +18028,7 @@ const syncPropertiesFromSelection = () => {
     if (viewportHInput) viewportHInput.value = Number(obj.h) || 200;
     if (viewportRotationInput) viewportRotationInput.value = Number(obj.rotation) || 0;
     if (viewportRadiusInput) viewportRadiusInput.value = Number(obj.rx ?? 0);
-    if (viewportTargetSelect) viewportTargetSelect.value = obj.target || "";
+    setScreenTargetSelectValue(viewportTargetSelect, obj.target);
     if (viewportScaleModeSelect) viewportScaleModeSelect.value = obj.scaleMode || "actual-size";
     const borderCfg = obj.border || {};
     const borderEnabled = Boolean(borderCfg.enabled);
@@ -21262,6 +21276,8 @@ async function refreshScreensList() {
     });
 
     if (buttonTargetSelect) {
+      const selected = selectedIndices.length === 1 ? getActiveObjects()?.[selectedIndices[0]] : null;
+      const target = selected ? getEditedClickAction(selected)?.screenId || "" : buttonTargetSelect.value;
       buttonTargetSelect.innerHTML = "";
       availableScreens.forEach((screenItem) => {
         const opt = document.createElement("option");
@@ -21269,12 +21285,15 @@ async function refreshScreensList() {
         opt.textContent = screenItem.ref;
         buttonTargetSelect.appendChild(opt);
       });
+      setScreenTargetSelectValue(buttonTargetSelect, target);
     }
     if (buttonActionSelect) {
       updateButtonActionUI(buttonActionSelect.value || "navigate");
     }
 
     if (viewportTargetSelect) {
+      const selected = selectedIndices.length === 1 ? getActiveObjects()?.[selectedIndices[0]] : null;
+      const target = selected?.type === "viewport" ? selected.target || "" : viewportTargetSelect.value;
       viewportTargetSelect.innerHTML = "";
       availableScreens.forEach((screenItem) => {
         const opt = document.createElement("option");
@@ -21282,6 +21301,7 @@ async function refreshScreensList() {
         opt.textContent = screenItem.ref;
         viewportTargetSelect.appendChild(opt);
       });
+      setScreenTargetSelectValue(viewportTargetSelect, target);
     }
     refreshGroupActionScreenOptions();
 
