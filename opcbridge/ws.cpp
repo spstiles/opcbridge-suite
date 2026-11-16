@@ -68,21 +68,9 @@ bool ws_init(uint16_t port)
            std::shared_ptr<ix::ConnectionState> connectionState)
         {
             if (!connectionState) return;
-            const std::string id = connectionState->getId();
-
             auto webSocket = webSocketWeak.lock();
             if (!webSocket) return;
             webSocket->setPingInterval(60);
-
-            {
-                std::lock_guard<std::mutex> lock(g_wsMutex);
-                g_clientsById[id] = webSocketWeak;
-                auto &subs = g_subsById[id];
-                subs.explicit_demand = false;
-                subs.subscribe_all = true;
-                subs.has_custom = false;
-                subs.tags.clear();
-            }
 
             // ixwebsocket requires registering a per-connection onMessage callback
             // inside the onConnection callback.
@@ -93,6 +81,16 @@ bool ws_init(uint16_t port)
 
                     if (msg->type == ix::WebSocketMessageType::Open)
                     {
+                        // The connection callback runs before the handshake. Do
+                        // not expose a connecting socket to the broadcaster:
+                        // it can be discarded as not Open, leaving a healthy
+                        // socket permanently absent from live tag delivery.
+                        {
+                            std::lock_guard<std::mutex> lock(g_wsMutex);
+                            const auto id = connectionState->getId();
+                            g_clientsById[id] = webSocketWeak;
+                            g_subsById[id] = ClientSubs{};
+                        }
                         std::cout << "[ws] client OPEN from "
                                   << (connectionState ? connectionState->getRemoteIp() : "?")
                                   << "\n";
