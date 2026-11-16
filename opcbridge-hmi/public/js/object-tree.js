@@ -19,7 +19,7 @@
       .flatMap(key => obj[key] ? obj[key].rules || [obj[key]] : []);
     const colors = obj.colorAutomationRules || legacyColors;
     colors.forEach((rule, index) => add(`Color ${index + 1}`, index ? `color-${index}` : 'color', rule));
-    for (const [key, title, tab] of [['levelAutomation','Level','level'], ['rotationAutomation','Rotation','rotation'], ['motion','Motion','motion'], ['multiStateAutomation','States','states'], ['animator','Animator','animator']]) {
+    for (const [key, title, tab] of [['levelAutomation','Level','level'], ['flowAutomation','Flow','flow'], ['rotationAutomation','Rotation','rotation'], ['motion','Motion','motion'], ['multiStateAutomation','States','states'], ['animator','Animator','animator']]) {
       if (obj[key]) add(title, tab, obj[key]);
     }
     for (const key of ['bind','bindValue','bindLabel']) if (obj[key]) add('Binding', 'properties', obj[key]);

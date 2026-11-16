@@ -89,6 +89,7 @@
               <button id="dynamicsAddStatesMenuBtn" class="menu-item" type="button">States</button>
               <button id="dynamicsAddAnimatorMenuBtn" class="menu-item" type="button">Animator</button>
               <button id="dynamicsAddRotationMenuBtn" class="menu-item" type="button">Rotation</button>
+              <button id="dynamicsAddFlowMenuBtn" class="menu-item" type="button" disabled>Pipe Flow</button>
               <button id="dynamicsAddMotionMenuBtn" class="menu-item" type="button">Motion</button>
               <div class="menu-separator"></div>
               <div class="menu-group-label">Effects</div>
@@ -186,6 +187,7 @@
           <button class="left-flyout-item" type="button" data-add-dynamic="animator">Animator</button>
           <button class="left-flyout-item" type="button" data-add-dynamic="rotation">Rotation</button>
           <button class="left-flyout-item" type="button" data-add-dynamic="motion">Motion</button>
+          <button class="left-flyout-item" type="button" data-add-dynamic="flow" disabled>Pipe Flow</button>
           <div class="menu-separator"></div>
           <div class="menu-group-label">Effects</div>
           <button class="left-flyout-item" type="button" data-add-dynamic="box-shadow">Box Shadow</button>
@@ -383,6 +385,7 @@
             <button id="objectDynamicTabStatesBtn" class="editor-tab is-hidden" type="button">States</button>
             <button id="objectDynamicTabAnimatorBtn" class="editor-tab is-hidden" type="button">Animator</button>
             <button id="objectDynamicTabRotationBtn" class="editor-tab is-hidden" type="button">Rotation</button>
+            <button id="objectDynamicTabFlowBtn" class="editor-tab is-hidden" type="button">Flow</button>
             <button id="objectDynamicTabMotionBtn" class="editor-tab is-hidden" type="button">Motion</button>
             <button id="objectDynamicTabShadowBtn" class="editor-tab is-hidden" type="button">Box Shadow</button>
             <button id="objectDynamicTabDropShadowBtn" class="editor-tab is-hidden" type="button">Drop Shadow</button>
@@ -393,6 +396,7 @@
           <div id="objectDynamicStatesHost" class="is-hidden"></div>
           <div id="objectDynamicAnimatorHost" class="is-hidden"></div>
           <div id="objectDynamicRotationHost" class="is-hidden"></div>
+          <div id="objectDynamicFlowHost" class="properties-form is-hidden"></div>
           <div id="objectDynamicMotionHost" class="is-hidden"></div>
           <div id="objectDynamicShadowHost" class="properties-form is-hidden">
             <div class="prop-group-title">Box Shadow</div>
@@ -3182,6 +3186,7 @@
       <script src="/js/click-actions.js"></script>
       <script src="/js/screen-tags.js"></script>
       <script src="/js/action-confirmation.js"></script>
+      <script src="/js/pipe-flow.js"></script>
       <script src="/js/layers.js"></script>
       <script src="/js/animator.js"></script>
       <script src="/js/trend-expression.js"></script>

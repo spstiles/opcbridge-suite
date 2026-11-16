@@ -19,6 +19,7 @@ const AUTOMATION_OBJECT_TYPES = Object.freeze({
   rotation: ["rect", "line", "ellipse", "text", "button", "group"],
   motion: ["rect", "line", "ellipse", "text", "button", "group", "circle"],
   animator: ["group"],
+  flow: ["pipe"],
   level: ["rect", "ellipse", "circle", "polygon", "button"]
 });
 const supportsObjectAutomation = (obj, feature) => {
@@ -2678,10 +2679,12 @@ const setObjectDynamicTab = (tab) => {
     normalized === "animator" ? "animator" :
     normalized === "rotation" ? "rotation" :
     normalized === "motion" ? "motion" :
+    normalized === "flow" ? "flow" :
     (normalized === "shadow" || normalized === "box-shadow") ? "box-shadow" :
     normalized === "drop-shadow" ? "drop-shadow" :
     "properties";
   currentObjectDynamicTab = next;
+  document.getElementById("objectDynamicTabFlowBtn")?.classList.toggle("is-active", next === "flow");
   objectDynamicTabAnimatorBtn?.classList.toggle("is-active", next === "animator");
   objectDynamicTabClickBtn?.classList.toggle("is-active", next === "click");
   if (isVisibilityDynamicTab(next)) {
@@ -8347,6 +8350,7 @@ const referenceAutomationLabel = (pathParts) => {
   if (joined.includes("multistate")) return "states";
   if (joined.includes("textstate") || joined.includes("textbindings")) return "text";
   if (joined.includes("rotation")) return "rotation";
+  if (joined.includes("flowautomation")) return "flow";
   if (joined.includes("motion") || joined.includes("position")) return "motion";
   if (joined.includes("levelautomation")) return "level";
   if (joined.includes("size")) return "size";
@@ -12415,6 +12419,7 @@ const updateMenuState = () => {
   toggleDynamicMenuItem(dynamicsAddAnimatorMenuBtn, selectedIndices.length >= 2 || selectedObject?.type === "group");
   toggleDynamicMenuItem(dynamicsAddRotationMenuBtn, canAddRotationDynamic);
   toggleDynamicMenuItem(dynamicsAddMotionMenuBtn, canAddMotionDynamic);
+  toggleDynamicMenuItem(document.getElementById("dynamicsAddFlowMenuBtn"), selectedObject?.type === "pipe" && !selectedObject.flowAutomation);
   toggleDynamicMenuItem(dynamicsAddShadowMenuBtn, canAddShadow && !selectedObject?.shadow);
   toggleDynamicMenuItem(dynamicsAddDropShadowMenuBtn, canAddShadow && !selectedObject?.dropShadow);
   toggleDynamicMenuItem(dynamicsAddClickMenuBtn, Boolean(selectedObject) && !hasClickTab(selectedObject));
@@ -12427,6 +12432,7 @@ const updateMenuState = () => {
       : kind === "color" ? canAddColorDynamic
       : kind === "states" ? canAddStatesDynamic
       : kind === "rotation" ? canAddRotationDynamic
+      : kind === "flow" ? selectedObject?.type === "pipe" && !selectedObject.flowAutomation
       : kind === "motion" ? canAddMotionDynamic
       : kind === "visibility" ? canOpenDynamics
       : supportsObjectAutomation(selectedObject, kind);
@@ -15922,6 +15928,15 @@ const renderObjectContentInto = (parent, obj, inheritedGroupColorOverrides = nul
     addBody("#202020", thickness);
     addBody(color, Math.max(0.1, thickness - (outlineThickness * 2)));
     if (obj.gradientSmooth !== "rough") addBody("#ffffff", Math.max(1, thickness * 0.18), obj.gradientSmooth === "extra-smooth" ? 0.5 : 0.35);
+    HmiPipeFlow.append(group, obj, pipePathData, thickness, outlineThickness, {
+      edit: isEditMode, now: () => performance.now(),
+      pipeColor: color, deriveColor: value => HmiPipeFlow.lighterColor(parseSolidColor(value, "#808080")),
+      paint: (path, color) => setSvgPaint(path, "stroke", color, getObjectBounds(obj), group),
+      read: (connection, tag) => {
+        const key = normalizeTagCacheKey(connection, tag);
+        return isExplicitBadQuality(tagQualityCache.get(key)) ? null : tagValueCache.get(key);
+      }, evaluate: expression => evaluateAutomationExpression(expression)
+    });
     if (startIsFlange) addCap(obj.startCap, points[0], points[1], true);
     if (endIsFlange) addCap(obj.endCap, points.at(-1), points.at(-2), false);
     if (startIsFlat) addCap(obj.startCap, points[0], points[1], true);
@@ -19245,6 +19260,7 @@ const updatePropertiesPanel = () => {
 	  if (obj) syncPropertiesFromSelection();
 	  else syncPropertiesFromScreen();
 	  refreshViewportIdOptions();
+    syncPipeFlowEditor(obj);
 	};
 
 const updateScreenProperty = (patch) => {
@@ -21791,6 +21807,7 @@ function bindScreenManager() {
       states: ensureMultiStateDynamic,
       rotation: ensureRectRotationDynamic,
       motion: ensureRectMotionDynamic,
+      flow: ensurePipeFlowForSelectedObject,
       "box-shadow": ensureShadowEffectForSelectedObject,
       "drop-shadow": ensureDropShadowEffectForSelectedObject
     };
@@ -28596,10 +28613,10 @@ const initializeMotionControls = () => {
     };
     const syncSourceVisibility = (sourceType) => {
       const showExpression = sourceType === "expression";
-      connectionRow.classList.toggle("is-hidden", showExpression);
-      connectionRow.hidden = showExpression;
-      tagRow.classList.toggle("is-hidden", showExpression);
-      tagRow.hidden = showExpression;
+      connectionRow.classList.add("is-hidden"); connectionRow.hidden = true;
+      tagRow.classList.add("is-hidden"); tagRow.hidden = true;
+      const bindingRow = getCompactTagBindingConfig(`motion-${definition.id}`)?.row;
+      if (bindingRow) { bindingRow.classList.toggle("is-hidden", showExpression); bindingRow.hidden = showExpression; }
       expressionRow.classList.toggle("is-hidden", !showExpression);
       expressionRow.hidden = !showExpression;
     };
@@ -28628,10 +28645,10 @@ const initializeMotionControls = () => {
     });
     registerCompactTagBinding({
       id: `motion-${definition.id}`, sourceSelect: sourceTypeSelect,
+      container: fields, beforeEl: expressionRow, buttonLabel: "Source",
       connectionInput,
       tagInput,
       modalTitle: `${definition.title} Tag`,
-      inlineOnly: true,
       read: () => ({
         connection_id: connectionIdFromFriendlyInput(connectionInput),
         tag: String(tagInput.value || "").trim()
@@ -28742,10 +28759,10 @@ const syncMotionControls = (obj) => {
     control.fields.hidden = !enabled;
     setSelectValueSafe(control.sourceTypeSelect, motion.sourceType || "tag");
     setTagBindingFieldValues(control.connectionInput, control.tagInput, motion);
-    control.connectionRow.classList.toggle("is-hidden", motion.sourceType === "expression");
-    control.connectionRow.hidden = motion.sourceType === "expression";
-    control.tagRow.classList.toggle("is-hidden", motion.sourceType === "expression");
-    control.tagRow.hidden = motion.sourceType === "expression";
+    control.connectionRow.classList.add("is-hidden"); control.connectionRow.hidden = true;
+    control.tagRow.classList.add("is-hidden"); control.tagRow.hidden = true;
+    const bindingRow = getCompactTagBindingConfig(`motion-${control.id}`)?.row;
+    if (bindingRow) { bindingRow.classList.toggle("is-hidden", motion.sourceType === "expression"); bindingRow.hidden = motion.sourceType === "expression"; }
     control.expressionRow.classList.toggle("is-hidden", motion.sourceType !== "expression");
     control.expressionRow.hidden = motion.sourceType !== "expression";
     const expressionSummary = formatAutomationExpressionForDisplay(motion.expression).trim();
@@ -29058,6 +29075,73 @@ const compactBindingRowBefore = (rowEl) => {
   const prev = rowEl?.previousElementSibling;
   return prev?.classList?.contains("compact-binding-row") ? prev : null;
 };
+
+const updatePipeFlow = patch => {
+  const obj = selectedIndices.length === 1 ? getActiveObjects()?.[selectedIndices[0]] : null;
+  if (obj?.type !== "pipe") return;
+  recordHistory();obj.flowAutomation=HmiPipeFlow.normalize({...obj.flowAutomation,...patch});
+  renderScreen();syncEditorFromScreen();updatePropertiesPanel();setDirty(true);
+};
+function syncPipeFlowEditor(obj) {
+  const host=document.getElementById("objectDynamicFlowHost"),tab=document.getElementById("objectDynamicTabFlowBtn");
+  if(!host||!tab)return;
+  const supported=obj?.type==='pipe'&&Boolean(obj.flowAutomation);
+  tab.classList.toggle('is-hidden',!supported);host.classList.toggle('is-hidden',!supported||currentObjectDynamicTab!=='flow');
+  if(currentObjectDynamicTab==='flow'&&!supported){setObjectDynamicTab('properties');updatePropertiesPanel();return;}
+  if(!supported||currentObjectDynamicTab!=='flow')return;
+  if(!host.dataset.initialized){
+    host.dataset.initialized='true';
+    host.innerHTML=`<div class="prop-group-title">Pipe Flow</div>
+      <div class="prop-row"><label for="pipeFlowEnabled">Enabled</label><input id="pipeFlowEnabled" type="checkbox" /></div>
+      <div class="prop-row"><label for="pipeFlowSource">Enable Source</label><select id="pipeFlowSource"><option value="constant">Always</option><option value="tag">Tag</option><option value="expression">Expression</option></select></div>
+      <div id="pipeFlowExpressionRow" class="prop-row"><label for="pipeFlowExpression">Expression</label><div class="prop-inline"><input id="pipeFlowExpression" type="text" /><button id="pipeFlowExpressionEdit" class="panel-btn" type="button">Edit…</button></div></div>
+      <div class="prop-row" id="pipeFlowSpeedRow"><label for="pipeFlowSpeed">Speed (units/s)</label><input id="pipeFlowSpeed" type="number" min="1" max="1000" step="1" /></div>
+      <div class="prop-row"><label for="pipeFlowDirection">Direction</label><select id="pipeFlowDirection"><option value="forward">Start to end</option><option value="reverse">End to start</option></select></div>
+      <div class="prop-row"><label for="pipeFlowColorMode">Flow Color</label><select id="pipeFlowColorMode"><option value="auto">Lighter pipe color</option><option value="custom">Custom color</option></select></div>
+      <div id="pipeFlowCustomColorRow" class="prop-row"><label for="pipeFlowColor">Color</label><div class="prop-inline"><input id="pipeFlowColor" type="color"/><input id="pipeFlowColorText" type="text"/><button id="pipeFlowColorPick" class="swatch-btn" type="button" aria-label="Choose flow color">🎨</button></div></div>
+      <div class="prop-row"><label for="pipeFlowWidth">Width</label><input id="pipeFlowWidth" type="number" min="1" max="100" step="1" /></div>
+      <div class="prop-row"><label for="pipeFlowDash">Dash Length</label><input id="pipeFlowDash" type="number" min="2" max="200" step="1" /></div>
+      <div class="prop-row"><label for="pipeFlowGap">Spacing</label><input id="pipeFlowGap" type="number" min="2" max="300" step="1" /></div>
+      <p class="prop-help">Direction follows the numbered pipe points. Dashes disappear when the source is off. Edit mode shows a stationary preview.</p>
+      <button id="pipeFlowRemove" class="panel-btn" type="button">Remove Flow</button>`;
+    const input=id=>document.getElementById(id);
+    input('pipeFlowEnabled').addEventListener('change',()=>updatePipeFlow({enabled:input('pipeFlowEnabled').checked}));
+    input('pipeFlowSource').addEventListener('change',()=>updatePipeFlow({sourceType:input('pipeFlowSource').value}));
+    for(const [id,key]of [['pipeFlowSpeed','speed'],['pipeFlowWidth','width'],['pipeFlowDash','dash'],['pipeFlowGap','gap']])input(id).addEventListener('change',()=>{if(input(id).value!==''&&Number.isFinite(Number(input(id).value)))updatePipeFlow({[key]:Number(input(id).value)});});
+    input('pipeFlowDirection').addEventListener('change',()=>updatePipeFlow({direction:input('pipeFlowDirection').value}));
+    input('pipeFlowColorMode').addEventListener('change',()=>updatePipeFlow({colorMode:input('pipeFlowColorMode').value}));
+    for(const id of ['pipeFlowColor','pipeFlowColorText'])input(id).addEventListener('change',()=>updatePipeFlow({color:input(id).value}));
+    input('pipeFlowColorPick').addEventListener('click',()=>openPaintPicker({title:'Flow Color',value:input('pipeFlowColorText').value,fallback:'#46d9ff',onApply:color=>updatePipeFlow({color})}));
+    input('pipeFlowExpression').addEventListener('change',()=>updatePipeFlow({expression:input('pipeFlowExpression').value}));
+    input('pipeFlowExpressionEdit').addEventListener('click',()=>openAutomationNumericExpressionModal({title:'Flow Enable Expression',value:input('pipeFlowExpression').value,apply:expression=>updatePipeFlow({expression,sourceType:'expression'})}));
+    input('pipeFlowRemove').addEventListener('click',()=>{const obj=getActiveObjects()?.[selectedIndices[0]];if(obj?.type!=='pipe')return;recordHistory();delete obj.flowAutomation;setObjectDynamicTab('properties');renderScreen();syncEditorFromScreen();updatePropertiesPanel();setDirty(true);});
+    registerCompactTagBinding({id:'pipe-flow',sourceSelect:input('pipeFlowSource'),container:host,beforeEl:input('pipeFlowExpressionRow'),buttonLabel:'Source',modalTitle:'Flow Enable Tag',
+      read:()=>{const obj=getActiveObjects()?.[selectedIndices[0]],config=HmiPipeFlow.normalize(obj?.flowAutomation);return {connection_id:config.connection_id,tag:config.tag};},
+      apply:binding=>updatePipeFlow({...binding,sourceType:'tag'})});
+  }
+  const config=HmiPipeFlow.normalize(obj.flowAutomation);
+  for(const form of editorPane.querySelectorAll('.properties-form'))if(form!==host)form.classList.add('is-hidden');
+  host.classList.remove('is-hidden');
+  document.getElementById('pipeFlowEnabled').checked=config.enabled;
+  setSelectValueSafe(document.getElementById('pipeFlowSource'),config.sourceType);
+  for(const [id,key]of [['pipeFlowSpeed','speed'],['pipeFlowWidth','width'],['pipeFlowDash','dash'],['pipeFlowGap','gap'],['pipeFlowColorText','color'],['pipeFlowExpression','expression']])setInputValueSafe(document.getElementById(id),config[key]);
+  document.getElementById('pipeFlowColor').value=isHexColor(config.color)?config.color:'#46d9ff';
+  document.getElementById('pipeFlowColorMode').value=config.colorMode;
+  document.getElementById('pipeFlowCustomColorRow').classList.toggle('is-hidden',config.colorMode!=='custom');
+  document.getElementById('pipeFlowDirection').value=config.direction;
+  document.getElementById('pipeFlowExpressionRow').hidden=config.sourceType!=='expression';
+  document.getElementById('pipeFlowExpressionRow').classList.toggle('is-hidden',config.sourceType!=='expression');
+  const binding=getCompactTagBindingConfig('pipe-flow');binding.row.hidden=config.sourceType!=='tag';binding.row.classList.toggle('is-hidden',config.sourceType!=='tag');
+  renderCompactTagBindingRows();
+  if(config.sourceType==='constant')document.getElementById('pipeFlowSource').value='constant';
+};
+document.getElementById('objectDynamicTabFlowBtn')?.addEventListener('click',()=>{setObjectDynamicTab('flow');updatePropertiesPanel();});
+function ensurePipeFlowForSelectedObject() {
+  const obj=getActiveObjects()?.[selectedIndices[0]];
+  if(selectedIndices.length!==1||obj?.type!=='pipe')return;
+  setObjectDynamicTab('flow');updatePipeFlow({enabled:true});setMenuOpen(false);
+}
+document.getElementById('dynamicsAddFlowMenuBtn')?.addEventListener('click',ensurePipeFlowForSelectedObject);
 
 const LEVEL_AUTOMATION_TYPES = ["rect", "ellipse", "circle", "polygon", "button"];
 // GraphWorX size dynamics can be imported on a group. Keep that existing
