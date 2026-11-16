@@ -4561,7 +4561,7 @@ body.edit-mode #editor-pane[data-dock="right"] #editor-resizer { left: 0; }
 
 .screen-tag-card { border: 1px solid #50545c; border-radius: 5px; padding: 9px; margin: 8px 0; background: rgba(255,255,255,.025); }
 
-.action-confirmation { background: #242830; color: #eceff4; border: 1px solid #606875; border-radius: 8px; padding: 20px; width: min(420px, 85vw); }
+.action-confirmation { position: fixed; inset: 0; margin: auto; height: fit-content; max-height: calc(100dvh - 32px); max-width: calc(100vw - 32px); overflow-y: auto; box-sizing: border-box; background: #242830; color: #eceff4; border: 1px solid #606875; border-radius: 8px; padding: 20px; width: min(420px, 85vw); }
 .action-confirmation::backdrop { background: rgba(0,0,0,.6); }
 .action-confirmation p { white-space: pre-wrap; overflow-wrap: anywhere; }
 .action-confirmation .prop-inline { justify-content: flex-end; gap: 8px; }
