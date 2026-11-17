@@ -10659,18 +10659,25 @@ const shouldPaintObject = (obj) => {
 
 const animateVisibilityFlash = (element, flash, property = "visibility") => {
   if (!flash || flash.on === flash.off) return;
-  const duration = flash.rule.flashRate === "fast" ? 1000 : 2000;
-  const paint = (visible) => property === "opacity" ? (visible ? 1 : 0) : (visible ? "visible" : "hidden");
   const on = flash.rule.flashWhen === false ? flash.off : flash.on;
-  const off = flash.rule.flashWhen === false ? flash.on : flash.off;
-  const animation = element.animate([
-    { [property]: paint(on), offset: 0, easing: "steps(1, end)" },
-    { [property]: paint(off), offset: 0.5, easing: "steps(1, end)" },
-    { [property]: paint(on), offset: 1 }
-  ], { duration, iterations: Infinity });
-  // Every object uses the same document timeline epoch, including replacements
-  // and newly opened popups; unrelated redraws cannot restart a blink cycle.
-  animation.startTime = 0;
+  const root = document.documentElement;
+  if (!root.classList.contains("hmi-shared-flash-clocks")) {
+    root.classList.add("hmi-shared-flash-clocks");
+    // Only the two clocks animate. Objects inherit their phases, so redraws
+    // don't construct another set of effects and native keyframe resources.
+    // Keep the document epoch used by hit testing, rotations and new popups.
+    for (const animation of root.getAnimations()) {
+      if (animation.animationName?.startsWith("hmi-flash-clock-")) animation.startTime = 0;
+    }
+  }
+  const rate = flash.rule.flashRate === "fast" ? "fast" : "slow";
+  if (property === "opacity") {
+    element.style.opacity = on
+      ? `var(--hmi-flash-${rate}-opacity, 1)`
+      : `calc(1 - var(--hmi-flash-${rate}-opacity, 1))`;
+  } else {
+    element.style.visibility = `var(--hmi-flash-${rate}-${on ? "on" : "off"}, ${on ? "visible" : "hidden"})`;
+  }
 };
 
 const evaluateVisibilityRule = (vis) => {

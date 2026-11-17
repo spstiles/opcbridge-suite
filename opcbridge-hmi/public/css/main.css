@@ -3,6 +3,41 @@
    ================================================ */
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+/* Shared phases keep object redraws from recreating individual flash effects.
+   Opacity phases compose with nested visibility bindings in color layers. */
+.hmi-shared-flash-clocks {
+    animation-name: hmi-flash-clock-fast, hmi-flash-clock-slow;
+    animation-duration: 1000ms, 2000ms;
+    animation-timing-function: steps(1, end);
+    animation-iteration-count: infinite;
+}
+
+@keyframes hmi-flash-clock-fast {
+    0%, 100% {
+        --hmi-flash-fast-opacity: 1;
+        --hmi-flash-fast-on: visible;
+        --hmi-flash-fast-off: hidden;
+    }
+    50% {
+        --hmi-flash-fast-opacity: 0;
+        --hmi-flash-fast-on: hidden;
+        --hmi-flash-fast-off: visible;
+    }
+}
+
+@keyframes hmi-flash-clock-slow {
+    0%, 100% {
+        --hmi-flash-slow-opacity: 1;
+        --hmi-flash-slow-on: visible;
+        --hmi-flash-slow-off: hidden;
+    }
+    50% {
+        --hmi-flash-slow-opacity: 0;
+        --hmi-flash-slow-on: hidden;
+        --hmi-flash-slow-off: visible;
+    }
+}
+
 html, body {
     width: 100%;
     height: 100%;
