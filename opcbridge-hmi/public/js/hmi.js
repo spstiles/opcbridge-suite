@@ -260,6 +260,8 @@ const spaceMenuVertical = document.getElementById("spaceMenuVertical");
 const flipMenuHorizontal = document.getElementById("flipMenuHorizontal");
 const flipMenuVertical = document.getElementById("flipMenuVertical");
 const moveToFrontMenuBtn = document.getElementById("moveToFrontMenuBtn");
+const bringForwardMenuBtn = document.getElementById("bringForwardMenuBtn");
+const sendBackwardMenuBtn = document.getElementById("sendBackwardMenuBtn");
 const moveToBackMenuBtn = document.getElementById("moveToBackMenuBtn");
 const exportSelectionSvgBtn = document.getElementById("exportSelectionSvgBtn");
 const explodeSelectedSvgBtn = document.getElementById("explodeSelectedSvgBtn");
@@ -12344,6 +12346,49 @@ const moveSelectionToBack = () => {
   setDirty(true);
 };
 
+const getSelectionStackStep = (direction, objects = getActiveObjects()) => {
+  const selected = new Set(selectedIndices.filter(index => Number.isInteger(index) && index >= 0 && index < (objects?.length || 0)));
+  const swaps = [];
+  if (!Array.isArray(objects) || !selected.size || ![1, -1].includes(direction)) return { swaps, indices: [...selected] };
+  const stacks = new Map();
+  objects.forEach((object, index) => {
+    // Layer order takes precedence over object order on the screen. Inside a
+    // group, children share one stack regardless of imported layer metadata.
+    const layer = groupEditStack.length ? null : object.layerId;
+    if (!stacks.has(layer)) stacks.set(layer, []);
+    stacks.get(layer).push(index);
+  });
+  for (const stack of stacks.values()) {
+    const start = direction === 1 ? stack.length - 2 : 1;
+    for (let i = start; i >= 0 && i < stack.length; i -= direction) {
+      const from = stack[i], to = stack[i + direction];
+      if (selected.has(from) && !selected.has(to)) {
+        swaps.push([from, to]);
+        selected.delete(from);
+        selected.add(to);
+      }
+    }
+  }
+  return { swaps, indices: [...selected].sort((a, b) => a - b) };
+};
+
+const moveSelectionOneStep = (direction) => {
+  if (!isEditMode || !canEdit()) return;
+  const objects = getActiveObjects();
+  const { swaps, indices } = getSelectionStackStep(direction, objects);
+  if (!swaps.length) return;
+  recordHistory();
+  const next = [...objects];
+  for (const [from, to] of swaps) [next[from], next[to]] = [next[to], next[from]];
+  setActiveObjects(next);
+  selectedIndices = indices;
+  renderScreen();
+  syncEditorFromScreen();
+  updateSelectionOverlays();
+  updatePropertiesPanel();
+  setDirty(true);
+};
+
 const updateMenuState = () => {
   const canAlign = selectedIndices.length > 1;
   const canGroup = selectedIndices.length > 1;
@@ -12382,9 +12427,9 @@ const updateMenuState = () => {
     if (!el) return;
     el.classList.toggle("is-disabled", !canSpaceEvenly);
   };
-  const toggleReorderItem = (el) => {
+  const toggleReorderItem = (el, enabled = canReorder) => {
     if (!el) return;
-    el.classList.toggle("is-disabled", !canReorder);
+    el.classList.toggle("is-disabled", !enabled);
   };
   const toggleFlipItem = (el) => {
     if (!el) return;
@@ -12419,6 +12464,8 @@ const updateMenuState = () => {
   toggleFlipItem(flipMenuHorizontal);
   toggleFlipItem(flipMenuVertical);
   toggleReorderItem(moveToFrontMenuBtn);
+  toggleReorderItem(bringForwardMenuBtn, getSelectionStackStep(1, activeObjects).swaps.length > 0);
+  toggleReorderItem(sendBackwardMenuBtn, getSelectionStackStep(-1, activeObjects).swaps.length > 0);
   toggleReorderItem(moveToBackMenuBtn);
   toggleDynamicMenuItem(dynamicsMenuBtn, canOpenDynamics || canAddShadow || Boolean(selectedObject) || selectedIndices.length >= 2);
   toggleDynamicMenuItem(toolbarDynamicsBtn, canOpenDynamics || canAddShadow || Boolean(selectedObject) || selectedIndices.length >= 2);
@@ -14071,6 +14118,8 @@ const showObjectContextMenu = (clientX, clientY, objectIndex) => {
   addItem("Move To Front", () => {
     moveSelectionToFront();
   });
+  addItem("Bring Forward", () => moveSelectionOneStep(1), !getSelectionStackStep(1, activeObjects).swaps.length);
+  addItem("Send Backward", () => moveSelectionOneStep(-1), !getSelectionStackStep(-1, activeObjects).swaps.length);
   addItem("Move To Back", () => {
     moveSelectionToBack();
   });
@@ -29715,6 +29764,14 @@ if (moveToFrontMenuBtn) {
   moveToFrontMenuBtn.addEventListener("click", () => {
     if (moveToFrontMenuBtn.classList.contains("is-disabled")) return;
     moveSelectionToFront();
+    setMenuOpen(false);
+  });
+}
+
+for (const [button, direction] of [[bringForwardMenuBtn, 1], [sendBackwardMenuBtn, -1]]) {
+  button?.addEventListener("click", () => {
+    if (button.classList.contains("is-disabled")) return;
+    moveSelectionOneStep(direction);
     setMenuOpen(false);
   });
 }
