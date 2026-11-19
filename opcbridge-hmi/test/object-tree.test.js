@@ -246,7 +246,8 @@ test('canvas selection maps nested and multiple objects to Explorer and reveals 
     objectTreeScreen:null, objectTreeSelectionSignature:'', objectTreeSelectionActive:false, objectTreeExpanded:new Set(),
     getActiveObjects:()=>objects[0].children,
     document:{getElementById:id=>id==='objectExplorer'?{classList:{contains:()=>false}}:id==='objectTreeSearch'?search:{}},
-    HmiObjectTree:{findPath:tree.findPath,render:options=>rendered.push(options)}, selectObjectTreeEntry() {} });
+    HmiObjectTree:{findPath:tree.findPath,render:options=>rendered.push(options)},
+    selectObjectTreeEntry() {}, showObjectTreeContextMenu() {} });
   const start=source.indexOf('const refreshObjectExplorer =');
   vm.runInContext(source.slice(start,source.indexOf('const OBJECT_EXPLORER_VISIBLE_KEY =',start)),ctx);
   vm.runInContext('refreshObjectExplorer()',ctx);

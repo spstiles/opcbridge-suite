@@ -52,7 +52,7 @@
     }
     return null;
   }
-  function render({ container, objects, query, expanded, selectedPath, selectedPaths = selectedPath ? [selectedPath] : [], revealSelection = true, onSelect, layers = [] }) {
+  function render({ container, objects, query, expanded, selectedPath, selectedPaths = selectedPath ? [selectedPath] : [], revealSelection = true, onSelect, onContextMenu, layers = [] }) {
     const doc = container.ownerDocument;
     const selected = new Set(selectedPaths.map(path => path.join('.')));
     const scrollTop = container.scrollTop;
@@ -104,6 +104,13 @@
         li.setAttribute('aria-expanded', String(open));
       };
       button.addEventListener('click', () => selectRow(entry));
+      if (onContextMenu) {
+        row.addEventListener('contextmenu', event => {
+          event.preventDefault();
+          event.stopPropagation();
+          onContextMenu(event, node);
+        });
+      }
       const navigate = event => {
         if (event.altKey || event.ctrlKey || event.metaKey || !['ArrowUp','ArrowDown','ArrowRight','ArrowLeft'].includes(event.key)) return;
         event.preventDefault();

@@ -19396,6 +19396,16 @@ const selectObjectTreeEntry = (path, entry = null) => {
   requestAnimationFrame(() => centerReferenceObjectInView(obj));
   return true;
 };
+const showObjectTreeContextMenu = (event, { path, object }) => {
+  if (!isEditMode || !canEdit()) return;
+  const index = path.at(-1);
+  const alreadySelected = path.length === groupEditStack.length + 1 &&
+    getActiveObjects()?.[index] === object && selectedIndices.includes(index);
+  if (!alreadySelected && !selectObjectTreeEntry(path)) return;
+  if (!alreadySelected) refreshObjectExplorer();
+  showObjectContextMenu(event.clientX, event.clientY, index);
+};
+
 const refreshObjectExplorer = () => {
   const explorer = document.getElementById("objectExplorer");
   const container = document.getElementById("objectTree");
@@ -19409,7 +19419,8 @@ const refreshObjectExplorer = () => {
   const revealSelection = signature !== objectTreeSelectionSignature;
   objectTreeSelectionSignature = signature;
   HmiObjectTree.render({ container, objects: currentScreenObj?.objects || [], layers: currentScreenObj?.layers || [], query: search?.value || "",
-    expanded: objectTreeExpanded, selectedPaths, revealSelection, onSelect: selectObjectTreeEntry });
+    expanded: objectTreeExpanded, selectedPaths, revealSelection, onSelect: selectObjectTreeEntry,
+    onContextMenu: showObjectTreeContextMenu });
 };
 const OBJECT_EXPLORER_VISIBLE_KEY = "opcbridge-hmi.objectExplorer.visible";
 const getObjectExplorerPreference = () => {
