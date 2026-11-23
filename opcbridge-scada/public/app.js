@@ -5731,6 +5731,9 @@ async function openLoggerTagPickerModal(opts = {}) {
 
   try {
     await ensureLoggerTagPickerCache({ source: pickerSource, force: forceLoad });
+    if (mode === 'alarm_source' || mode === 'alarm_source_inline') {
+      state.systemTagsForSelection = state.loggerTagPickerAll.filter((tag) => tag.connection_id === '_system');
+    }
     renderLoggerTagPickerTable();
   } catch (err) {
     if (!hadCache) state.loggerTagPickerAll = [];

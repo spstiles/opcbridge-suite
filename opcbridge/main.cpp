@@ -947,6 +947,10 @@ static std::string system_connection_path_segment(const ConnectionConfig &conn) 
     return segment.empty() ? conn.id : segment;
 }
 
+static std::string connection_failure_tag_name(const ConnectionConfig &conn) {
+    return "System/Connections/" + system_connection_path_segment(conn) + "/Failed";
+}
+
 static sqlite3 *g_alarmDb = nullptr;
 static std::mutex g_alarmDbMutex;
 
@@ -23829,6 +23833,11 @@ window.addEventListener("load", startAutoRefresh);
 		                {
 		                    std::lock_guard<std::mutex> lock(driverMutex);
 		                    for (const auto &driver : drivers) {
+                                if (!is_memory_connection_id(driver.conn.id) && driver.conn.driver != "memory") {
+                                    const auto name = connection_failure_tag_name(driver.conn);
+                                    if (seen.insert(make_tag_key("_system", name)).second)
+                                        rows.push_back({"_system", "System", name, "", "", "bool", true, false, false, true});
+                                }
 		                        for (const auto &tag : driver.tags) {
 		                            const std::string key = make_tag_key(driver.conn.id, tag.cfg.logical_name);
 		                            if (!seen.insert(key).second) continue;
@@ -23920,6 +23929,18 @@ window.addEventListener("load", startAutoRefresh);
 		            });
 
 		            // /tags
+                    std::function<json()> collectConnectionHealth;
+                    const auto collectConnectionFailureTags = [&]() {
+                        const json health = collectConnectionHealth();
+                        std::vector<std::pair<std::string, bool>> rows;
+                        for (const auto &entry : health.at("connections").items()) {
+                            const auto &status = entry.value();
+                            rows.emplace_back(status.at("failure_tag").get<std::string>(),
+                                status.value("status", "") == "error");
+                        }
+                        return rows;
+                    };
+
 		            svr.Get("/tags", [&](const httplib::Request &req, httplib::Response &res) {
 						std::vector<TagRow> rows;
 						const std::string filterConn = req.has_param("connection_id") ? req.get_param_value("connection_id") : "";
@@ -23932,6 +23953,9 @@ window.addEventListener("load", startAutoRefresh);
 						int limit = req.has_param("limit") ? parse_int_loose(req.get_param_value("limit"), 0) : 0;
 						if (limit < 0) limit = 0;
 						if (limit > 1000) limit = 1000;
+                        const auto failureRows = !excludeSystem && (filterConn.empty() || filterConn == "_system")
+                            && (filterTag.empty() || filterTag.rfind("System/Connections/", 0) == 0)
+                            ? collectConnectionFailureTags() : std::vector<std::pair<std::string, bool>>{};
                         const auto clockRows = collect_clock_system_tags();
                         const auto hostRows = collect_host_system_tags();
                         const auto alarmRows = collect_alarm_system_tags();
@@ -24077,6 +24101,8 @@ window.addEventListener("load", startAutoRefresh);
 									addSystemRow("System/Bridge/Version", "string", std::string(OPCBRIDGE_VERSION));
 									addSystemRow("System/Bridge/ReloadActive", "bool", reloadCopy.in_progress || reloadCopy.requested);
 									addSystemRow("System/Bridge/ReloadGeneration", "uint64", reloadCopy.gen);
+                                    for (const auto &[name, failed] : failureRows)
+                                        addSystemRow(name, "bool", failed);
 
 									for (const auto &clockRow : clockRows) {
 										addSystemRow(clockRow.name, clockRow.datatype, clockRow.value);
@@ -24335,6 +24361,13 @@ window.addEventListener("load", startAutoRefresh);
 		                    pushSystemRow("System/Bridge/Version", "string", std::string(OPCBRIDGE_VERSION), ts_ms);
 		                    pushSystemRow("System/Bridge/ReloadActive", "bool", reloadCopy.in_progress || reloadCopy.requested, ts_ms);
 		                    pushSystemRow("System/Bridge/ReloadGeneration", "uint64", reloadCopy.gen, ts_ms);
+                            if (std::any_of(requested.begin(), requested.end(), [](const auto &entry) {
+                                return entry.first == "_system" && entry.second.rfind("System/Connections/", 0) == 0 &&
+                                    entry.second.size() >= 7 && entry.second.compare(entry.second.size() - 7, 7, "/Failed") == 0;
+                            })) {
+                                for (const auto &[name, failed] : collectConnectionFailureTags())
+                                    pushSystemRow(name, "bool", failed, ts_ms);
+                            }
 		                    for (const auto &r : collect_clock_system_tags()) pushSystemRow(r.name, r.datatype, r.value, ts_ms);
 		                    for (const auto &r : collect_host_system_tags()) pushSystemRow(r.name, r.datatype, r.value, ts_ms);
 		                    for (const auto &r : collect_alarm_system_tags()) pushSystemRow(r.name, r.datatype, r.value, ts_ms);
@@ -24916,8 +24949,7 @@ window.addEventListener("load", startAutoRefresh);
 		                res.set_content(resp.dump(2), "application/json");
 		            });
 
-		            // /health
-	            svr.Get("/health", [&](const httplib::Request &, httplib::Response &res) {
+                    collectConnectionHealth = [&]() -> json {
 	                json resp;
 	                resp["component_version"] = OPCBRIDGE_VERSION;
 	                resp["suite_version"] = OPCBRIDGE_SUITE_VERSION;
@@ -24950,9 +24982,7 @@ window.addEventListener("load", startAutoRefresh);
 								resp["reason"] = "no drivers configured";
 								resp["connections"] = json::object();
 								resp["counts"] = {{"ok", 0}, {"degraded", 0}, {"error", 0}};
-								res.status = 200;
-								res.set_content(resp.dump(), "application/json");
-								return;
+								return resp;
 							}
 
 							for (auto &driver : drivers) {
@@ -24961,6 +24991,7 @@ window.addEventListener("load", startAutoRefresh);
 								}
 								json dstatus;
                                 dstatus["connection_name"] = display_connection_name(driver.conn);
+                                dstatus["failure_tag"] = connection_failure_tag_name(driver.conn);
                                 const bool demandDriven = active_poll_test_enabled(driver, mqttMode);
                                 const auto activity = demandDriven ? polling_activity_summary(driver, tagTable) : PollingActivitySummary{};
                                 const bool intentionallyIdle = demandDriven && activity.idle();
@@ -25168,9 +25199,9 @@ window.addEventListener("load", startAutoRefresh);
                                         dstatus["reason"] = "no successful reads within the connection health window";
                                         ++error_count;
 									} else if (total_seen == 0) {
-										dstatus["status"] = "error";
-										dstatus["reason"] = "no tag snapshots yet";
-										++error_count;
+										dstatus["status"] = "degraded";
+										dstatus["reason"] = "waiting for first tag snapshot";
+										++degraded_count;
 									} else if (transient_full_bad_snapshot) {
 										dstatus["status"] = "ok";
 										dstatus["reason"] = "recovering after transient read timeout";
@@ -25319,12 +25350,12 @@ window.addEventListener("load", startAutoRefresh);
 						{"error", error_count}
 					};
 
-						// HTTP status reflects server availability, not tag quality. Clients should
-						// use resp["status"] to display ok/degraded/error.
-						res.status = 200;
-		                res.set_content(resp.dump(), "application/json");
-		            });
-            
+						return resp;
+                    };
+                    svr.Get("/health", [&](const httplib::Request &, httplib::Response &res) {
+                        res.set_content(collectConnectionHealth().dump(), "application/json");
+                    });
+
             // /alarm-history?limit=N  (default 50, max 50000)
             svr.Get("/alarm-history", [&](const httplib::Request &req, httplib::Response &res) {	    int limit = 50;
 				if (auto it = req.params.find("limit"); it != req.params.end()) {
