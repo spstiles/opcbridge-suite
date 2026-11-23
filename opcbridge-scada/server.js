@@ -2381,7 +2381,8 @@ function projectBackupWalkFiles(rootDir, dirRel, opts = {}) {
     let entries = [];
     try {
       entries = fs.readdirSync(absDir, { withFileTypes: true });
-    } catch {
+    } catch (err) {
+      if (opts.strict && err.code !== 'ENOENT') throw err;
       return;
     }
     entries.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
@@ -2404,7 +2405,8 @@ function projectBackupWalkFiles(rootDir, dirRel, opts = {}) {
     const st = fs.statSync(start);
     if (st.isDirectory()) walk(start, startRel === '.' ? '.' : startRel);
     else if (st.isFile()) out.push(startRel);
-  } catch {
+  } catch (err) {
+    if (opts.strict && err.code !== 'ENOENT') throw err;
     // ignore
   }
   return out;
@@ -2584,7 +2586,7 @@ function restoreProjectBackup(backup) {
   const preRestore = buildProjectBackup({ includeSecrets: true, includeHistory: true, includeHistorianData: true });
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const preRestorePath = path.join(os.tmpdir(), `opcbridge-suite-pre-restore-${stamp}.json`);
-  fs.writeFileSync(preRestorePath, JSON.stringify(preRestore, null, 2) + '\n', 'utf8');
+  fs.writeFileSync(preRestorePath, JSON.stringify(preRestore, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
 
   const written = [];
   for (const f of files) {
@@ -2608,6 +2610,360 @@ function restoreProjectBackup(backup) {
   }
 
   return { ok: true, written, pre_restore_backup: preRestorePath };
+}
+
+const managedBackups = require('./backup-library');
+const managedDataRoot = process.env.OPCBRIDGE_DATA_ROOT || '/var/lib/opcbridge';
+const managedHmiFilesRoot = process.env.OPCBRIDGE_HMI_FILES_ROOT || path.join(DEFAULT_OPCBRIDGE_CONFIG_DIR, 'hmi');
+const backupLibrary = managedBackups.createLibrary(process.env.OPCBRIDGE_BACKUP_DIR || path.join(managedDataRoot, 'backups'));
+const managedAlarmHistory = process.env.OPCBRIDGE_ALARMS_DB_PATH ||
+  path.join(DEFAULT_OPCBRIDGE_CONFIG_DIR, 'data', 'alarms.db');
+const managedBackupUploadLimit = Math.ceil(PROJECT_BACKUP_MAX_TOTAL_BYTES * 4 / 3) + 8 * 1024 * 1024;
+let managedBackupJob = null;
+let automaticBackupDate = '';
+
+const managedConfigFiles = {
+  scada_settings: CONFIG_PATH,
+  scada_secrets: SECRETS_PATH,
+  identity_sync: IDENTITY_SYNC_PATH,
+  historian_settings: HISTORIAN_CONFIG_PATH,
+  logger_settings: REPORTER_CONFIG_PATH,
+  logger_databases: REPORTER_DATABASES_PATH,
+  logger_definitions: REPORTER_REPORTS_PATH,
+  logger_checks: REPORTER_DATA_CHECKS_PATH,
+  logger_sync: REPORTER_SYNC_JOBS_PATH,
+  report_definitions: REPORT_DEFINITIONS_PATH,
+  report_sources: REPORT_DATA_SOURCES_PATH,
+  data_entry_forms: DATA_ENTRY_DEFINITIONS_PATH,
+  flow_deployed: path.join(managedDataRoot, 'flow', 'deployed.json'),
+  flow_state: path.join(managedDataRoot, 'flow', 'runtime_state.json'),
+  logger_state: path.join(managedDataRoot, 'logger', 'runtime_state.json'),
+  data_entry_audit: DATA_ENTRY_AUDIT_PATH,
+  hmi_trends: process.env.OPCBRIDGE_HMI_TREND_CACHE_PATH || path.join(managedHmiFilesRoot, '.trend-cache', 'cache.json')
+};
+const managedRoots = {
+  core: DEFAULT_OPCBRIDGE_CONFIG_DIR,
+  hmi: HMI_ROOT,
+  hmi_files: managedHmiFilesRoot,
+  logger_reports: REPORTER_REPORTS_DIR,
+  report_templates: REPORT_TEMPLATE_DIR
+};
+
+function managedBackupFileTarget(section, rel) {
+  if (Object.hasOwn(managedConfigFiles, section)) {
+    const target = managedConfigFiles[section];
+    if (target && path.basename(target) === rel) return target;
+  }
+  if (section === 'core' && (/^(?:connections|tags|audio|certs|flow)\//.test(rel) ||
+      ['mqtt.json', 'mqtt_inputs.json', 'logic.json', 'logic.jsonc', 'admin_auth.json', 'passwords.jsonc', 'ca.crt'].includes(rel)) &&
+      /\.(?:jsonc?|crt|pem|cer|der|key|p12|pfx|wav|mp3|ogg|flac)$/i.test(rel)) {
+    return path.join(managedRoots.core, rel);
+  }
+  if (['hmi', 'hmi_files'].includes(section)) {
+    const asset = /^(?:screens|public\/img|img|images)\//.test(rel) &&
+      /\.(?:jsonc?|screen|svg|png|jpe?g|webp|gif|ico|bmp)$/i.test(rel);
+    if (asset || section === 'hmi' && ['public/js/config.jsonc', 'passwords.jsonc'].includes(rel)) {
+      return path.join(managedRoots[section], rel);
+    }
+  }
+  if (section === 'logger_reports' && /\.(?:jsonc?|sql|txt|md)$/i.test(rel)) return path.join(REPORTER_REPORTS_DIR, rel);
+  if (section === 'report_templates' && /\.(?:xlsx|ods)$/i.test(rel)) return path.join(REPORT_TEMPLATE_DIR, rel);
+  return '';
+}
+
+function backupSqlite(source) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'opcbridge-db-backup-'));
+  const target = path.join(dir, 'snapshot.db');
+  try {
+    const result = child_process.spawnSync('python3', ['-c',
+      'import sqlite3,sys,pathlib; s=sqlite3.connect(pathlib.Path(sys.argv[1]).as_uri()+"?mode=ro",uri=True); d=sqlite3.connect(sys.argv[2]); s.backup(d); d.close(); s.close()',
+      path.resolve(source), target], { timeout: 120000, encoding: 'utf8' });
+    if (result.status !== 0) throw new Error('SQLite snapshot failed: ' + (result.error?.message || result.stderr));
+    if (fs.statSync(target).size > PROJECT_BACKUP_MAX_FILE_BYTES) throw new Error('SQLite snapshot exceeds the backup file limit.');
+    return fs.readFileSync(target);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function readManagedAlarmConfig() {
+  const database = path.join(DEFAULT_OPCBRIDGE_CONFIG_DIR, 'data', 'alarms_config.db');
+  const alarmFile = path.join(DEFAULT_OPCBRIDGE_CONFIG_DIR, 'alarms.json');
+  if (fs.existsSync(database)) {
+    const result = child_process.spawnSync('python3', ['-c',
+      'import sqlite3,sys,pathlib; c=sqlite3.connect(pathlib.Path(sys.argv[1]).as_uri()+"?mode=ro",uri=True); row=c.execute("SELECT json FROM alarms_config WHERE id=1").fetchone(); print(row[0] if row else "",end="")',
+      path.resolve(database)], { timeout: 15000, maxBuffer: PROJECT_BACKUP_MAX_FILE_BYTES });
+    if (result.status !== 0) throw new Error('Unable to read the active alarm configuration.');
+    if (result.stdout.length) return result.stdout;
+  }
+  try { return fs.readFileSync(alarmFile); }
+  catch (err) { if (err.code === 'ENOENT') return null; throw err; }
+}
+
+function buildManagedBackup(options) {
+  const selected = new Set(options.contents);
+  const files = [];
+  let bytes = 0;
+  function check(result, label) {
+    if (!result.ok || result.skipped && result.reason !== 'missing') throw new Error(label + ': ' + result.reason);
+    bytes += result.size || 0;
+    if (bytes > PROJECT_BACKUP_MAX_TOTAL_BYTES) throw new Error('Backup exceeds the configured total size limit.');
+  }
+  function add(section, root, rel) {
+    if (managedBackupFileTarget(section, rel)) check(projectBackupAddFile(files, section, root, rel), rel);
+  }
+  function collect(section, root, rel) {
+    for (const item of projectBackupWalkFiles(root, rel, { strict: true })) add(section, root, item);
+  }
+  function explicit(section) {
+    const file = managedConfigFiles[section];
+    if (file) add(section, path.dirname(file), path.basename(file));
+  }
+  if (selected.has('workspace')) {
+    for (const dir of ['connections', 'tags']) collect('core', DEFAULT_OPCBRIDGE_CONFIG_DIR, dir);
+    for (const dir of ['screens', 'public/img']) collect('hmi', HMI_ROOT, dir);
+    if (path.resolve(managedHmiFilesRoot) !== path.resolve(HMI_ROOT)) {
+      for (const dir of ['screens', 'public/img', 'img', 'images']) collect('hmi_files', managedHmiFilesRoot, dir);
+    }
+  }
+  if (selected.has('alarms')) {
+    const config = readManagedAlarmConfig();
+    if (config) check(projectBackupAddGeneratedFile(files, 'alarm_config', 'alarms.json', config), 'alarms.json');
+    collect('core', DEFAULT_OPCBRIDGE_CONFIG_DIR, 'audio');
+  }
+  if (selected.has('settings')) {
+    for (const section of ['scada_settings', 'historian_settings', 'logger_settings', 'logger_definitions',
+      'logger_checks', 'logger_sync', 'report_definitions', 'data_entry_forms', 'flow_deployed']) explicit(section);
+    collect('logger_reports', REPORTER_REPORTS_DIR, '.');
+    collect('report_templates', REPORT_TEMPLATE_DIR, '.');
+    for (const dir of ['flow', 'mqtt.json', 'mqtt_inputs.json', 'logic.json', 'logic.jsonc']) collect('core', DEFAULT_OPCBRIDGE_CONFIG_DIR, dir);
+    add('hmi', HMI_ROOT, 'public/js/config.jsonc');
+  }
+  if (selected.has('credentials')) {
+    for (const section of ['scada_secrets', 'identity_sync', 'logger_databases', 'report_sources']) explicit(section);
+    for (const rel of ['admin_auth.json', 'passwords.jsonc', 'ca.crt', 'certs']) collect('core', DEFAULT_OPCBRIDGE_CONFIG_DIR, rel);
+    add('hmi', HMI_ROOT, 'passwords.jsonc');
+  }
+  if (selected.has('history')) {
+    for (const section of ['flow_state', 'logger_state', 'data_entry_audit', 'hmi_trends']) explicit(section);
+    if (fs.existsSync(managedAlarmHistory)) {
+      check(projectBackupAddGeneratedFile(files, 'alarm_history', 'alarms.db', backupSqlite(managedAlarmHistory)), 'Alarm history');
+    }
+  }
+  if (selected.has('historian') && fs.existsSync(HISTORIAN_CONFIG_PATH)) {
+    const dump = buildHistorianSqlDump();
+    if (!dump.ok) throw new Error('Historian backup failed: ' + dump.error);
+    check(projectBackupAddGeneratedFile(files, 'historian_data', 'opcbridge_historian.sql', dump.buffer), 'Historian');
+  }
+  if (!files.length) throw new Error('No files were found for the selected contents.');
+  return {
+    type: 'opcbridge-suite-managed-backup', schema_version: 1, ...options,
+    created_at: new Date().toISOString(), host: os.hostname(), suite_version: SUITE_VERSION,
+    counts: { files: files.length, bytes }, files
+  };
+}
+
+function launchManagedBackup(options, kind) {
+  if (managedBackupJob?.state === 'running') throw new Error('A backup is already running.');
+  const id = crypto.randomUUID();
+  const job = managedBackupJob = { id, kind, state: 'running', started_at: new Date().toISOString() };
+  const worker = child_process.fork(__filename, ['--managed-backup-worker'], {
+    stdio: ['ignore', 'ignore', 'ignore', 'ipc']
+  });
+  let result;
+  worker.on('message', value => { result = value; });
+  worker.on('error', err => { job.error = err.message; });
+  worker.on('exit', () => {
+    Object.assign(job, result || { state: 'error', error: job.error || 'Backup process exited before completion.' });
+    if (kind === 'automatic') {
+      try {
+        if (job.state === 'done') backupLibrary.prune(backupLibrary.settings().keep);
+        backupLibrary.saveAutomaticStatus(job);
+      } catch (err) {
+        console.error('[backup] Unable to update automatic backup status:', err.message);
+      }
+    }
+  });
+  worker.send({ id, options, kind });
+  return job;
+}
+
+function runAutomaticBackup(now = new Date()) {
+  try {
+    const settings = backupLibrary.settings();
+    if (!settings.enabled || managedBackupJob?.state === 'running') return;
+    const day = [now.getFullYear(), now.getMonth() + 1, now.getDate()].join('-');
+    const time = [now.getHours(), now.getMinutes()].map(n => String(n).padStart(2, '0')).join(':');
+    if (time < settings.time || day === automaticBackupDate || day === backupLibrary.automaticStatus()?.day) return;
+    automaticBackupDate = day;
+    backupLibrary.saveAutomaticStatus({ day, state: 'running', started_at: now.toISOString() });
+    const job = launchManagedBackup(managedBackups.selection(settings), 'automatic');
+    job.day = day;
+  } catch (err) {
+    console.error('[backup] Automatic backup failed:', err.message);
+  }
+}
+
+function nextAutomaticBackup(settings, previous, now = new Date()) {
+  if (!settings.enabled) return null;
+  const day = [now.getFullYear(), now.getMonth() + 1, now.getDate()].join('-');
+  const next = new Date(now);
+  const [hours, minutes] = settings.time.split(':').map(Number);
+  next.setHours(hours, minutes, 0, 0);
+  if (previous?.day === day) next.setDate(next.getDate() + 1);
+  return new Date(Math.max(next.getTime(), now.getTime())).toISOString();
+}
+
+function inspectManagedBackup(backup) {
+  if (backup?.type !== 'opcbridge-suite-managed-backup' || backup.schema_version !== 1 ||
+      !Array.isArray(backup.files) || !backup.files.length) throw new Error('Choose a valid managed backup.');
+  const options = managedBackups.selection(backup);
+  const seen = new Set();
+  let bytes = 0;
+  const entries = backup.files.map(file => {
+    const rel = projectBackupSafeRel(file?.path);
+    if (!rel || rel !== file.path) throw new Error('Invalid path in backup.');
+    const section = file.section;
+    const special = (section === 'alarm_config' && rel === 'alarms.json') ||
+      (section === 'alarm_history' && rel === 'alarms.db') ||
+      (section === 'historian_data' && rel === 'opcbridge_historian.sql');
+    const target = managedBackupFileTarget(section, rel);
+    if (!target && !special) throw new Error('Unsupported backup file: ' + section + '/' + rel);
+    const key = target ? path.resolve(target) : section;
+    if (seen.has(key)) throw new Error('Duplicate destination in backup: ' + rel);
+    seen.add(key);
+    if (typeof file.content_b64 !== 'string' || file.content_b64.length > Math.ceil(PROJECT_BACKUP_MAX_FILE_BYTES / 3) * 4) {
+      throw new Error('Invalid or oversized backup entry: ' + rel);
+    }
+    const data = Buffer.from(file.content_b64, 'base64');
+    if (data.toString('base64') !== file.content_b64 || data.length !== file.size) throw new Error('Invalid backup entry: ' + rel);
+    bytes += data.length;
+    if (bytes > PROJECT_BACKUP_MAX_TOTAL_BYTES) throw new Error('Backup exceeds the configured total size limit.');
+    if (section === 'alarm_config') {
+      const doc = JSON.parse(data.toString('utf8'));
+      if (!Array.isArray(doc?.alarms) && !Array.isArray(doc?.rules)) throw new Error('Invalid alarm configuration.');
+    }
+    return { target, data, section, rel };
+  });
+  return { entries, preview: {
+    ...previewProjectBackup(backup), ...options, bytes,
+    historian_download_only: entries.some(entry => entry.section === 'historian_data')
+  } };
+}
+
+function verifyBackupDestination(target) {
+  const full = path.resolve(target);
+  for (let name = full; name !== path.dirname(name); name = path.dirname(name)) {
+    try {
+      if (fs.lstatSync(name).isSymbolicLink()) throw new Error('Restore destination contains a symbolic link: ' + name);
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err;
+    }
+  }
+}
+
+function writeManagedBackupFile(target, data, mode) {
+  verifyBackupDestination(target);
+  fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o770 });
+  const temp = path.join(path.dirname(target), '.restore-' + crypto.randomUUID());
+  try {
+    fs.writeFileSync(temp, data, { mode, flag: 'wx' });
+    fs.renameSync(temp, target);
+  } finally {
+    fs.rmSync(temp, { force: true });
+  }
+}
+
+function restoreManagedSqlite(entry) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'opcbridge-db-restore-'));
+  const file = path.join(dir, 'source');
+  try {
+    fs.writeFileSync(file, entry.data, { mode: 0o600 });
+    let dest;
+    let script = 'import sqlite3,sys; s=sqlite3.connect(sys.argv[1]); assert s.execute("PRAGMA quick_check").fetchone()[0]=="ok"; d=sqlite3.connect(sys.argv[2],timeout=5); s.backup(d); d.close()';
+    if (entry.section === 'alarm_config') {
+      const dataDir = path.join(DEFAULT_OPCBRIDGE_CONFIG_DIR, 'data');
+      fs.mkdirSync(dataDir, { recursive: true, mode: 0o770 });
+      dest = path.join(fs.realpathSync(dataDir), 'alarms_config.db');
+      script = [
+        'import sqlite3,sys,time,pathlib',
+        'db=sqlite3.connect(sys.argv[2],timeout=5)',
+        'with db:',
+        ' db.execute("CREATE TABLE IF NOT EXISTS alarms_config (id INTEGER PRIMARY KEY CHECK(id=1), updated_ms INTEGER NOT NULL, json TEXT NOT NULL)")',
+        ' db.execute("INSERT INTO alarms_config VALUES (1,?,?) ON CONFLICT(id) DO UPDATE SET updated_ms=excluded.updated_ms,json=excluded.json",(int(time.time()*1000),pathlib.Path(sys.argv[1]).read_text()))'
+      ].join('\n');
+    } else {
+      fs.mkdirSync(path.dirname(managedAlarmHistory), { recursive: true, mode: 0o770 });
+      dest = path.join(fs.realpathSync(path.dirname(managedAlarmHistory)), path.basename(managedAlarmHistory));
+    }
+    verifyBackupDestination(dest);
+    const result = child_process.spawnSync('python3', ['-c', script, file, dest], { timeout: 15000, encoding: 'utf8' });
+    if (result.status !== 0) throw new Error('Could not restore ' + entry.rel + ': ' + (result.error?.message || result.stderr));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function applyManagedBackup(backup) {
+  const { entries } = inspectManagedBackup(backup);
+  const rollback = [];
+  for (const entry of entries) {
+    if (!entry.target) continue;
+    verifyBackupDestination(entry.target);
+    const prior = fs.statSync(entry.target, { throwIfNoEntry: false });
+    if (prior && (!prior.isFile() || prior.size > PROJECT_BACKUP_MAX_FILE_BYTES)) {
+      throw new Error('Cannot back up the existing destination: ' + entry.rel);
+    }
+    rollback.push({ ...entry, prior, old: prior && fs.readFileSync(entry.target) });
+  }
+  const databases = entries.filter(entry => ['alarm_config', 'alarm_history'].includes(entry.section));
+  for (const entry of databases) {
+    if (entry.section === 'alarm_history') {
+      const directory = path.dirname(managedAlarmHistory);
+      const target = fs.existsSync(directory)
+        ? path.join(fs.realpathSync(directory), path.basename(managedAlarmHistory))
+        : managedAlarmHistory;
+      verifyBackupDestination(target);
+      const old = fs.existsSync(target) ? backupSqlite(target) : null;
+      rollback.push({ ...entry, database: true, old, target });
+    } else {
+      rollback.push({ ...entry, database: true, old: readManagedAlarmConfig() });
+    }
+  }
+  const recoveryFiles = rollback.filter(entry => entry.old).map(entry => ({
+    section: entry.section, path: entry.rel, size: entry.old.length, content_b64: entry.old.toString('base64')
+  }));
+  if (recoveryFiles.length) {
+    backupLibrary.save({
+      type: backup.type, schema_version: 1, preset: backup.preset, contents: backup.contents,
+      created_at: new Date().toISOString(), host: os.hostname(), suite_version: SUITE_VERSION,
+      files: recoveryFiles, counts: { files: recoveryFiles.length, bytes: recoveryFiles.reduce((sum, f) => sum + f.size, 0) }
+    }, managedBackups.selection(backup), 'recovery');
+  }
+  const applied = [];
+  try {
+    for (const entry of rollback) {
+      if (entry.database) restoreManagedSqlite(entry);
+      else writeManagedBackupFile(entry.target, entry.data, entry.prior ? entry.prior.mode & 0o777 : 0o600);
+      applied.push(entry);
+    }
+  } catch (error) {
+    const failures = [];
+    for (const entry of applied.reverse()) {
+      try {
+        if (entry.database && entry.old) restoreManagedSqlite({ ...entry, data: entry.old });
+        else if (entry.target && entry.old) writeManagedBackupFile(entry.target, entry.old, entry.prior.mode & 0o777);
+        else if (entry.target) fs.rmSync(entry.target, { force: true });
+        else failures.push(entry.rel);
+      } catch { failures.push(entry.rel); }
+    }
+    if (failures.length) throw new Error(error.message + '. Automatic rollback failed for: ' + failures.join(', ') + '. Check the recovery backup.');
+    throw error;
+  }
+  return { ok: true, message: applied.length
+    ? 'Selected files restored. Restart the affected services to load the restored settings.'
+    : 'This archive contains only a historian dump. Download the backup for a separate database import.',
+    historian_download_only: entries.some(entry => entry.section === 'historian_data') };
 }
 
 const PROJECT_BACKUP_JOBS = new Map();
@@ -2678,7 +3034,7 @@ function startProjectBackupJob(options = {}) {
       const stamp = new Date().toISOString().replace(/[:.]/g, '-');
       const filename = `opcbridge-suite-project-backup-${stamp}.json`;
       const filePath = path.join(os.tmpdir(), `${id}-${filename}`);
-      fs.writeFileSync(filePath, JSON.stringify(backup, null, 2) + '\n', 'utf8');
+      fs.writeFileSync(filePath, JSON.stringify(backup, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
       job.file_path = filePath;
       job.filename = filename;
       job.summary = {
@@ -5222,6 +5578,76 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === '/api/backups' || url.pathname.startsWith('/api/backups/')) {
+    const status = await requireProjectBackupPerm();
+    if (!status) return;
+    if (!authStatusHasPerm(status, 'suite.manage_server')) {
+      sendJson(res, 403, { ok: false, error: 'System backups require Manage Server permission.' });
+      return;
+    }
+    const operation = url.pathname.slice('/api/backups'.length);
+    const id = url.searchParams.get('id');
+    try {
+      if (req.method === 'POST' && (!id || !['/preview', '/restore'].includes(operation)) &&
+          !/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] || '')) {
+        throw new Error('Send the backup request as application/json.');
+      }
+      if (req.method === 'GET' && operation === '') {
+        const settings = backupLibrary.settings();
+        let automatic = backupLibrary.automaticStatus();
+        if (automatic?.state === 'running' && managedBackupJob?.state !== 'running') {
+          automatic = { ...automatic, state: 'error', error: 'The server restarted during the backup.' };
+        }
+        sendJson(res, 200, {
+          ok: true, backups: backupLibrary.list(), settings, automatic, job: managedBackupJob,
+          next_automatic_at: nextAutomaticBackup(settings, automatic),
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+        });
+      } else if (req.method === 'GET' && operation === '/historian') {
+        const backup = JSON.parse(fs.readFileSync(backupLibrary.get(id).archive, 'utf8'));
+        const dump = inspectManagedBackup(backup).entries.find(entry => entry.section === 'historian_data');
+        if (!dump) throw new Error('This backup does not contain a historian dump.');
+        send(res, 200, {
+          'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store',
+          'Content-Disposition': 'attachment; filename="opcbridge-historian.sql"'
+        }, dump.data);
+      } else if (req.method === 'GET' && operation === '/download') {
+        const { meta, archive } = backupLibrary.get(id);
+        const stream = fs.createReadStream(archive);
+        stream.on('error', err => res.destroy(err));
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-store',
+          'Content-Length': meta.bytes,
+          'Content-Disposition': 'attachment; filename="opcbridge-backup-' + meta.kind + '-' + meta.id + '.json"'
+        });
+        stream.pipe(res);
+      } else if (req.method === 'DELETE' && operation === '') {
+        backupLibrary.remove(id);
+        sendJson(res, 200, { ok: true });
+      } else if (req.method === 'POST' && operation === '/start') {
+        const options = managedBackups.selection(JSON.parse((await readBody(req)).toString()));
+        sendJson(res, 202, { ok: true, job: launchManagedBackup(options, 'manual') });
+      } else if (req.method === 'POST' && operation === '/schedule') {
+        backupLibrary.saveSettings(JSON.parse((await readBody(req)).toString()));
+        sendJson(res, 200, { ok: true, settings: backupLibrary.settings() });
+      } else if (req.method === 'POST' && ['/preview', '/restore'].includes(operation)) {
+        const archive = id ? fs.readFileSync(backupLibrary.get(id).archive) : await readBody(req, managedBackupUploadLimit);
+        const backup = JSON.parse(archive.toString());
+        if (operation === '/preview') sendJson(res, 200, inspectManagedBackup(backup).preview);
+        else {
+          if (managedBackupJob?.state === 'running') throw new Error('Wait for the backup to finish before restoring.');
+          sendJson(res, 200, applyManagedBackup(backup));
+        }
+      } else {
+        sendJson(res, 405, { ok: false, error: 'Unsupported backup operation.' });
+      }
+    } catch (err) {
+      sendJson(res, 400, { ok: false, error: err.message });
+    }
+    return;
+  }
+
   if (url.pathname === '/api/project/backup/start') {
     if (req.method !== 'POST') {
       sendJson(res, 405, { ok: false, error: 'Method not allowed' });
@@ -5344,7 +5770,7 @@ const server = http.createServer(async (req, res) => {
       const result = restoreProjectBackup(backup);
       sendJson(res, 200, {
         ok: true,
-        message: 'Project backup restored. Restart/reload opcbridge, SCADA, alarms, and HMI before using the restored project.',
+        message: 'Project files restored. Restart the affected services. Any historian SQL dump was extracted to the server temporary directory and requires a separate database import.',
         ...result
       });
     } catch (err) {
@@ -6250,6 +6676,17 @@ const server = http.createServer(async (req, res) => {
   });
 });
 
+if (process.argv[2] === '--managed-backup-worker') {
+  process.once('message', ({ id, options, kind }) => {
+    try {
+      backupLibrary.save(buildManagedBackup(options), options, kind, id);
+      process.send({ state: 'done', finished_at: new Date().toISOString() }, () => process.disconnect());
+    } catch (err) {
+      process.send({ state: 'error', finished_at: new Date().toISOString(), error: err.message }, () => process.disconnect());
+    }
+  });
+} else {
+setInterval(runAutomaticBackup, 15000).unref();
 const cfg = readConfig();
 setInterval(() => { synchronizeCentralIdentity().catch(() => {}); }, 10000).unref();
 server.listen(cfg.listen.port, cfg.listen.host, () => {
@@ -6264,3 +6701,4 @@ server.listen(cfg.listen.port, cfg.listen.host, () => {
   console.log(`[opcbridge-scada] write token configured: ${Boolean(WRITE_TOKEN)}`);
   console.log(`[opcbridge-scada] ui auth enabled: ${UI_AUTH_ENABLED}`);
 });
+}

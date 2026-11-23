@@ -52,6 +52,8 @@
 #include <tuple>
 #include <functional>
 #include "modbus_read_recovery.h"
+#include "ethernetip_recovery.h"
+#include "poll_health.h"
 
 // Version info (wired in via build.sh)
 #ifndef OPCBRIDGE_VERSION
@@ -1274,6 +1276,14 @@ struct ConnPollMetrics {
     std::atomic<int64_t> last_read_ts_ms{-1};
     std::atomic<int64_t> last_ok_ts_ms{-1};
     std::atomic<int64_t> last_err_ts_ms{-1};
+    std::atomic<int64_t> first_err_ts_ms{-1};
+
+    void recordReadError(int64_t timestamp) {
+        int64_t unset = -1;
+        first_err_ts_ms.compare_exchange_strong(unset, timestamp, std::memory_order_relaxed);
+        reads_err.fetch_add(1, std::memory_order_relaxed);
+        last_err_ts_ms.store(timestamp, std::memory_order_relaxed);
+    }
 
     std::atomic<uint64_t> batches_total{0};
     std::atomic<uint64_t> batch_us_last{0};
@@ -1508,6 +1518,7 @@ struct ReloadState {
     bool ok = false;
     uint64_t gen = 0;
     std::string target_connection_id;
+    bool recover_ethernetip_transport = false;
     std::string error;
     OpcUaSyncResult opcua_sync;
 };
@@ -5597,19 +5608,21 @@ static void init_tag_scaling(TagRuntime &rt, const std::string &sourcePathForLog
     rt.out_datatype = outDt.empty() ? std::string("float64") : outDt;
 }
 
-// libplctag shares Modbus transports by gateway, unit, and connection group.
-// Rotate the group on recovery so replacement handles cannot reuse a stuck socket.
-static std::mutex g_modbusTransportMutex;
-static std::unordered_map<std::string, int> g_modbusTransportGroups;
-static int g_nextModbusTransportGroup = 1;
+// Rotate libplctag's connection group on recovery to open a fresh session.
+static std::mutex g_plcTransportMutex;
+static std::unordered_map<std::string, int> g_plcTransportGroups;
+static int g_nextPlcTransportGroup = 1;
 
 std::string build_base_conn_str(const ConnectionConfig &c, const std::string &pathOverride = std::string{}) {
     std::string s = is_modbus_connection(c) ? "protocol=modbus_tcp" : "protocol=ab_eip";
-    if (is_modbus_connection(c)) {
-        std::lock_guard<std::mutex> lock(g_modbusTransportMutex);
-        auto &group = g_modbusTransportGroups[c.id];
-        if (group == 0) group = g_nextModbusTransportGroup++;
-        s += "&connection_group_id=" + std::to_string(group);
+    {
+        std::lock_guard<std::mutex> lock(g_plcTransportMutex);
+        if (is_modbus_connection(c)) {
+            auto &group = g_plcTransportGroups[c.id];
+            if (group == 0) group = g_nextPlcTransportGroup++;
+        }
+        const auto group = g_plcTransportGroups.find(c.id);
+        if (group != g_plcTransportGroups.end()) s += "&connection_group_id=" + std::to_string(group->second);
     }
     s += "&gateway=" + c.gateway;
     const std::string effectivePath = trim_copy(pathOverride).empty() ? c.path : trim_copy(pathOverride);
@@ -24682,8 +24695,7 @@ window.addEventListener("load", startAutoRefresh);
 
 	                    // Hand off reload to the main thread (which owns the poller manager
 	                    // and OPC UA iterate loop) so we don't race with pollers/OPC UA.
-	                    uint64_t newGen = g_configGeneration.fetch_add(1, std::memory_order_relaxed) + 1;
-
+	                    uint64_t newGen;
 	                    {
 	                        std::unique_lock<std::mutex> lk(g_reloadMutex);
 	                        if (g_reloadState.requested || g_reloadState.in_progress) {
@@ -24697,7 +24709,8 @@ window.addEventListener("load", startAutoRefresh);
 	                        g_reloadState.in_progress = false;
 		                        g_reloadState.done = false;
 		                        g_reloadState.ok = false;
-		                        g_reloadState.gen = newGen;
+	                        newGen = g_configGeneration.fetch_add(1, std::memory_order_relaxed) + 1;
+	                        g_reloadState.gen = newGen;
 		                        g_reloadState.target_connection_id.clear();
 		                        g_reloadState.error.clear();
 		                        g_reloadState.opcua_sync = OpcUaSyncResult{};
@@ -24939,6 +24952,7 @@ window.addEventListener("load", startAutoRefresh);
 									continue;
 								}
 								json dstatus;
+                                dstatus["connection_name"] = display_connection_name(driver.conn);
                                 const bool demandDriven = active_poll_test_enabled(driver, mqttMode);
                                 const auto activity = demandDriven ? polling_activity_summary(driver, tagTable) : PollingActivitySummary{};
                                 const bool intentionallyIdle = demandDriven && activity.idle();
@@ -25139,7 +25153,13 @@ window.addEventListener("load", startAutoRefresh);
                                             dstatus["reason"] = runtimeIssue;
                                         }
                                         if (dstatus["status"] == "error") ++error_count; else ++ok_count;
-                                    } else if (total_seen == 0) {
+									} else if (poll_health_sustained_failure(now_epoch_ms, metric_last_ok_ts_ms,
+                                            connectionMetrics ? connectionMetrics->first_err_ts_ms.load(std::memory_order_relaxed) : -1,
+                                            freshness_budget_ms, good_recent, intentionallyIdle, uaCommunicationHealthy)) {
+                                        dstatus["status"] = "error";
+                                        dstatus["reason"] = "no successful reads within the connection health window";
+                                        ++error_count;
+									} else if (total_seen == 0) {
 										dstatus["status"] = "error";
 										dstatus["reason"] = "no tag snapshots yet";
 										++error_count;
@@ -30313,8 +30333,7 @@ window.addEventListener("load", startAutoRefresh);
 		                                                spec.metrics->reads_ok.fetch_add(1, std::memory_order_relaxed);
 		                                                spec.metrics->last_ok_ts_ms.store(ts_ms, std::memory_order_relaxed);
 		                                            } else {
-		                                                spec.metrics->reads_err.fetch_add(1, std::memory_order_relaxed);
-		                                                spec.metrics->last_err_ts_ms.store(ts_ms, std::memory_order_relaxed);
+		                                                spec.metrics->recordReadError(ts_ms);
 		                                            }
 		                                            record_connection_sweep_progress(spec.metrics, t.sweep_index, spec.total_tag_count);
 		                                        }
@@ -30453,8 +30472,7 @@ window.addEventListener("load", startAutoRefresh);
 	                                        spec.metrics->reads_ok.fetch_add(1, std::memory_order_relaxed);
 	                                        spec.metrics->last_ok_ts_ms.store(ts_ms, std::memory_order_relaxed);
 	                                    } else {
-	                                        spec.metrics->reads_err.fetch_add(1, std::memory_order_relaxed);
-	                                        spec.metrics->last_err_ts_ms.store(ts_ms, std::memory_order_relaxed);
+	                                        spec.metrics->recordReadError(ts_ms);
 		                                    }
 		                                }
 		                                record_connection_sweep_progress(spec.metrics, t.sweep_index, spec.total_tag_count);
@@ -30506,9 +30524,9 @@ window.addEventListener("load", startAutoRefresh);
 		                                    std::chrono::system_clock::now().time_since_epoch()
 		                                ).count();
 		                                spec.metrics->reads_total.fetch_add(1, std::memory_order_relaxed);
-		                                spec.metrics->reads_err.fetch_add(1, std::memory_order_relaxed);
 		                                spec.metrics->last_read_ts_ms.store(ts_ms, std::memory_order_relaxed);
-		                                spec.metrics->last_err_ts_ms.store(ts_ms, std::memory_order_relaxed);
+
+		                                spec.metrics->recordReadError(ts_ms);
 		                                record_connection_block_read(spec.metrics, t.sweep_index, status, 0, ts_ms);
 		                                record_connection_sweep_progress(spec.metrics, t.sweep_index, spec.total_tag_count);
 		                            }
@@ -31475,6 +31493,7 @@ window.addEventListener("load", startAutoRefresh);
 	        logicSchedulerThread.detach();
 
         std::unordered_map<std::string, ModbusConnectionRecovery> modbusConnectionRecovery;
+        std::unordered_map<std::string, EthernetIpRecovery> ethernetIpRecovery;
 	        auto lastDemandPlanning = DemandSchedulerPreview::Clock::time_point{};
         while (true) {
             const auto planningNow = DemandSchedulerPreview::Clock::now();
@@ -31485,14 +31504,17 @@ window.addEventListener("load", startAutoRefresh);
             }
             // Snapshot counters without nesting runtime locks under the reload lock.
             std::vector<std::tuple<std::string, uint64_t, uint64_t>> modbusCounters;
+            std::vector<std::tuple<std::string, uint64_t, uint64_t>> ethernetIpCounters;
             {
                 std::lock_guard<std::mutex> driverLock(driverMutex);
                 std::lock_guard<std::mutex> metricsLock(g_metricsMutex);
                 for (const auto &driver : drivers) {
-                    if (!is_modbus_connection(driver.conn)) continue;
+                    const bool modbus = is_modbus_connection(driver.conn);
+                    if (!modbus && (driver.conn.driver != "ab_eip" || is_memory_connection_id(driver.conn.id))) continue;
                     auto metrics = g_connPollMetrics.find(driver.conn.id);
                     if (metrics == g_connPollMetrics.end() || !metrics->second) continue;
-                    modbusCounters.emplace_back(driver.conn.id,
+                    auto &counters = modbus ? modbusCounters : ethernetIpCounters;
+                    counters.emplace_back(driver.conn.id,
                         metrics->second->reads_ok.load(std::memory_order_relaxed),
                         metrics->second->reads_err.load(std::memory_order_relaxed));
                 }
@@ -31508,8 +31530,8 @@ window.addEventListener("load", startAutoRefresh);
                     const bool needsRecovery = recovery.observe(std::get<1>(counters), std::get<2>(counters), now);
                     if (!needsRecovery || g_reloadState.requested || g_reloadState.in_progress) continue;
                     {
-                        std::lock_guard<std::mutex> transportLock(g_modbusTransportMutex);
-                        g_modbusTransportGroups[id] = g_nextModbusTransportGroup++;
+                        std::lock_guard<std::mutex> transportLock(g_plcTransportMutex);
+                        g_plcTransportGroups[id] = g_nextPlcTransportGroup++;
                     }
                     g_reloadState = ReloadState{};
                     g_reloadState.requested = true;
@@ -31519,11 +31541,24 @@ window.addEventListener("load", startAutoRefresh);
                     std::cerr << "Modbus connection [" << id
                               << "] has no successful reads for 30 seconds after errors; rebuilding transport." << std::endl;
                 }
+                for (const auto &[id, successes, errors] : ethernetIpCounters) {
+                    auto &recovery = ethernetIpRecovery[id];
+                    if (!recovery.observe(successes, errors, now) || g_reloadState.requested || g_reloadState.in_progress) continue;
+                    g_reloadState = ReloadState{};
+                    g_reloadState.requested = true;
+                    g_reloadState.gen = g_reloadRequestGeneration.fetch_add(1, std::memory_order_relaxed) + 1;
+                    g_reloadState.target_connection_id = id;
+                    g_reloadState.recover_ethernetip_transport = true;
+                    recovery.recoveredTransport(now);
+                    std::cerr << "EtherNet/IP connection [" << id
+                              << "] has repeated read errors and no successful reads for 30 seconds; rebuilding transport." << std::endl;
+                }
             }
 	            // Handle /reload requests (triggered by the HTTP thread) in the main thread.
 		            bool doReload = false;
 		            uint64_t requestedGen = 0;
 		            std::string requestedTargetConn;
+                    bool recoverEthernetIpTransport = false;
 		            {
 		                std::lock_guard<std::mutex> lk(g_reloadMutex);
 		                if (g_reloadState.requested && !g_reloadState.in_progress) {
@@ -31531,11 +31566,13 @@ window.addEventListener("load", startAutoRefresh);
 		                    doReload = true;
 		                    requestedGen = g_reloadState.gen;
 		                    requestedTargetConn = g_reloadState.target_connection_id;
+                            recoverEthernetIpTransport = g_reloadState.recover_ethernetip_transport;
 		                }
 		            }
 
 			    if (doReload) {
-			        const auto savedConfigBeforeReload = RuntimeConfigState::capture(configDir, load_json_with_comments);
+			        const auto savedConfigBeforeReload = recoverEthernetIpTransport
+                        ? RuntimeConfigState::Snapshot{} : RuntimeConfigState::capture(configDir, load_json_with_comments);
 			        const bool targetedReload = !requestedTargetConn.empty();
 			        ws_notify_runtime_reload("begin", requestedGen, requestedTargetConn);
 			        const auto reloadStarted = std::chrono::steady_clock::now();
@@ -31578,7 +31615,27 @@ window.addEventListener("load", startAutoRefresh);
 			                        targetedConnectionGate = connection_plc_mutex(requestedTargetConn);
 			                        targetedConnectionLock = std::unique_lock<WriterPrioritySharedMutex>(*targetedConnectionGate);
 			                    }
-			                    if (targetedReload) {
+                                if (recoverEthernetIpTransport) {
+                                    // Pollers have stopped and the connection write gate is held.
+                                    // Reopen only the handles from the active configuration.
+                                    std::lock_guard<std::mutex> lock(driverMutex);
+                                    auto driver = std::find_if(drivers.begin(), drivers.end(), [&](const DriverContext &item) {
+                                        return item.conn.id == requestedTargetConn;
+                                    });
+                                    if (driver == drivers.end() || driver->conn.driver != "ab_eip") {
+                                        err = "EtherNet/IP connection is no longer active.";
+                                    } else {
+                                        {
+                                            std::lock_guard<std::mutex> transportLock(g_plcTransportMutex);
+                                            g_plcTransportGroups[requestedTargetConn] = g_nextPlcTransportGroup++;
+                                        }
+                                        for (auto &tag : driver->tags) {
+                                            if (tag.handle >= 0) tag.handle_deferred = true;
+                                        }
+                                        destroy_driver_handles(*driver, true);
+                                        ok = true;
+                                    }
+                                } else if (targetedReload) {
 			                        DriverContext newDriver;
                                 bool hasDriver = false;
                                 bool previouslyConfigured = false;
@@ -31751,7 +31808,7 @@ window.addEventListener("load", startAutoRefresh);
 		                    g_pollers_running_gen.store(activeGen, std::memory_order_relaxed);
 		                }
 		                ws_notify_runtime_reload("end", requestedGen, requestedTargetConn);
-                    if (ok) runtimeConfigState.applied(savedConfigBeforeReload, requestedTargetConn);
+                    if (ok && !recoverEthernetIpTransport) runtimeConfigState.applied(savedConfigBeforeReload, requestedTargetConn);
 
 	                {
 	                    std::lock_guard<std::mutex> lk(g_reloadMutex);
@@ -31761,6 +31818,7 @@ window.addEventListener("load", startAutoRefresh);
 		                    g_reloadState.done = true;
 		                    g_reloadState.requested = false;
 		                    g_reloadState.in_progress = false;
+                            g_reloadState.recover_ethernetip_transport = false;
 	                }
 	                g_reloadCv.notify_all();
 

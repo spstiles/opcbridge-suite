@@ -1975,6 +1975,10 @@ install_systemd_units() {
 	EnvironmentFile=${ENV_FILE}
 	Environment=OPCBRIDGE_SCADA_CONFIG=${CONFIG_ROOT}/scada/config.json
 	Environment=OPCBRIDGE_SCADA_SECRETS=${CONFIG_ROOT}/scada/config.secrets.json
+	Environment=OPCBRIDGE_DATA_ROOT=${DATA_ROOT}
+	Environment=OPCBRIDGE_SCADA_OPCBRIDGE_CONFIG_DIR=${CONFIG_ROOT}
+	Environment=OPCBRIDGE_ENV_PATH=${ENV_FILE}
+	Environment=OPCBRIDGE_HMI_ROOT=${PREFIX}/hmi
 	WorkingDirectory=${PREFIX}/scada
 	ExecStart=/bin/sh -c 'PORT=\"\${SCADA_PORT:-3010}\" exec /usr/bin/node ${PREFIX}/scada/server.js'
 	User=${SERVICE_USER}

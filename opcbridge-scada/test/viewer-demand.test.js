@@ -287,4 +287,10 @@ test('Overview shows active sweep and sample age, with clear warmup and idle sta
   assert.match(render(), /active sweep 400 ms last \(30.0 s ago\)/);
   info.polling_activity = 'idle'; info.active_sweep_work = 0; info.active_sweep_ms_last = null; info.active_without_sample = 0;
   assert.doesNotMatch(render(), /active sweep|oldest active|full sweep unavailable/);
+  info.polling_activity = 'active';
+  info.status = 'degraded';
+  assert.match(render(), /PLC: DEGRADED/);
+  info.status = 'error';
+  info.reason = 'no successful reads within the connection health window';
+  assert.match(render(), /PLC: FAILED - no successful reads within the connection health window/);
 });

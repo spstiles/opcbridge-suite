@@ -245,8 +245,57 @@
       </div>
 
       <div class="card configure-section" id="authAdminCard" tabindex="-1">
-        <div class="card-title">Project Backup / Restore</div>
-        <div class="hint">Download or restore the complete project configuration: OPCBridge config, alarms/audio, HMI screens/assets, SCADA settings, and data logger config. Database credentials and history are optional. Restore overwrites project files and creates a pre-restore backup in <code>/tmp</code>.</div>
+        <div class="card-title">Backup &amp; Restore</div>
+        <div class="card-body">
+          <div class="row-actions">
+            <button class="btn primary" id="backupNow" type="button">Back Up Now</button>
+            <button class="btn" id="backupSchedule" type="button">Automatic Backup Settings</button>
+            <button class="btn" id="backupRefresh" type="button">Refresh</button>
+            <label class="btn" for="backupUpload">Upload Backup</label>
+            <input id="backupUpload" type="file" accept=".json,application/json" hidden />
+          </div>
+          <p class="hint">Backups include selected OPCBridge files and data. Operating system settings and external databases need their own backups.</p>
+          <p class="hint" id="backupAutomaticStatus"></p>
+          <p role="status" id="backupLibraryStatus"></p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Created</th><th>Type</th><th>Contents</th><th>Source</th><th>Size</th><th>Actions</th></tr></thead>
+              <tbody id="backupLibraryRows"></tbody>
+            </table>
+          </div>
+        </div>
+        <dialog id="backupSetup" class="certificate-dialog">
+          <form id="backupSetupForm">
+            <h3 id="backupSetupTitle"></h3>
+            <div id="backupScheduleFields">
+              <p><label><input id="backupEnabled" type="checkbox" /> Enable daily automatic backups</label></p>
+              <p><label>Time (<span id="backupTimezone"></span>) <input id="backupTime" type="time" required /></label></p>
+              <p><label>Number of Automatic Backups to Keep <input id="backupKeep" type="number" min="1" max="365" required /></label></p>
+            </div>
+            <p><label>Preset <select id="backupPreset">
+              <option value="full">Full Configuration and Data</option>
+              <option value="workspace">Workspace</option>
+              <option value="alarms">Alarm Configuration</option>
+              <option value="custom">Custom</option>
+            </select></label></p>
+            <fieldset id="backupContents"><legend>Contents</legend>
+              <label><input type="checkbox" value="workspace" /> Workspace connections, tags, HMI screens and graphics</label><br />
+              <label><input type="checkbox" value="alarms" /> Alarm configuration and audio</label><br />
+              <label><input type="checkbox" value="settings" /> Server, flow, logger, report and data entry configuration</label><br />
+              <label><input type="checkbox" value="credentials" /> Users, credentials and certificates</label><br />
+              <label><input type="checkbox" value="history" /> Alarm history and local service data</label><br />
+              <label><input type="checkbox" value="historian" /> Historian SQL dump, for separate database import</label>
+            </fieldset>
+            <p class="hint">Backups with credentials should be stored securely.</p>
+            <p role="status" id="backupSetupStatus"></p>
+            <div class="row-actions">
+              <button class="btn" id="backupSetupCancel" type="button">Cancel</button>
+              <button class="btn primary" id="backupSetupSubmit" type="submit"></button>
+            </div>
+          </form>
+        </dialog>
+        <details>
+          <summary>Project exports and older JSON backups</summary>
         <div class="card-body">
           <div class="form" style="max-width: 820px;">
             <div class="form-row">
@@ -281,6 +330,7 @@
             <pre class="mono" id="projectBackupStatus">Ready.</pre>
           </div>
         </div>
+        </details>
       </div>
 
       <div class="card configure-section" id="configure-auth" tabindex="-1">
@@ -2000,13 +2050,13 @@
               <option value="ab_eip">Allen-Bradley Ethernet/IP</option>
               <option value="modbus_tcp">Modbus TCP</option>
               <option value="mqtt">MQTT Broker</option>
-              <option value="opcua_client">Remote OPCBridge (OPC UA)</option>
+              <option value="opcua_client">OPC UA Client</option>
             </select></div>
             <div class="form-row" id="editDevGatewayRow"><label>Gateway</label><input id="editDevGateway" type="text" placeholder="192.0.2.10" /></div>
             <div class="form-row" id="editDevOpcuaSecurityRow" style="display:none;"><label>Security</label><select id="editDevOpcuaSecurityProfile"><option value="">Unsecured (troubleshooting)</option></select></div>
             <div class="form-row" id="editDevOpcuaUsernameRow" style="display:none;"><label>OPC UA Username</label><input id="editDevOpcuaUsername" type="text" autocomplete="off" /></div>
             <div class="form-row" id="editDevOpcuaPasswordRow" style="display:none;"><label>OPC UA Password</label><input id="editDevOpcuaPassword" type="password" autocomplete="new-password" placeholder="Leave blank to keep current" /></div>
-            <div class="form-row" id="editDevOpcuaBrowseRow" style="display:none;"><label>Remote Tags</label><div style="min-width:0;"><button class="btn" id="editDevOpcuaBrowseBtn" type="button">Browse Remote Tags…</button><div class="hint">Browse the server and select the tags to import. Click Save, then Save &amp; Apply to activate your selection. New tags are not selected automatically.</div><div id="editDevOpcuaBrowseResults" class="table-wrap" style="display:none; max-height:280px; overflow:auto; margin-top:8px;"></div></div></div>
+            <div class="form-row" id="editDevOpcuaBrowseRow" style="display:none;"><label>Remote Tags</label><div style="min-width:0;"><button class="btn" id="editDevOpcuaBrowseBtn" type="button">Browse OPCBridge Tags…</button><div class="hint">Connect to OPCBridge or a compatible third-party OPC UA server. Browse and import tags from OPCBridge here. For other servers, create tags after saving the connection and enter each full NodeId (for example, <code>ns=2;i=1001</code>) in the PLC Tag field.</div><div class="hint">Select the OPCBridge tags to import. Click Save, then Save &amp; Apply to activate your selection. New tags are not selected automatically.</div><div id="editDevOpcuaBrowseResults" class="table-wrap" style="display:none; max-height:280px; overflow:auto; margin-top:8px;"></div></div></div>
             <div class="form-row" id="editDevPathRow"><label>Path</label><input id="editDevPath" type="text" placeholder="1,0" /></div>
             <div class="form-row" id="editDevModbusAddressModeRow" style="display:none;"><label>Address Entry</label><select id="editDevModbusAddressMode">
               <option value="address">Modbus addresses (40001 / 30001 / 1)</option>
@@ -2341,13 +2391,13 @@
             <option value="ab_eip">Allen-Bradley Ethernet/IP</option>
             <option value="modbus_tcp">Modbus TCP</option>
             <option value="mqtt">MQTT Broker</option>
-            <option value="opcua_client">Remote OPCBridge (OPC UA)</option>
+            <option value="opcua_client">OPC UA Client</option>
           </select></div>
           <div class="form-row" id="newDevGatewayRow"><label>Gateway</label><input id="newDevGateway" type="text" placeholder="192.0.2.10" /></div>
           <div class="form-row" id="newDevOpcuaSecurityRow" style="display:none;"><label>Security</label><select id="newDevOpcuaSecurityProfile"><option value="">Unsecured (troubleshooting)</option></select></div>
           <div class="form-row" id="newDevOpcuaUsernameRow" style="display:none;"><label>OPC UA Username</label><input id="newDevOpcuaUsername" type="text" autocomplete="off" /></div>
           <div class="form-row" id="newDevOpcuaPasswordRow" style="display:none;"><label>OPC UA Password</label><input id="newDevOpcuaPassword" type="password" autocomplete="new-password" /></div>
-          <div class="form-row" id="newDevOpcuaBrowseRow" style="display:none;"><label>Remote Tags</label><div style="min-width:0;"><button class="btn" id="newDevOpcuaBrowseBtn" type="button">Browse Remote OPCBridge</button><div id="newDevOpcuaBrowseResults" class="table-wrap" style="display:none; max-height:280px; overflow:auto; margin-top:8px;"></div></div></div>
+          <div class="form-row" id="newDevOpcuaBrowseRow" style="display:none;"><label>Remote Tags</label><div style="min-width:0;"><button class="btn" id="newDevOpcuaBrowseBtn" type="button">Browse OPCBridge Tags…</button><div class="hint">Connect to OPCBridge or a compatible third-party OPC UA server. Browse and import tags from OPCBridge here. For other servers, create tags after saving the connection and enter each full NodeId (for example, <code>ns=2;i=1001</code>) in the PLC Tag field.</div><div id="newDevOpcuaBrowseResults" class="table-wrap" style="display:none; max-height:280px; overflow:auto; margin-top:8px;"></div></div></div>
           <div class="form-row" id="newDevPathRow"><label>Path</label><input id="newDevPath" type="text" placeholder="1,0" /></div>
           <div class="form-row" id="newDevModbusAddressModeRow" style="display:none;"><label>Address Entry</label><select id="newDevModbusAddressMode">
             <option value="address">Modbus addresses (40001 / 30001 / 1)</option>
@@ -2983,5 +3033,6 @@
   <script src="viewer-demand.js"></script>
   <script src="tag-validation.js"></script>
   <script src="app.js?v=0.2.62"></script>
+  <script src="backup-library-ui.js"></script>
 </body>
 </html>

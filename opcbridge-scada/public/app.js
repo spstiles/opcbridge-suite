@@ -1453,7 +1453,7 @@ const DRIVER_LABELS = {
   ab_eip: 'Allen-Bradley Ethernet/IP',
   modbus_tcp: 'Modbus TCP',
   mqtt: 'MQTT Broker',
-  opcua_client: 'Remote OPCBridge (OPC UA)'
+  opcua_client: 'OPC UA Client'
 };
 
 const MEMORY_CONNECTION_ID = '_memory';
@@ -4008,13 +4008,15 @@ function tagKeyFromLiveTag(t) {
   return `${cid}:${name}`;
 }
 
-function displayConnectionName(connectionId) {
+function displayConnectionName(connectionId, runtimeName = '') {
   const cid = String(connectionId || '').trim();
   if (cid === MEMORY_CONNECTION_ID) return 'Memory';
   if (cid === '_system') return 'System';
   const match = (state.connFiles || []).find((file) => connectionIdForConnFilePath(String(file?.path || '')) === cid);
   const obj = match ? state.connObjCache?.get?.(String(match.path || '')) : null;
-  return String(obj?.description || '').trim() || cid;
+  const name = String(runtimeName || '').trim();
+  return (name !== cid ? name : '') || String(obj?.description || '').trim() ||
+    String(obj?.name || '').trim() || cid;
 }
 
 function displaySystemTagName(tagName) {
@@ -11565,7 +11567,7 @@ function renderOverviewHealth(health, metrics = null) {
     const lines = [];
     const metricConns = metrics?.connections && typeof metrics.connections === 'object' ? metrics.connections : {};
     const sortedConnections = Object.entries(conns)
-      .map(([cid, info]) => ({ cid, info, connectionName: displayConnectionName(cid) }))
+      .map(([cid, info]) => ({ cid, info, connectionName: displayConnectionName(cid, info?.connection_name) }))
       .sort((a, b) =>
         a.connectionName.localeCompare(b.connectionName, undefined, { sensitivity: 'base', numeric: true })
         || a.cid.localeCompare(b.cid));
@@ -11574,7 +11576,7 @@ function renderOverviewHealth(health, metrics = null) {
       const metricInfo = metricConns[cid] && typeof metricConns[cid] === 'object' ? metricConns[cid] : {};
       const actionableIssue = String(info?.runtime_issue || '').trim();
       const reasonText = actionableIssue || String(info?.reason || '').trim();
-      const reason = reasonText ? (` - ${reasonText}`) : '';
+      const reason = reasonText ? (` - ${escapeHtml(reasonText)}`) : '';
       const ratio = (typeof info?.stale_ratio === 'number') ? ` (${Math.round(info.stale_ratio * 100)}% stale/bad)` : '';
       const seen = (typeof info?.tags_seen === 'number') ? info.tags_seen : null;
       const good = (typeof info?.good_recent === 'number') ? info.good_recent : null;
@@ -11652,7 +11654,7 @@ function renderOverviewHealth(health, metrics = null) {
         const isExpanded = state.overviewHealthExpanded.has(cid);
         blockHtml = `<details class="details overview-health-blocks" data-conn-id="${escapeHtml(cid)}" style="margin:6px 0 0 16px;"${isExpanded ? ' open' : ''}><summary class="small">Block reads (${blocks.length})</summary><div class="small" style="overflow:auto; margin-top:6px;"><table class="table mono" style="width:100%;"><thead><tr><th>Root Tag</th><th>Address</th><th>Type</th><th>Mapped</th><th>Avg</th><th>Last</th><th>Last OK</th><th>OK Count</th><th>Err Count</th><th>Last Status</th></tr></thead><tbody>${rows}</tbody></table></div></details>`;
       }
-      lines.push(`<div class="${cls}">${escapeHtml(connectionName)}: ${st.toUpperCase()}${reason}${ratio}${details}${blockHtml}</div>`);
+      lines.push(`<div class="${cls}">${escapeHtml(connectionName)}: ${st === 'error' ? 'FAILED' : st.toUpperCase()}${reason}${ratio}${details}${blockHtml}</div>`);
     });
 
     els.overviewHealthConnections.innerHTML = lines.join('');
@@ -17728,7 +17730,7 @@ function renderRemoteOpcuaBrowseResults(container, connections, existingNodeIds 
 async function browseNewRemoteOpcbridge() {
   const endpoint = String(els.newDevGateway?.value || '').trim();
   if (!endpoint) { setNewDevStatus('Enter the remote OPC UA endpoint first.'); return; }
-  setNewDevStatus('Browsing remote OPCBridge…');
+  setNewDevStatus('Browsing OPCBridge tags…');
   if (els.newDevOpcuaBrowseBtn) els.newDevOpcuaBrowseBtn.disabled = true;
   try {
     const payload = await apiPostJson('/api/opcbridge/config/opcua/browse', {
@@ -17757,7 +17759,7 @@ function editedRemoteOpcuaConnectionId() {
 async function browseEditedRemoteOpcbridge() {
   const endpoint = String(els.editDevGateway?.value || '').trim();
   if (!endpoint) { setEditDevStatus('Enter the remote OPC UA endpoint first.'); return; }
-  setEditDevStatus('Browsing remote OPCBridge…');
+  setEditDevStatus('Browsing OPCBridge tags…');
   if (els.editDevOpcuaBrowseBtn) els.editDevOpcuaBrowseBtn.disabled = true;
   try {
     const existing = state.connObjCache?.get?.(state.pendingWorkspaceItem?.path || '') || {};
