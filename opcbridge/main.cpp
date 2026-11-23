@@ -13888,8 +13888,9 @@ static void update_system_opcua_values(std::vector<DriverContext> &drivers,
                 ++missing;
                 continue;
             }
-            ++with_snapshot;
             const TagSnapshot &snap = it->second;
+            if (snap.polling_state != PollCacheState::Active) continue;
+            ++with_snapshot;
             if (snap.quality == 1) ++good;
             else ++bad;
             const auto age_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -13914,7 +13915,7 @@ static void update_system_opcua_values(std::vector<DriverContext> &drivers,
         ua_write_system_value(prefix + "BadCount", bad);
         ua_write_system_value(prefix + "MissingCount", missing);
         ua_write_system_value(prefix + "BadHandleCount", bad_handle);
-        ua_write_system_value(prefix + "StalePercent", total > 0 ? (100.0 * static_cast<double>(bad + missing + bad_handle) / static_cast<double>(total)) : 0.0);
+        ua_write_system_value(prefix + "StalePercent", with_snapshot + missing > 0 ? (100.0 * static_cast<double>(bad + missing) / static_cast<double>(with_snapshot + missing)) : 0.0);
         ua_write_system_value(prefix + "NewestAgeMs", newest_age_ms);
         ua_write_system_value(prefix + "PollLanes", driver.conn.poll_lanes);
         ua_write_system_value(prefix + "ReadsTotal", readsTotal);
@@ -14756,6 +14757,7 @@ static json collect_polling_demand(const std::vector<DriverContext> &drivers,
     // Callback paths only take their own observation lock. Never call UA here.
     std::lock_guard<std::mutex> lock(driverMutex);
     for (const auto &driver : drivers) {
+        bool healthReadSelected = false;
         for (const auto &tag : driver.tags) {
             const std::string key = make_tag_key(driver.conn.id, tag.cfg.logical_name);
             const auto found = observations.find(ua_tag_nodeid_string(driver.conn.id, tag.cfg.logical_name));
@@ -14768,6 +14770,10 @@ static json collect_polling_demand(const std::vector<DriverContext> &drivers,
             row.arrayElement = !tag.poll_source.empty();
             row.pollWork = tag.cfg.source_tag.empty() && tag.poll_source.empty() &&
                 !is_memory_tag(tag.cfg) && (tag.handle >= 0 || tag.handle_deferred || is_opcua_client_driver_name(driver.conn.driver));
+            if (row.enabled && row.pollWork && !healthReadSelected) {
+                row.reasons.insert("connection_health");
+                healthReadSelected = true;
+            }
             row.writable = tag.cfg.writable;
             row.driver = driver.conn.driver;
             row.epoch = driver.freshness_epoch;
@@ -24119,8 +24125,9 @@ window.addEventListener("load", startAutoRefresh);
 												++missing;
 												continue;
 											}
-											++with_snapshot;
 											const TagSnapshot &snap = it->second;
+											if (snap.polling_state != PollCacheState::Active) continue;
+											++with_snapshot;
 											if (snap.quality == 1) ++good;
 											else ++bad;
 											auto age_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -24143,7 +24150,7 @@ window.addEventListener("load", startAutoRefresh);
 										addSystemRow(prefix + "BadCount", "int32", bad);
 										addSystemRow(prefix + "MissingCount", "int32", missing);
 										addSystemRow(prefix + "BadHandleCount", "int32", bad_handle);
-										addSystemRow(prefix + "StalePercent", "float64", total > 0 ? (100.0 * static_cast<double>(bad + missing + bad_handle) / static_cast<double>(total)) : 0.0);
+										addSystemRow(prefix + "StalePercent", "float64", with_snapshot + missing > 0 ? (100.0 * static_cast<double>(bad + missing) / static_cast<double>(with_snapshot + missing)) : 0.0);
 										addSystemRow(prefix + "NewestAgeMs", "int64", newest_age_ms);
 										addSystemRow(prefix + "PollLanes", "int32", driver.conn.poll_lanes);
 										const uint64_t readsTotal = metrics ? metrics->reads_total.load(std::memory_order_relaxed) : 0;
@@ -24370,8 +24377,9 @@ window.addEventListener("load", startAutoRefresh);
 		                                        ++missing;
 		                                        continue;
 		                                    }
-		                                    ++with_snapshot;
 		                                    const TagSnapshot &snap = it->second;
+		                                    if (snap.polling_state != PollCacheState::Active) continue;
+		                                    ++with_snapshot;
 		                                    if (snap.quality == 1) ++good;
 		                                    else ++bad;
 		                                    auto age_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -24394,7 +24402,7 @@ window.addEventListener("load", startAutoRefresh);
 		                                pushSystemRow(prefix + "BadCount", "int32", bad, ts_ms);
 		                                pushSystemRow(prefix + "MissingCount", "int32", missing, ts_ms);
 		                                pushSystemRow(prefix + "BadHandleCount", "int32", bad_handle, ts_ms);
-		                                pushSystemRow(prefix + "StalePercent", "float64", total > 0 ? (100.0 * static_cast<double>(bad + missing + bad_handle) / static_cast<double>(total)) : 0.0, ts_ms);
+		                                pushSystemRow(prefix + "StalePercent", "float64", with_snapshot + missing > 0 ? (100.0 * static_cast<double>(bad + missing) / static_cast<double>(with_snapshot + missing)) : 0.0, ts_ms);
 		                                pushSystemRow(prefix + "NewestAgeMs", "int64", newest_age_ms, ts_ms);
 		                                pushSystemRow(prefix + "PollLanes", "int32", driver.conn.poll_lanes, ts_ms);
 		                                pushSystemRow(prefix + "ReadsTotal", "uint64", readsTotal, ts_ms);
