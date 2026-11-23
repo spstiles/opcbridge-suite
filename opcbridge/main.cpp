@@ -15160,6 +15160,19 @@ static json collect_polling_demand(const std::vector<DriverContext> &drivers,
 			}
 
         // 5) HTTP MODE (DASHBOARD + REST API)
+        // The detached HTTP listener outlives route registration.
+        std::function<json()> collectConnectionHealth;
+        const auto collectConnectionFailureTags = [&]() {
+            const json health = collectConnectionHealth();
+            std::vector<std::pair<std::string, bool>> rows;
+            for (const auto &entry : health.at("connections").items()) {
+                const auto &status = entry.value();
+                rows.emplace_back(status.at("failure_tag").get<std::string>(),
+                    status.value("status", "") == "error");
+            }
+            return rows;
+        };
+
         if (httpMode) {
             using namespace httplib;
 
@@ -23929,18 +23942,6 @@ window.addEventListener("load", startAutoRefresh);
 		            });
 
 		            // /tags
-                    std::function<json()> collectConnectionHealth;
-                    const auto collectConnectionFailureTags = [&]() {
-                        const json health = collectConnectionHealth();
-                        std::vector<std::pair<std::string, bool>> rows;
-                        for (const auto &entry : health.at("connections").items()) {
-                            const auto &status = entry.value();
-                            rows.emplace_back(status.at("failure_tag").get<std::string>(),
-                                status.value("status", "") == "error");
-                        }
-                        return rows;
-                    };
-
 		            svr.Get("/tags", [&](const httplib::Request &req, httplib::Response &res) {
 						std::vector<TagRow> rows;
 						const std::string filterConn = req.has_param("connection_id") ? req.get_param_value("connection_id") : "";
