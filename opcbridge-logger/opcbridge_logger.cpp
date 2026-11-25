@@ -1419,39 +1419,47 @@ static long long next_from_calendar(const std::string& cal, long long after_ms, 
     std::tm tm{};
     localtime_r(&after_sec, &tm);
 
-    int every = 0;
-    if (std::sscanf(s.c_str(), "*-*-* *:0/%d:00", &every) == 1 && every > 0 && every <= 1440) {
+    static const std::regex hourly(R"(^\*-\*-\* \*:([0-9]{1,2}(?:,[0-9]{1,2})*|[0-9]{1,2}/[0-9]{1,4}):([0-9]{1,2})$)");
+    std::smatch fields;
+    if (std::regex_match(s, fields, hourly)) {
+        const std::string minute_field = fields[1];
+        const int second = std::stoi(fields[2]);
+        if (second > 59) return 0;
+        std::set<int> minutes;
+        const auto slash = minute_field.find('/');
+        if (slash != std::string::npos) {
+            const int start = std::stoi(minute_field.substr(0, slash));
+            const int step = std::stoi(minute_field.substr(slash + 1));
+            if (start > 59 || step <= 0 || step > 1440) return 0;
+            for (int minute = start; minute < 60; minute += step) minutes.insert(minute);
+        } else {
+            std::istringstream list(minute_field);
+            std::string item;
+            while (std::getline(list, item, ',')) {
+                const int minute = std::stoi(item);
+                if (minute > 59) return 0;
+                minutes.insert(minute);
+            }
+        }
+
         supported = true;
-        for (int i = 0; i < 1445; ++i) {
-            std::tm cand = tm;
-            cand.tm_sec = 0;
-            cand.tm_min += i;
-            std::time_t t = std::mktime(&cand);
-            std::tm check{};
-            localtime_r(&t, &check);
-            if ((check.tm_min % every) == 0 && static_cast<long long>(t) * 1000LL > after_ms) return static_cast<long long>(t) * 1000LL;
+        // Walk real minutes so repeated or skipped local times follow the wall clock.
+        std::time_t candidate = after_sec - tm.tm_sec + second;
+        for (int i = 0; i <= 60; ++i, candidate += 60) {
+            std::tm local{};
+            localtime_r(&candidate, &local);
+            const auto candidate_ms = static_cast<long long>(candidate) * 1000LL;
+            if (candidate_ms > after_ms && minutes.count(local.tm_min)) return candidate_ms;
         }
         return 0;
     }
 
     int minute = -1;
     int second = -1;
-    if (std::sscanf(s.c_str(), "*-*-* *:%d:%d", &minute, &second) == 2 &&
-        minute >= 0 && minute <= 59 && second >= 0 && second <= 59) {
-        supported = true;
-        for (int i = 0; i < 25; ++i) {
-            std::tm cand = tm;
-            cand.tm_min = minute;
-            cand.tm_sec = second;
-            cand.tm_hour += i;
-            std::time_t t = std::mktime(&cand);
-            if (static_cast<long long>(t) * 1000LL > after_ms) return static_cast<long long>(t) * 1000LL;
-        }
-        return 0;
-    }
-
     int hour = -1;
-    if (std::sscanf(s.c_str(), "*-*-* %d:%d:%d", &hour, &minute, &second) == 3 &&
+    int consumed = 0;
+    if (std::sscanf(s.c_str(), "*-*-* %d:%d:%d%n", &hour, &minute, &second, &consumed) == 3 &&
+        static_cast<size_t>(consumed) == s.size() &&
         hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59 && second >= 0 && second <= 59) {
         supported = true;
         for (int i = 0; i < 3; ++i) {

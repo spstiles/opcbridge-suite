@@ -3081,7 +3081,7 @@ function renderLoggerReportTagsPanel(report, entriesOverride = null) {
     connInput.className = 'mono';
     connInput.dataset.loggerTagConnection = '1';
     connInput.placeholder = 'PLC1';
-    connInput.value = String(entry?.connection_id || '').trim();
+    setLoggerConnectionInput(connInput, entry?.connection_id);
     connInput.addEventListener('input', () => {
       state.loggerReportTagDraftById.set(rid, collectLoggerReportTagPanelEntries());
     });
@@ -4019,6 +4019,29 @@ function displayConnectionName(connectionId, runtimeName = '') {
     String(obj?.name || '').trim() || cid;
 }
 
+function loggerConnectionId(text) {
+  if (!text) return '';
+  const ids = new Set((state.connFiles || []).map((file) => connectionIdForConnFilePath(String(file?.path || ''))));
+  ids.add(MEMORY_CONNECTION_ID);
+  ids.add('_system');
+  if (ids.has(text)) return text;
+  const matches = Array.from(ids).filter((id) => id && displayConnectionName(id) === text);
+  return matches.length === 1 ? matches[0] : text;
+}
+
+function setLoggerConnectionInput(input, connectionId) {
+  input.dataset.connectionId = String(connectionId || '').trim();
+  input.value = displayConnectionName(input.dataset.connectionId);
+  input.defaultValue = input.value;
+}
+
+function readLoggerConnectionInput(input) {
+  if (!input) return '';
+  return loggerConnectionId(input.value === input.defaultValue
+    ? input.dataset.connectionId
+    : input.value.trim());
+}
+
 function displaySystemTagName(tagName) {
   const name = String(tagName || '');
   const match = /^System\/Connections\/([^/]+)(\/.*)?$/.exec(name);
@@ -4067,7 +4090,7 @@ function collectLoggerReportTagPanelEntries() {
     const rangeInput = row.querySelector('[data-logger-range-input="1"]');
     const outputInput = row.querySelector('[data-logger-output-input="1"]');
     const descInput = row.querySelector('[data-logger-desc-input="1"]');
-    const connText = String(connInput?.value || '').trim();
+    const connText = readLoggerConnectionInput(connInput);
     const tagText = String(tagInput?.value || '').trim();
     if (!connText && !tagText) return;
     const parts = connText
@@ -4183,7 +4206,7 @@ function renderLoggerTagPickerTable() {
     if (!q) return true;
     const cid = String(t?.connection_id || '').toLowerCase();
     const name = String(t?.name || '').toLowerCase();
-    return cid.includes(q) || name.includes(q);
+    return cid.includes(q) || displayConnectionName(t?.connection_id, t?.connection_name).toLowerCase().includes(q) || name.includes(q);
   });
 
   const mk = (text, mono = false) => {
@@ -4217,7 +4240,7 @@ function renderLoggerTagPickerTable() {
     td0.appendChild(cb);
 
     tr.appendChild(td0);
-    tr.appendChild(mk(displayConnectionName(t?.connection_id), true));
+    tr.appendChild(mk(displayConnectionName(t?.connection_id, t?.connection_name), true));
     tr.appendChild(mk(String(t?.name || ''), true));
     tr.appendChild(mk(String(t?.datatype || ''), true));
     tr.appendChild(mk(t?.writable ? 'yes' : 'no', false));
@@ -5496,7 +5519,7 @@ function loggerTagPickerFilteredTags() {
   return all.filter((t) => {
     if (!q) return true;
     const cid = String(t?.connection_id || '').toLowerCase();
-    const displayCid = displayConnectionName(t?.connection_id).toLowerCase();
+    const displayCid = displayConnectionName(t?.connection_id, t?.connection_name).toLowerCase();
     const name = String(t?.name || '').toLowerCase();
     const datatype = String(t?.datatype || '').toLowerCase();
     return cid.includes(q) || displayCid.includes(q) || name.includes(q) || datatype.includes(q);
@@ -5535,7 +5558,7 @@ function buildLoggerTagPickerTree() {
     if (!cid) return;
     let conn = connById.get(cid);
     if (!conn) {
-      const connLabel = displayConnectionName(cid);
+      const connLabel = displayConnectionName(cid, t.connection_name);
       const connId = `tagpicker:conn:${cid}`;
       conn = addLoggerTagPickerChild(root, connId, connLabel, 'connection', { connection_id: cid });
       connById.set(cid, conn);
@@ -5874,7 +5897,7 @@ function applyLoggerTagPickerSelectionToTextarea() {
           description: ''
         });
       } else {
-        if (connInput) connInput.value = parts.connection_id;
+        if (connInput) setLoggerConnectionInput(connInput, parts.connection_id);
         input.value = parts.tag_name;
         next = collectLoggerReportTagPanelEntries();
       }
@@ -5895,7 +5918,7 @@ function applyLoggerTagPickerSelectionToTextarea() {
     }
     const rows = Array.from(els.loggerReportDetails?.querySelectorAll('[data-logger-tag-row="1"]') || []);
     const readRow = (row) => {
-      const conn = String(row.querySelector('[data-logger-tag-connection="1"]')?.value || '').trim();
+      const conn = readLoggerConnectionInput(row.querySelector('[data-logger-tag-connection="1"]'));
       const tag = String(row.querySelector('[data-logger-tag-input="1"]')?.value || '').trim();
       const valueKind = normalizeLoggerValueKind(row.querySelector('[data-logger-value-kind="1"]')?.value || 'last');
       const range = String(row.querySelector('[data-logger-range-input="1"]')?.value || '').trim();
@@ -17936,6 +17959,11 @@ async function loadConnectionsList({ throwOnError = false } = {}) {
       // cached so internal connection IDs are replaced by friendly names.
       if (state.liveTagsLast) renderLiveTags(state.liveTagsLast);
       if (state.healthLast) renderOverviewHealth(state.healthLast, state.metricsLast);
+      els.loggerReportDetails?.querySelectorAll('[data-logger-tag-connection="1"]').forEach((input) => {
+        if (input === document.activeElement || input.value !== input.defaultValue) return;
+        setLoggerConnectionInput(input, input.dataset.connectionId);
+      });
+      if (els.loggerTagPickerModal?.style.display === 'block') renderLoggerTagPickerTable();
     }).catch(() => {});
   } catch (err) {
     setConnStatus(`Failed: ${err.message}`);
