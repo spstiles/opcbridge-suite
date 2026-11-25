@@ -1410,6 +1410,12 @@ static bool parse_historian_fields(const json& fields, Job& job, std::string& er
     return true;
 }
 
+static void update_schedule_error(std::string& error, bool enabled, bool supported, const std::string& schedule) {
+    constexpr const char* prefix = "Unsupported schedule: ";
+    if (enabled && !supported) error = prefix + schedule;
+    else if (error.rfind(prefix, 0) == 0) error.clear();
+}
+
 static long long next_from_calendar(const std::string& cal, long long after_ms, bool& supported) {
     supported = false;
     std::string s = trim(cal);
@@ -1641,7 +1647,7 @@ public:
             st.enabled = job.enabled;
             st.supported_schedule = supported;
             st.next_run_ms = (job.enabled && supported) ? next_run : 0;
-            if (job.enabled && !supported) st.last_error = "Unsupported schedule: " + job.on_calendar;
+            update_schedule_error(st.last_error, job.enabled, supported, job.on_calendar);
             next_status[job.name] = st;
         }
 
@@ -1682,7 +1688,7 @@ public:
             st.enabled = check.enabled;
             st.supported_schedule = supported;
             st.next_run_ms = (check.enabled && supported) ? next_run : 0;
-            if (check.enabled && !supported) st.last_error = "Unsupported schedule: " + check.on_calendar;
+            update_schedule_error(st.last_error, check.enabled, supported, check.on_calendar);
             next_check_status[check.id] = st;
         }
 
@@ -1734,7 +1740,7 @@ public:
             st.enabled = job.enabled;
             st.supported_schedule = supported;
             st.next_run_ms = (job.enabled && supported) ? next_run : 0;
-            if (job.enabled && !supported) st.last_error = "Unsupported schedule: " + job.on_calendar;
+            update_schedule_error(st.last_error, job.enabled, supported, job.on_calendar);
             next_sync_status[job.id] = st;
         }
 
