@@ -2750,9 +2750,9 @@ function reporterJobStatusLabel(report, status) {
 
 function reporterScheduleSupported(onCalendar) {
   const s = String(onCalendar || '').trim();
-  if (!s) return false;
-  return /^\*-\*-\* \*:0\/([1-9][0-9]{0,3}):00$/.test(s) ||
-    /^\*-\*-\* \*:[0-5]?[0-9]:[0-5]?[0-9]$/.test(s) ||
+  const step = /^\*-\*-\* \*:[0-5]?[0-9]\/([0-9]{1,4}):[0-5]?[0-9]$/.exec(s);
+  if (step) return Number(step[1]) > 0 && Number(step[1]) <= 1440;
+  return /^\*-\*-\* \*:[0-5]?[0-9](?:,[0-5]?[0-9])*:[0-5]?[0-9]$/.test(s) ||
     /^\*-\*-\* ([01]?[0-9]|2[0-3]):[0-5]?[0-9]:[0-5]?[0-9]$/.test(s);
 }
 
