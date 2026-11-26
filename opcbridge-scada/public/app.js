@@ -8887,11 +8887,20 @@ function renderPublishedReportPreview(preview) {
       }), previewClass('layout-summary'));
     });
   });
-  const used = [...cells.keys()].map((key) => key.split(':').map(Number));
-  const maxRow = Math.min(500, Math.max(tableRow, Number(templatePreview?.max_row || 0),
-    ...used.map(([row]) => row), ...placedRanges.map((range) => range.end.row)));
-  const maxColumn = Math.min(100, Math.max(tableColumn, Number(templatePreview?.max_column || 0),
-    ...placements, ...used.map(([, column]) => column), ...placedRanges.map((range) => range.end.column)));
+  let layoutRow = Math.max(tableRow, Number(templatePreview?.max_row || 0),
+    ...placedRanges.map((range) => range.end.row));
+  let layoutColumn = Math.max(tableColumn, Number(templatePreview?.max_column || 0),
+    ...placements, ...placedRanges.map((range) => range.end.column));
+  for (const key of cells.keys()) {
+    const [row, column] = key.split(':').map(Number);
+    layoutRow = Math.max(layoutRow, row);
+    layoutColumn = Math.max(layoutColumn, column);
+  }
+  const dataEndRow = tableRow + headerRows + (preview.rows || []).length - 1;
+  const summaryCount = (preview.summary_rows || []).length;
+  const summaryEndRow = summaryCount ? summaryStart + summaryCount - 1 : 0;
+  const maxRow = Math.max(Math.min(500, layoutRow), dataEndRow, summaryEndRow);
+  const maxColumn = Math.min(100, layoutColumn);
   const colgroup = document.createElement('colgroup');
   for (let column = 1; column <= maxColumn; column++) {
     const col = document.createElement('col');
