@@ -8766,11 +8766,22 @@ function renderPublishedReportSelection() {
   }
 }
 
+async function fetchReportView(request) {
+  try {
+    return await request();
+  } catch (error) {
+    // List and preview are read-only, including the POST used to generate a preview.
+    if (!(error instanceof TypeError)) throw error;
+    await new Promise((resolve) => window.setTimeout(resolve, 350));
+    return request();
+  }
+}
+
 async function refreshPublishedReports(loadPreview = true) {
   if (els.publishedReportsStatus) els.publishedReportsStatus.textContent = 'Loading…';
   try {
     const [response, editableResponse] = await Promise.all([
-      apiGet('/api/reports'),
+      fetchReportView(() => apiGet('/api/reports')),
       canCreateReports()
         ? apiGet('/api/reports/admin').catch(() => ({ reports: [] }))
         : Promise.resolve({ reports: [] })
@@ -8800,7 +8811,7 @@ async function refreshPublishedReports(loadPreview = true) {
   } catch (err) {
     state.publishedReports = [];
     renderPublishedReportSelection();
-    if (els.publishedReportsStatus) els.publishedReportsStatus.textContent = String(err.message || err);
+    if (els.publishedReportsStatus) els.publishedReportsStatus.textContent = `Could not load report list. ${err.message || err}`;
   }
 }
 
@@ -8938,7 +8949,8 @@ async function previewPublishedReport() {
   if (!report || !range) return;
   if (els.publishedReportsStatus) els.publishedReportsStatus.textContent = 'Loading report…';
   try {
-    const preview = await apiPostJson('/api/reports/preview', { id: report.id, ...range }, { timeoutMs: 120000 });
+    const preview = await fetchReportView(() =>
+      apiPostJson('/api/reports/preview', { id: report.id, ...range }, { timeoutMs: 120000 }));
     renderPublishedReportPreview(preview);
     if (els.publishedReportsStatus) {
       els.publishedReportsStatus.textContent = preview.template_preview_error
@@ -8951,7 +8963,7 @@ async function previewPublishedReport() {
     }
   } catch (err) {
     if (els.publishedReportPreviewWrap) els.publishedReportPreviewWrap.style.display = 'none';
-    if (els.publishedReportsStatus) els.publishedReportsStatus.textContent = String(err.message || err);
+    if (els.publishedReportsStatus) els.publishedReportsStatus.textContent = `Could not load report preview. ${err.message || err}`;
   }
 }
 
