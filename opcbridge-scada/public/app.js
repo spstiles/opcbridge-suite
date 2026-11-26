@@ -9149,13 +9149,17 @@ function fillSelect(select, values, selected = '') {
 }
 
 function renderReportBuilderDatabaseSources(selected = '') {
-  fillSelect(els.reportBuilderDatabase, state.reportBuilderDatabases.map((database) => ({
+  const databases = state.reportBuilderDatabases.map((database) => ({
     value: database.id,
     label: `${database.name || database.id} (${database.type || 'mysql'})`
-  })), selected);
+  }));
+  if (selected && !databases.some((database) => database.value === selected)) {
+    databases.push({ value: selected, label: `${selected} (unavailable)` });
+  }
+  fillSelect(els.reportBuilderDatabase, databases, selected);
 }
 
-function renderReportBuilderDataSources(selected = '') {
+function renderReportBuilderDataSources(selected) {
   if (!els.reportBuilderDataSource) return;
   const currentReport = state.reportBuilderReports.find((report) => report.id === state.reportBuilderOriginalId);
   const legacyManual = Boolean(state.reportBuilderOriginalId) && !String(currentReport?.data_source?.source_id || '');
@@ -9165,7 +9169,10 @@ function renderReportBuilderDataSources(selected = '') {
     ...profiles,
     ...(allowManual ? [{ value: '', label: 'Advanced/manual database mapping' }] : [])
   ];
-  const desired = selected || (legacyManual ? '' : String(profiles[0]?.value || ''));
+  const desired = selected ?? (legacyManual ? '' : String(profiles[0]?.value || ''));
+  if (desired && !options.some((option) => option.value === desired)) {
+    options.push({ value: desired, label: `${desired} (unavailable)` });
+  }
   fillSelect(els.reportBuilderDataSource, options, desired);
 }
 
@@ -9174,18 +9181,21 @@ function selectedReportDataSource() {
   return state.reportBuilderDataSources.find((source) => String(source.id || '') === id) || null;
 }
 
-function applyReportDataSource(source) {
+function applyReportDataSource(source, savedMapping = {}) {
   if (!source) return;
-  if (els.reportBuilderDatabase) els.reportBuilderDatabase.value = String(source.database_id || '');
-  if (els.reportBuilderLayout) els.reportBuilderLayout.value = source.layout || 'wide';
-  fillSelect(els.reportBuilderTable, [{ value: source.table, label: source.table }], source.table);
-  fillSelect(els.reportBuilderTimeColumn, [{ value: source.time_column, label: source.time_column }], source.time_column);
-  fillSelect(els.reportBuilderCategoryColumn, source.category_column
-    ? [{ value: source.category_column, label: source.category_column }] : [], source.category_column || '');
+  ++state.reportBuilderSchemaRequestSeq;
+  const mapping = { ...source, ...savedMapping };
+  renderReportBuilderDatabaseSources(String(mapping.database_id || ''));
+  if (els.reportBuilderLayout) els.reportBuilderLayout.value = mapping.layout || 'wide';
+  fillSelect(els.reportBuilderTable, mapping.table ? [mapping.table] : [], mapping.table || '');
+  fillSelect(els.reportBuilderTimeColumn, mapping.time_column ? [mapping.time_column] : [], mapping.time_column || '');
+  fillSelect(els.reportBuilderCategoryColumn, mapping.category_column ? [mapping.category_column] : [], mapping.category_column || '');
   const fields = (source.value_fields || []).map((field) => ({ value: field.column, label: field.label }));
   const defaultField = (source.value_fields || []).find((field) => field.default) || source.value_fields?.[0];
-  fillSelect(els.reportBuilderValueColumn, fields, defaultField?.column || '');
-  fillSelect(els.reportBuilderDatabaseField, fields, defaultField?.column || '');
+  const field = savedMapping.value_column || defaultField?.column || '';
+  if (field && !fields.some((choice) => choice.value === field)) fields.push({ value: field, label: field });
+  fillSelect(els.reportBuilderValueColumn, fields, field);
+  fillSelect(els.reportBuilderDatabaseField, fields, field);
   reportBuilderSourceSetStatus(source.description || `Using predefined source ${source.name}`);
   renderReportBuilderSourceUi();
 }
@@ -9327,6 +9337,9 @@ function renderReportBuilderSchemaSelections(selection = {}) {
     value: column.name,
     label: `${column.name} (${column.data_type})`
   }));
+  for (const value of [selection.time_column, selection.field, selection.value_column, selection.category_column]) {
+    if (value && !choices.some((choice) => choice.value === value)) choices.push({ value, label: value });
+  }
   fillSelect(els.reportBuilderTimeColumn, choices, selection.time_column || '');
   fillSelect(els.reportBuilderDatabaseField, choices, selection.field || '');
   fillSelect(els.reportBuilderValueColumn, choices, selection.value_column || '');
@@ -9416,8 +9429,8 @@ async function loadReportBuilderDatabaseSchema(selection = {}) {
   const databaseId = String(els.reportBuilderDatabase?.value || '').trim();
   const requestSeq = ++state.reportBuilderSchemaRequestSeq;
   state.reportBuilderSchema = [];
-  fillSelect(els.reportBuilderTable, []);
-  renderReportBuilderSchemaSelections();
+  fillSelect(els.reportBuilderTable, selection.table ? [selection.table] : [], selection.table || '');
+  renderReportBuilderSchemaSelections(selection);
   if (els.reportBuilderCategoryPicker) els.reportBuilderCategoryPicker.style.display = 'none';
   if (!databaseId) {
     reportBuilderSourceSetStatus('Select a database connection.');
@@ -9437,10 +9450,14 @@ async function loadReportBuilderDatabaseSchema(selection = {}) {
       return;
     }
     state.reportBuilderSchema = Array.isArray(response?.tables) ? response.tables : [];
-    fillSelect(els.reportBuilderTable, state.reportBuilderSchema.map((table) => ({
+    const tables = state.reportBuilderSchema.map((table) => ({
       value: table.name,
       label: `${table.name}${table.type === 'VIEW' ? ' (view)' : ''}`
-    })), selection.table || '');
+    }));
+    if (selection.table && !tables.some((table) => table.value === selection.table)) {
+      tables.push({ value: selection.table, label: selection.table });
+    }
+    fillSelect(els.reportBuilderTable, tables, selection.table || '');
     renderReportBuilderSchemaSelections(selection);
     reportBuilderSourceSetStatus(`${state.reportBuilderSchema.length} table(s) available from ${databaseId}`);
   } catch (err) {
@@ -10598,13 +10615,13 @@ function loadReportBuilderDefinition(report) {
   const source = { ...(value.data_source || { type: 'historian' }) };
   const firstDatabaseColumn = state.reportBuilderColumns.find((column) => column?.source === 'database');
   if (source.type === 'database' && firstDatabaseColumn) {
-    source.database_id = String(firstDatabaseColumn.database_id || source.database_id || '');
-    source.table = String(firstDatabaseColumn.table || source.table || '');
-    source.time_column = String(firstDatabaseColumn.time_column || source.time_column || '');
-    source.layout = String(firstDatabaseColumn.layout || source.layout || 'wide');
-    source.value_column = String(firstDatabaseColumn.field || source.value_column || '');
+    source.database_id ||= firstDatabaseColumn.database_id;
+    source.table ||= firstDatabaseColumn.table;
+    source.time_column ||= firstDatabaseColumn.time_column;
+    source.layout ||= firstDatabaseColumn.layout || 'wide';
+    source.value_column ||= firstDatabaseColumn.field;
     if (source.layout === 'category') {
-      source.category_column = String(firstDatabaseColumn.category_column || source.category_column || '');
+      source.category_column ||= firstDatabaseColumn.category_column;
     }
   }
   if (els.reportBuilderSourceType) els.reportBuilderSourceType.value = String(source.type || 'historian');
@@ -10614,7 +10631,7 @@ function loadReportBuilderDefinition(report) {
   renderReportBuilderSourceUi();
   if (source.type === 'database') {
     const predefined = state.reportBuilderDataSources.find((item) => item.id === source.source_id);
-    if (predefined) applyReportDataSource(predefined);
+    if (predefined) applyReportDataSource(predefined, source);
     else loadReportBuilderDatabaseSchema(source).catch(() => {});
   }
   renderReportBuilderColumns();
@@ -10891,11 +10908,7 @@ function wireReportBuilderUi() {
   });
   if (els.reportBuilderLayout) els.reportBuilderLayout.addEventListener('change', renderReportBuilderSourceUi);
   if (els.reportBuilderDatabase) els.reportBuilderDatabase.addEventListener('change', () => {
-    renderReportBuilderDataSources('');
-    const source = selectedReportDataSource();
-    if (source) applyReportDataSource(source);
-    else if (hasPerm('reports.administer')) loadReportBuilderDatabaseSchema().catch(() => {});
-    else reportBuilderSourceSetStatus('No predefined report data source is available for this database.');
+    loadReportBuilderDatabaseSchema().catch(() => {});
   });
   if (els.reportBuilderDataSource) els.reportBuilderDataSource.addEventListener('change', () => {
     const source = selectedReportDataSource();
