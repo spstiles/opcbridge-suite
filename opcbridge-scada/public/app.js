@@ -355,7 +355,11 @@
   reportBuilderXlsx: document.getElementById('reportBuilderXlsx'),
   reportBuilderOds: document.getElementById('reportBuilderOds'),
   reportBuilderCsv: document.getElementById('reportBuilderCsv'),
-  reportBuilderPublished: document.getElementById('reportBuilderPublished'),
+  reportBuilderPublicationStatus: document.getElementById('reportBuilderPublicationStatus'),
+  reportBuilderPublicationMenu: document.getElementById('reportBuilderPublicationMenu'),
+  reportBuilderPublishBtn: document.getElementById('reportBuilderPublishBtn'),
+  reportBuilderUnpublishBtn: document.getElementById('reportBuilderUnpublishBtn'),
+  reportBuilderDiscardDraftBtn: document.getElementById('reportBuilderDiscardDraftBtn'),
   reportBuilderSourceType: document.getElementById('reportBuilderSourceType'),
   reportBuilderDatabaseLabel: document.getElementById('reportBuilderDatabaseLabel'),
   reportBuilderDatabase: document.getElementById('reportBuilderDatabase'),
@@ -9072,12 +9076,7 @@ function showReportBuilder(report) {
   if (els.reportBuilderAccessSection) {
     els.reportBuilderAccessSection.style.display = (!report || permissions.manage) ? '' : 'none';
   }
-  if (els.reportBuilderPublished) {
-    els.reportBuilderPublished.disabled = Boolean(report) && !permissions.manage;
-    els.reportBuilderPublished.title = els.reportBuilderPublished.disabled
-      ? 'Manage access is required to publish or unpublish this report.'
-      : '';
-  }
+
   if (els.reportBuilderHmiEnabled) {
     els.reportBuilderHmiEnabled.disabled = Boolean(report) && !permissions.manage;
     els.reportBuilderHmiEnabled.title = els.reportBuilderHmiEnabled.disabled
@@ -9404,14 +9403,7 @@ function renderReportBuilderSourceUi() {
     els.reportBuilderPreviewBtn.disabled = false;
     els.reportBuilderPreviewBtn.title = '';
   }
-  if (els.reportBuilderPublished) {
-    const current = state.reportBuilderReports.find((report) => report.id === state.reportBuilderOriginalId) || null;
-    const canManage = !state.reportBuilderOriginalId || reportPermissions(current).manage;
-    els.reportBuilderPublished.disabled = !canManage;
-    els.reportBuilderPublished.title = canManage
-      ? ''
-      : 'Manage access is required to publish or unpublish this report.';
-  }
+
   if (els.reportBuilderHmiEnabled) {
     const current = state.reportBuilderReports.find((report) => report.id === state.reportBuilderOriginalId) || null;
     const canManage = !state.reportBuilderOriginalId || reportPermissions(current).manage;
@@ -9535,7 +9527,6 @@ function reportBuilderCurrentDefinition() {
     access: state.reportBuilderAccess
       .filter((grant) => grant.view || grant.download || grant.edit || grant.manage)
       .map((grant) => ({ ...grant })),
-    published: Boolean(els.reportBuilderPublished?.checked),
     formats,
     columns: state.reportBuilderColumns.map((column) => ({ ...column })),
     layout: {
@@ -10526,7 +10517,23 @@ function renderReportBuilderColumns() {
   renderReportBuilderSourceUi();
 }
 
+function renderReportPublicationControls(report) {
+  const isPublished = report?.published === true;
+  const hasDraft = report?.has_draft === true;
+  const canManage = !report || reportPermissions(report).manage;
+  els.reportBuilderPublicationStatus.textContent = isPublished
+    ? (hasDraft ? 'Published · draft changes' : 'Published')
+    : 'Draft';
+  els.reportBuilderPublishBtn.textContent = isPublished ? 'Publish Changes' : 'Publish';
+  els.reportBuilderPublishBtn.disabled = !canManage;
+  els.reportBuilderPublicationMenu.hidden = !isPublished || !canManage;
+  els.reportBuilderPublicationMenu.open = false;
+  els.reportBuilderDiscardDraftBtn.hidden = !hasDraft;
+  els.reportBuilderPreviewWrap.style.display = 'none';
+}
+
 function loadReportBuilderDefinition(report) {
+  renderReportPublicationControls(report);
   const value = report || {
     id: '', name: '', description: '', timezone: browserTimezone(),
     published: false, formats: ['xlsx', 'csv'], columns: []
@@ -10578,7 +10585,6 @@ function loadReportBuilderDefinition(report) {
     els.reportBuilderGroupByLabel.style.display = String(value.period || 'month') === 'custom' ? '' : 'none';
   }
   populateReportBuilderTimezones(String(value.timezone || browserTimezone()));
-  if (els.reportBuilderPublished) els.reportBuilderPublished.checked = Boolean(value.published);
   if (els.reportBuilderXlsx) els.reportBuilderXlsx.checked = (value.formats || []).includes('xlsx');
   if (els.reportBuilderOds) els.reportBuilderOds.checked = (value.formats || []).includes('ods');
   if (els.reportBuilderCsv) els.reportBuilderCsv.checked = (value.formats || []).includes('csv');
@@ -10655,33 +10661,46 @@ async function refreshReportBuilder() {
   }
 }
 
-async function saveReportBuilderDefinition() {
-  const report = reportBuilderCurrentDefinition();
-  reportBuilderSetStatus('Saving…');
-  const response = await apiPostJson('/api/reports/admin', {
-    original_id: state.reportBuilderOriginalId,
-    report
-  });
-  state.reportBuilderOriginalId = response.report.id;
-  await refreshReportBuilder();
-  await refreshPublishedReports(false);
-  if (els.publishedReportSelect) {
-    els.publishedReportSelect.value = response.report.id;
-    renderPublishedReportSelection();
+async function saveReportBuilderDefinition(action = 'save_draft') {
+  const card = els.reportBuilderCard;
+  if (card.getAttribute('aria-busy') === 'true') return;
+  card.setAttribute('aria-busy', 'true');
+  try {
+    const report = ['save_draft', 'publish'].includes(action) ? reportBuilderCurrentDefinition() : undefined;
+    reportBuilderSetStatus('Saving…');
+    const response = await apiPostJson('/api/reports/admin', {
+      original_id: state.reportBuilderOriginalId,
+      action,
+      report
+    });
+    state.reportBuilderOriginalId = response.report.id;
+    await refreshReportBuilder();
+    await refreshPublishedReports(false);
+    if (els.publishedReportSelect) {
+      els.publishedReportSelect.value = response.report.id;
+      renderPublishedReportSelection();
+    }
+    loadReportBuilderDefinition(response.report);
+    if (els.reportBuilderTitle) els.reportBuilderTitle.textContent = `Edit ${response.report.name || 'Report'}`;
+    const savedPermissions = reportPermissions(response.report);
+    if (els.reportBuilderDuplicateBtn) {
+      els.reportBuilderDuplicateBtn.style.display = savedPermissions.manage ? '' : 'none';
+      els.reportBuilderDuplicateBtn.disabled = !savedPermissions.manage;
+    }
+    if (els.reportBuilderDeleteBtn) {
+      els.reportBuilderDeleteBtn.style.display = savedPermissions.manage ? '' : 'none';
+      els.reportBuilderDeleteBtn.disabled = !savedPermissions.manage;
+    }
+    reportBuilderSetStatus({
+      save_draft: 'Draft saved.',
+      publish: 'Report published.',
+      unpublish: 'Report unpublished.',
+      discard_draft: 'Draft discarded.'
+    }[action]);
+    return response.report;
+  } finally {
+    card.removeAttribute('aria-busy');
   }
-  loadReportBuilderDefinition(response.report);
-  if (els.reportBuilderTitle) els.reportBuilderTitle.textContent = `Edit ${response.report.name || 'Report'}`;
-  const savedPermissions = reportPermissions(response.report);
-  if (els.reportBuilderDuplicateBtn) {
-    els.reportBuilderDuplicateBtn.style.display = savedPermissions.manage ? '' : 'none';
-    els.reportBuilderDuplicateBtn.disabled = !savedPermissions.manage;
-  }
-  if (els.reportBuilderDeleteBtn) {
-    els.reportBuilderDeleteBtn.style.display = savedPermissions.manage ? '' : 'none';
-    els.reportBuilderDeleteBtn.disabled = !savedPermissions.manage;
-  }
-  reportBuilderSetStatus('Saved.');
-  return response.report;
 }
 
 function renderReportBuilderPreview(preview) {
@@ -11085,17 +11104,33 @@ function wireReportBuilderUi() {
     closeReportFormulaModal();
     renderReportBuilderColumns();
   });
+  const publicationActions = [
+    [els.reportBuilderPublishBtn, 'publish'],
+    [els.reportBuilderUnpublishBtn, 'unpublish', 'Unpublish this report? It will no longer be available to viewers.'],
+    [els.reportBuilderDiscardDraftBtn, 'discard_draft', 'Discard the draft changes and restore the published version in the editor?']
+  ];
+  publicationActions.forEach(([button, action, confirmation]) => {
+    button.addEventListener('click', () => {
+      if (confirmation && !window.confirm(confirmation)) return;
+      saveReportBuilderDefinition(action).catch((err) => reportBuilderSetStatus(err.message || err));
+    });
+  });
   if (els.reportBuilderSaveBtn) els.reportBuilderSaveBtn.addEventListener('click', () => {
     saveReportBuilderDefinition().catch((err) => reportBuilderSetStatus(err.message || err));
   });
   if (els.reportBuilderPreviewBtn) els.reportBuilderPreviewBtn.addEventListener('click', async () => {
     try {
-      const report = await saveReportBuilderDefinition();
+      const report = reportBuilderCurrentDefinition();
       reportBuilderSetStatus('Generating preview…');
-      const range = publishedReportRangePayload();
-      if (!range) throw new Error('Select a valid report period.');
+      const today = localIsoDate(new Date());
+      const currentPeriod = selectedPublishedReport()?.period;
+      const range = (report.period === currentPeriod && publishedReportRangePayload()) ||
+        (report.period === 'custom' ? { start_date: today.slice(0, 7) + '-01', end_date: today } :
+          { period_value: report.period === 'yearly' ? today.slice(0, 4) :
+            report.period === 'month' ? today.slice(0, 7) : today });
       const preview = await apiPostJson('/api/reports/admin/preview', {
-        id: report.id,
+        id: state.reportBuilderOriginalId,
+        report,
         ...range
       }, { timeoutMs: 120000 });
       renderReportBuilderPreview(preview);

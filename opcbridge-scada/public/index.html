@@ -1552,6 +1552,20 @@
 		          <button class="btn danger" id="reportBuilderDeleteBtn" type="button">Delete</button>
 		        </div>
 		        <h3 id="reportBuilderTitle">Report Builder</h3>
+                <div class="row-actions" style="margin-bottom: 12px;">
+                  <span class="hint" id="reportBuilderPublicationStatus" aria-live="polite"></span>
+                  <button class="btn" id="reportBuilderSaveBtn" type="button">Save Draft</button>
+                  <button class="btn" id="reportBuilderPreviewBtn" type="button">Preview Draft</button>
+                  <button class="btn primary" id="reportBuilderPublishBtn" type="button">Publish</button>
+                  <details id="reportBuilderPublicationMenu" hidden>
+                    <summary class="btn">More</summary>
+                    <div class="row-actions">
+                      <button class="btn" id="reportBuilderUnpublishBtn" type="button">Unpublish</button>
+                      <button class="btn" id="reportBuilderDiscardDraftBtn" type="button">Discard Draft</button>
+                    </div>
+                  </details>
+                  <div class="hint mono" id="reportBuilderStatus" role="status"></div>
+                </div>
 		        <div class="report-builder-tabs" id="reportBuilderTabs" role="tablist" aria-label="Report editor sections">
 		          <button class="btn active" type="button" data-report-builder-tab="report">Report</button>
 		          <button class="btn" type="button" data-report-builder-tab="layout">Layout</button>
@@ -1595,7 +1609,6 @@
 		          <label><span><input id="reportBuilderXlsx" type="checkbox" checked> Excel (.xlsx)</span></label>
 		          <label><span><input id="reportBuilderOds" type="checkbox"> OpenDocument (.ods)</span></label>
 		          <label><span><input id="reportBuilderCsv" type="checkbox" checked> CSV (.csv)</span></label>
-		          <label><span><input id="reportBuilderPublished" type="checkbox"> Published</span></label>
 		          <label><span><input id="reportBuilderHmiEnabled" type="checkbox"> Allow HMI display</span></label>
 		        </div>
 		        <h4 style="margin-top: 18px;">Data Source</h4>
@@ -1721,11 +1734,6 @@
 		          <h4 style="margin-top:18px;">Design Preview</h4>
 		          <div class="hint">Representative values are used here. Actual report data remains on the Reports page.</div>
 		          <div class="report-layout-preview-wrap" style="margin-top:10px;"><table class="report-layout-preview" id="reportBuilderLayoutPreview"></table></div>
-		        </div>
-		        <div class="row-actions" style="margin-top: 14px;">
-		          <button class="btn primary" id="reportBuilderSaveBtn" type="button">Save</button>
-		          <button class="btn" id="reportBuilderPreviewBtn" type="button">Save + Preview</button>
-		          <div class="hint mono" id="reportBuilderStatus"></div>
 		        </div>
 		        <div class="table-wrap" id="reportBuilderPreviewWrap" style="display:none; margin-top: 14px;">
 		          <table class="table">

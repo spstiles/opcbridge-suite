@@ -535,6 +535,31 @@ function readReportDefinitions() {
   return Array.isArray(root?.reports) ? root.reports.filter((report) => report && typeof report === 'object') : [];
 }
 
+function reportEditorDefinition(report, status) {
+  const { draft, ...saved } = report;
+  return {
+    ...(draft || saved),
+    published: saved.published === true,
+    has_draft: Boolean(draft) || saved.published !== true,
+    permissions: reportGrant(saved, status)
+  };
+}
+
+function writeReportDefinitions(reports) {
+  const temporary = `${REPORT_DEFINITIONS_PATH}.${crypto.randomUUID()}.tmp`;
+  ensureDirForFile(REPORT_DEFINITIONS_PATH);
+  try {
+    const mode = fs.existsSync(REPORT_DEFINITIONS_PATH)
+      ? fs.statSync(REPORT_DEFINITIONS_PATH).mode & 0o777
+      : 0o660;
+    fs.writeFileSync(temporary, JSON.stringify({ reports }, null, 2) + '\n', { mode, flag: 'wx' });
+    fs.chmodSync(temporary, mode);
+    fs.renameSync(temporary, REPORT_DEFINITIONS_PATH);
+  } finally {
+    fs.rmSync(temporary, { force: true });
+  }
+}
+
 function readReportDataSources() {
   const root = readJsonFileOrNull(REPORT_DATA_SOURCES_PATH) || { sources: [] };
   return Array.isArray(root?.sources)
@@ -737,7 +762,7 @@ function normalizeSpreadsheetRange(value, fallback = '') {
   return start === end ? start : `${start}:${end}`;
 }
 
-function normalizeReportDefinition(value) {
+function normalizeReportDefinition(value, { draft = false } = {}) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
   const id = sanitizeId(source.id);
   const name = String(source.name || '').trim().slice(0, 191);
@@ -857,8 +882,8 @@ function normalizeReportDefinition(value) {
       precision: common.precision
     };
   });
-  if (!columns.length) throw new Error('Add at least one report column.');
-  if (!columns.some((column) => column.visible !== false)) {
+  if (!draft && !columns.length) throw new Error('Add at least one report column.');
+  if (!draft && !columns.some((column) => column.visible !== false)) {
     throw new Error('At least one report column must be shown.');
   }
   const summaryCalculations = new Set(['none', 'sum', 'avg', 'min', 'max', 'first', 'last', 'count', 'missing', 'formula']);
@@ -5932,18 +5957,26 @@ const server = http.createServer(async (req, res) => {
         const grant = reportGrant(report, reportStatus);
         return grant.edit || grant.manage;
       });
-      sendJson(res, 200, { ok: true, path: REPORT_DEFINITIONS_PATH, reports });
+      sendJson(res, 200, { ok: true, path: REPORT_DEFINITIONS_PATH, reports: reports.map((report) => reportEditorDefinition(report, reportStatus)) });
       return;
     }
     if (req.method === 'POST') {
       try {
         const body = JSON.parse((await readBody(req, 2 * 1024 * 1024)).toString('utf8') || '{}');
+        const action = body.action || 'save_draft';
+        if (!['save_draft', 'publish', 'unpublish', 'discard_draft'].includes(action)) {
+          throw new Error('Unsupported report action.');
+        }
         const originalId = sanitizeId(body.original_id || '');
         const reports = readReportDefinitions();
         const source = body.report || body;
         const existing = originalId
           ? reports.find((item) => sanitizeId(item?.id) === originalId)
           : null;
+        if (originalId && !existing) {
+          sendJson(res, 404, { ok: false, error: 'Report no longer exists.' });
+          return;
+        }
         if (!existing && !authStatusHasPerm(reportStatus, 'reports.create') &&
             !authStatusHasPerm(reportStatus, 'reports.administer')) {
           sendJson(res, 403, { ok: false, error: 'Insufficient permissions (reports.create required).' });
@@ -5954,10 +5987,23 @@ const server = http.createServer(async (req, res) => {
           return;
         }
         const canManage = !existing || reportGrant(existing, reportStatus).manage;
+        if (action !== 'save_draft' && !canManage) {
+          sendJson(res, 403, { ok: false, error: 'Manage access is required for this report action.' });
+          return;
+        }
+        if (action === 'unpublish' || action === 'discard_draft') {
+          if (!existing?.published) throw new Error('This action requires a published report.');
+          const { draft, ...live } = existing;
+          const saved = action === 'unpublish' ? { ...(draft || live), published: false } : live;
+          reports[reports.indexOf(existing)] = saved;
+          writeReportDefinitions(reports);
+          sendJson(res, 200, { ok: true, report: reportEditorDefinition(saved, reportStatus) });
+          return;
+        }
         if (existing && !canManage) {
-          source.access = existing.access;
-          source.published = existing.published;
-          source.hmi_enabled = existing.hmi_enabled;
+          const editable = existing.draft || existing;
+          source.access = editable.access;
+          source.hmi_enabled = editable.hmi_enabled;
         }
         source.created_by = existing
           ? (String(existing.created_by || '').trim() || authStatusUsername(reportStatus))
@@ -5969,16 +6015,20 @@ const server = http.createServer(async (req, res) => {
             .filter((id) => id && id !== originalId)
         );
         source.id = existing ? sanitizeId(existing.id) : uniqueOpaqueId('report', usedIds);
-        const report = normalizeReportDefinition(source);
+        source.published = action === 'publish';
+        const report = normalizeReportDefinition(source, { draft: action === 'save_draft' });
+        const saved = action === 'save_draft' && existing?.published
+          ? { ...existing, draft: report }
+          : report;
         const lookupId = originalId || report.id;
         const index = reports.findIndex((item) => sanitizeId(item?.id) === lookupId);
         if (reports.some((item, itemIndex) => itemIndex !== index && sanitizeId(item?.id) === report.id)) {
           throw new Error(`Report id already exists: ${report.id}`);
         }
-        if (index >= 0) reports[index] = report;
-        else reports.push(report);
-        writeJsonFile(REPORT_DEFINITIONS_PATH, { reports });
-        sendJson(res, 200, { ok: true, path: REPORT_DEFINITIONS_PATH, report });
+        if (index >= 0) reports[index] = saved;
+        else reports.push(saved);
+        writeReportDefinitions(reports);
+        sendJson(res, 200, { ok: true, path: REPORT_DEFINITIONS_PATH, report: reportEditorDefinition(saved, reportStatus) });
       } catch (err) {
         sendJson(res, 400, { ok: false, error: String(err.message || err) });
       }
@@ -6199,7 +6249,8 @@ const server = http.createServer(async (req, res) => {
       if (!id || !/^[a-f0-9]{64}$/.test(storedId)) throw new Error('A valid report and template are required.');
       const existing = readReportDefinitions().find((report) => sanitizeId(report?.id) === id);
       const grant = existing ? reportGrant(existing, reportStatus) : null;
-      const currentStoredId = String(existing?.template?.stored_id || '').trim().toLowerCase();
+      const editorTemplate = (existing?.draft || existing)?.template;
+      const currentStoredId = String(editorTemplate?.stored_id || '').trim().toLowerCase();
       const allowed = existing
         ? Boolean(grant?.manage || (grant?.edit && storedId === currentStoredId))
         : (authStatusHasPerm(reportStatus, 'reports.create') || authStatusHasPerm(reportStatus, 'reports.administer'));
@@ -6208,7 +6259,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const requestedFormat = reportTemplateFormat({ format: url.searchParams.get('format'), filename: url.searchParams.get('filename') });
-      const currentFormat = reportTemplateFormat(existing?.template);
+      const currentFormat = reportTemplateFormat(editorTemplate);
       const format = grant?.manage || !existing ? requestedFormat : currentFormat;
       const templatePath = path.join(REPORT_TEMPLATE_DIR, `${storedId}.${format}`);
       if (!fs.existsSync(templatePath)) {
@@ -6218,7 +6269,7 @@ const server = http.createServer(async (req, res) => {
       if (url.pathname.endsWith('/download')) {
         const requestedFilename = grant?.manage || !existing
           ? String(url.searchParams.get('filename') || '') : '';
-        const filename = path.basename(String(requestedFilename || existing?.template?.filename || `report-template.${format}`))
+        const filename = path.basename(String(requestedFilename || editorTemplate?.filename || `report-template.${format}`))
           .replace(/[^A-Za-z0-9._-]+/g, '-')
           .replace(/^[-_.]+|[-_.]+$/g, '') || `report-template.${format}`;
         send(res, 200, {
@@ -6265,19 +6316,20 @@ const server = http.createServer(async (req, res) => {
       }
       if (url.pathname.endsWith('/delete')) {
         reports.splice(index, 1);
-        writeJsonFile(REPORT_DEFINITIONS_PATH, { reports });
+        writeReportDefinitions(reports);
         sendJson(res, 200, { ok: true, deleted: true, id });
         return;
       }
-      const copy = JSON.parse(JSON.stringify(reports[index]));
+      const { draft, ...live } = reports[index];
+      const copy = { ...(draft || live) };
       copy.id = uniqueOpaqueId('report', new Set(reports.map((item) => sanitizeId(item?.id)).filter(Boolean)));
       copy.name = copyName(copy.name);
       copy.created_by = authStatusUsername(reportStatus);
       if (!copy.created_by) throw new Error('An authenticated creator is required.');
       copy.published = false;
       reports.push(copy);
-      writeJsonFile(REPORT_DEFINITIONS_PATH, { reports });
-      sendJson(res, 200, { ok: true, report: copy });
+      writeReportDefinitions(reports);
+      sendJson(res, 200, { ok: true, report: reportEditorDefinition(copy, reportStatus) });
     } catch (err) {
       sendJson(res, 400, { ok: false, error: String(err.message || err) });
     }
@@ -6291,20 +6343,30 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 405, { ok: false, error: 'Method not allowed' });
       return;
     }
+    let previewDir;
     try {
-      const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
-      const id = sanitizeId(body.id);
-      const report = readReportDefinitions().find((item) => sanitizeId(item?.id) === id);
-      if (!id || !report) throw new Error(`Report not found: ${id}`);
-      if (!canAccessReport(report, reportStatus, 'edit')) {
+      const body = JSON.parse((await readBody(req, 2 * 1024 * 1024)).toString('utf8') || '{}');
+      const requestedId = sanitizeId(body.id);
+      const saved = requestedId && readReportDefinitions().find((item) => sanitizeId(item?.id) === requestedId);
+      if (requestedId && !saved) throw new Error(`Report not found: ${requestedId}`);
+      if (saved ? !canAccessReport(saved, reportStatus, 'edit') :
+          !authStatusHasPerm(reportStatus, 'reports.create') && !authStatusHasPerm(reportStatus, 'reports.administer')) {
         sendJson(res, 403, { ok: false, error: 'This role cannot edit the selected report.' });
         return;
       }
+      const id = requestedId || 'draft-preview';
+      const report = body.report
+        ? normalizeReportDefinition({ ...body.report, id, published: false })
+        : saved?.draft || saved;
+      if (!report) throw new Error('A report draft is required.');
       const range = reportCliRangeArgs(report, body);
+      previewDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opcbridge-report-draft-'));
+      const definitions = path.join(previewDir, 'reports.json');
+      writeJsonFile(definitions, { reports: [report] });
       const result = await new Promise((resolve) => {
         child_process.execFile(REPORT_BIN, [
           'preview',
-          '--definitions', REPORT_DEFINITIONS_PATH,
+          '--definitions', definitions,
           '--id', id,
           ...range.args,
           '--historian-url', REPORT_HISTORIAN_URL,
@@ -6319,6 +6381,8 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, preview);
     } catch (err) {
       sendJson(res, 400, { ok: false, error: String(err.message || err) });
+    } finally {
+      if (previewDir) fs.rmSync(previewDir, { recursive: true, force: true });
     }
     return;
   }
