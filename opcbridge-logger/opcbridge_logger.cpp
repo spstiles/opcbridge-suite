@@ -2134,9 +2134,21 @@ public:
         const bool has_category = !category_column.empty() && request.contains("category_value");
         const long long from_ms = request.value("from_ms", 0LL);
         const long long to_ms = request.value("to_ms", 0LL);
+        const bool literal_time = request.contains("from_datetime") || request.contains("to_datetime");
+        const std::string from_datetime = request.value("from_datetime", "");
+        const std::string to_datetime = request.value("to_datetime", "");
         int limit = std::max(1, std::min(250000, request.value("limit", 100000)));
-        if (table.empty() || time_column.empty() || value_column.empty() || from_ms <= 0 || to_ms <= from_ms) {
-            return {{"ok", false}, {"error", "table, time_column, value_column, from_ms, and to_ms are required"}};
+        if (table.empty() || time_column.empty() || value_column.empty()) {
+            return {{"ok", false}, {"error", "table, time_column, and value_column are required"}};
+        }
+        if (literal_time) {
+            static const std::regex datetime_pattern(R"([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2})");
+            if (!std::regex_match(from_datetime, datetime_pattern) ||
+                !std::regex_match(to_datetime, datetime_pattern) || to_datetime <= from_datetime) {
+                return {{"ok", false}, {"error", "A valid from_datetime and to_datetime range is required"}};
+            }
+        } else if (from_ms <= 0 || to_ms <= from_ms) {
+            return {{"ok", false}, {"error", "A valid from_ms and to_ms range is required"}};
         }
 
         json schema = database_schema(id);
@@ -2173,7 +2185,9 @@ public:
         const std::string time_field = quote_identifier(time_column);
         const std::string companion_select = companion_column.empty()
             ? "NULL AS companion" : quote_identifier(companion_column) + " AS companion";
-        const std::string select = "SELECT CAST(UNIX_TIMESTAMP(" + time_field + ") * 1000 AS SIGNED) AS ts_ms, " +
+        const std::string report_time = literal_time ? time_field :
+            "CAST(UNIX_TIMESTAMP(" + time_field + ") * 1000 AS SIGNED)";
+        const std::string select = "SELECT " + report_time + " AS report_time, " +
             quote_identifier(value_column) + " AS value, " + companion_select + " FROM " + quote_identifier(table);
         std::string category_filter;
         if (has_category) {
@@ -2186,17 +2200,20 @@ public:
             escaped.resize(escaped_len);
             category_filter = " AND " + quote_identifier(category_column) + " = '" + escaped + "'";
         }
-        const std::string from = "FROM_UNIXTIME(" + std::to_string(from_ms / 1000LL) + ")";
-        const std::string to = "FROM_UNIXTIME(" + std::to_string(to_ms / 1000LL) + ")";
+        const std::string from = literal_time ? "'" + from_datetime + "'" :
+            "FROM_UNIXTIME(" + std::to_string(from_ms / 1000LL) + ")";
+        const std::string to = literal_time ? "'" + to_datetime + "'" :
+            "FROM_UNIXTIME(" + std::to_string(to_ms / 1000LL) + ")";
         std::string range_query = select + " WHERE " + time_field + " >= " + from +
             " AND " + time_field + " < " + to + category_filter +
             " ORDER BY " + time_field + " ASC LIMIT " + std::to_string(limit);
         std::string sql = range_query;
         if (request.value("include_previous", false)) {
             const std::string previous_query = select + " WHERE " + time_field + " < " + from +
+                " AND " + quote_identifier(value_column) + " IS NOT NULL" +
                 category_filter + " ORDER BY " + time_field + " DESC LIMIT 1";
-            sql = "SELECT ts_ms, value, companion FROM ((" + previous_query + ") UNION ALL (" + range_query +
-                ")) AS report_points ORDER BY ts_ms ASC";
+            sql = "SELECT report_time, value, companion FROM ((" + previous_query + ") UNION ALL (" + range_query +
+                ")) AS report_points ORDER BY report_time ASC";
         }
         if (mysql_query(conn, sql.c_str()) != 0) {
             std::string error = std::string("report query failed: ") + mysql_error(conn);
@@ -2223,7 +2240,10 @@ public:
             }
             json companion = nullptr;
             if (row[2]) companion = std::string(row[2], lengths ? lengths[2] : std::strlen(row[2]));
-            points.push_back({{"ts_ms", std::stoll(row[0])}, {"value", value}, {"companion", companion}});
+            json point = {{"value", value}, {"companion", companion}};
+            if (literal_time) point["datetime"] = std::string(row[0]);
+            else point["ts_ms"] = std::stoll(row[0]);
+            points.push_back(std::move(point));
         }
         mysql_free_result(result);
         mysql_close(conn);

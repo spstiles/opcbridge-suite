@@ -751,6 +751,17 @@ function evaluate_expression(array $node, callable $reference): mixed
     throw new RuntimeException("Unsupported formula function: {$name}");
 }
 
+function database_report_timestamp(array $point, DateTimeZone $timezone): ?int
+{
+    if (!isset($point['datetime'])) return isset($point['ts_ms']) ? (int)$point['ts_ms'] : null;
+    $value = (string)$point['datetime'];
+    if (!preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{1,6})?$/D', $value)) return null;
+    $date = DateTimeImmutable::createFromFormat(
+        str_contains($value, '.') ? '!Y-m-d H:i:s.u' : '!Y-m-d H:i:s', $value, $timezone
+    );
+    return $date ? (int)$date->format('Uv') : null;
+}
+
 function database_daily_values(
     string $loggerUrl,
     array $column,
@@ -765,6 +776,8 @@ function database_daily_values(
         'value_column' => (string)$column['field'],
         'from_ms' => $start->getTimestamp() * 1000,
         'to_ms' => $end->getTimestamp() * 1000,
+        'from_datetime' => $start->format('Y-m-d H:i:s'),
+        'to_datetime' => $end->format('Y-m-d H:i:s'),
         'limit' => 250000,
         'include_previous' => (string)($column['aggregation'] ?? 'last') === 'change',
     ];
@@ -780,14 +793,14 @@ function database_daily_values(
     $dailyPoints = [];
     $baseline = null;
     foreach (($json['points'] ?? []) as $point) {
-        if (!is_array($point) || !isset($point['ts_ms'])) continue;
-        $timestampMs = (int)$point['ts_ms'];
+        $timestampMs = is_array($point) ? database_report_timestamp($point, $timezone) : null;
+        if ($timestampMs === null) continue;
         if ($timestampMs < $start->getTimestamp() * 1000) {
             if ($point['value'] !== null) $baseline = $point['value'];
             continue;
         }
-        $date = bucket_key((int)$point['ts_ms'], $timezone, $group);
-        $dailyPoints[$date][] = ['ts_ms' => (int)$point['ts_ms'], 'value' => $point['value'] ?? null,
+        $date = bucket_key($timestampMs, $timezone, $group);
+        $dailyPoints[$date][] = ['ts_ms' => $timestampMs, 'value' => $point['value'] ?? null,
             'companion' => $point['companion'] ?? null];
     }
     $daily = [];
@@ -886,6 +899,8 @@ function database_raw_values(
         'value_column' => (string)$column['field'],
         'from_ms' => $start->getTimestamp() * 1000,
         'to_ms' => $end->getTimestamp() * 1000,
+        'from_datetime' => $start->format('Y-m-d H:i:s'),
+        'to_datetime' => $end->format('Y-m-d H:i:s'),
         'limit' => $limit,
         'include_previous' => false,
     ];
@@ -902,9 +917,10 @@ function database_raw_values(
     $companions = [];
     $count = 0;
     foreach (($json['points'] ?? []) as $point) {
-        if (!is_array($point) || !isset($point['ts_ms'])) continue;
-        $values[(int)$point['ts_ms']] = $point['value'] ?? null;
-        $companions[(int)$point['ts_ms']] = $point['companion'] ?? null;
+        $timestampMs = is_array($point) ? database_report_timestamp($point, $start->getTimezone()) : null;
+        if ($timestampMs === null) continue;
+        $values[$timestampMs] = $point['value'] ?? null;
+        $companions[$timestampMs] = $point['companion'] ?? null;
         $count++;
     }
     return ['values' => $values, 'companions' => $companions, 'truncated' => $count >= $limit];
