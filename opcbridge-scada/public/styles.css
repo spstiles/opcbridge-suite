@@ -851,6 +851,14 @@ pre.mono { margin: 0; padding: 12px; overflow: auto; }
   width: 100%;
 }
 
+#reportBuilderStatus.report-builder-error {
+  color: #ffaaaa;
+  background: rgba(255, 107, 107, .12);
+  border: 1px solid rgba(255, 107, 107, .55);
+  border-radius: 6px;
+  padding: 6px 9px;
+}
+
 .report-builder-tabs {
   display: flex;
   flex-wrap: wrap;

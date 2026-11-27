@@ -382,6 +382,8 @@
   reportBuilderDatabaseActions: document.getElementById('reportBuilderDatabaseActions'),
   reportBuilderDatabaseField: document.getElementById('reportBuilderDatabaseField'),
   reportBuilderAddDatabaseFieldBtn: document.getElementById('reportBuilderAddDatabaseFieldBtn'),
+  reportBuilderRebindDatabaseBtn: document.getElementById('reportBuilderRebindDatabaseBtn'),
+  reportBuilderDatabaseMismatch: document.getElementById('reportBuilderDatabaseMismatch'),
   reportBuilderLoadCategoriesBtn: document.getElementById('reportBuilderLoadCategoriesBtn'),
   reportBuilderCategoryPicker: document.getElementById('reportBuilderCategoryPicker'),
   reportBuilderCategoryFilter: document.getElementById('reportBuilderCategoryFilter'),
@@ -9098,8 +9100,12 @@ function wirePublishedReportsUi() {
   }
 }
 
-function reportBuilderSetStatus(message) {
-  if (els.reportBuilderStatus) els.reportBuilderStatus.textContent = String(message || '');
+function reportBuilderSetStatus(message, { error = false } = {}) {
+  const status = els.reportBuilderStatus;
+  if (!status) return;
+  status.setAttribute('role', error ? 'alert' : 'status');
+  status.classList.toggle('report-builder-error', error);
+  status.textContent = String(message || '');
 }
 
 function showReportsLanding() {
@@ -9112,6 +9118,7 @@ function showReportBuilder(report) {
   const permissions = reportPermissions(report);
   if (report && !permissions.edit) return;
   if (!report && !canCreateReports()) return;
+  reportBuilderSetStatus('');
   loadReportBuilderDefinition(report || null);
   setReportBuilderTab('report');
   if (els.reportsDownloadCard) els.reportsDownloadCard.style.display = 'none';
@@ -9467,6 +9474,7 @@ function renderReportBuilderSourceUi() {
   if (els.reportBuilderDatabaseField) els.reportBuilderDatabaseField.style.display = categoryMode ? 'none' : '';
   if (els.reportBuilderAddDatabaseFieldBtn) els.reportBuilderAddDatabaseFieldBtn.style.display = categoryMode ? 'none' : '';
   if (els.reportBuilderCategoryPicker && !categoryMode) els.reportBuilderCategoryPicker.style.display = 'none';
+  renderReportBuilderDatabaseMismatch();
   if (els.reportBuilderPreviewBtn) {
     els.reportBuilderPreviewBtn.disabled = false;
     els.reportBuilderPreviewBtn.title = '';
@@ -9478,6 +9486,25 @@ function renderReportBuilderSourceUi() {
     els.reportBuilderHmiEnabled.disabled = !canManage;
     els.reportBuilderHmiEnabled.title = canManage ? '' : 'Manage access is required to allow or prevent HMI display.';
   }
+}
+
+function reportBuilderColumnsOnOtherDatabases(databaseId) {
+  return state.reportBuilderColumns.filter((column) =>
+    column.source === 'database' && column.database_id && column.database_id !== databaseId);
+}
+
+function canChangeReportColumnDatabase() {
+  const current = state.reportBuilderReports.find((report) => report.id === state.reportBuilderOriginalId);
+  return hasPerm('reports.administer') || Boolean(current && !current.data_source?.source_id);
+}
+
+function renderReportBuilderDatabaseMismatch() {
+  const databaseId = els.reportBuilderDatabase?.value;
+  const count = databaseId ? reportBuilderColumnsOnOtherDatabases(databaseId).length : 0;
+  els.reportBuilderRebindDatabaseBtn.hidden = count === 0 || !canChangeReportColumnDatabase();
+  els.reportBuilderDatabaseMismatch.textContent = count === 1
+    ? '1 report column uses a different database.'
+    : count > 1 ? `${count} report columns use a different database.` : '';
 }
 
 async function loadReportBuilderDatabaseSchema(selection = {}) {
@@ -10337,6 +10364,7 @@ function renderReportBuilderSummaries() {
 }
 
 function renderReportBuilderColumns() {
+  renderReportBuilderDatabaseMismatch();
   if (!els.reportBuilderColumns) return;
   els.reportBuilderColumns.textContent = '';
   state.reportBuilderColumns.forEach((column, index) => {
@@ -10396,9 +10424,30 @@ function renderReportBuilderColumns() {
     heading.addEventListener('input', () => { column.heading = heading.value; });
     headingCell.appendChild(heading);
     const connection = document.createElement('td');
-    connection.textContent = column.source === 'calculated' ? 'Calculated' : (column.source === 'database'
-      ? String(column.database_id || '')
-      : String(column.connection_id || ''));
+    if (column.source === 'database' && canChangeReportColumnDatabase()) {
+      const databaseSelect = document.createElement('select');
+      databaseSelect.setAttribute('aria-label', `Database for ${column.heading || column.field || 'report column'}`);
+      databaseSelect.title = 'The selected database must contain the same table and fields.';
+      const databases = state.reportBuilderDatabases.map((database) => ({
+        value: database.id,
+        label: database.name || database.id
+      }));
+      const current = String(column.database_id || '');
+      if (!databases.some((database) => database.value === current)) {
+        databases.unshift({ value: current, label: current ? `${current} (unavailable)` : 'Select database' });
+      }
+      fillSelect(databaseSelect, databases, current);
+      databaseSelect.addEventListener('change', () => {
+        column.database_id = databaseSelect.value;
+        renderReportBuilderColumns();
+      });
+      connection.appendChild(databaseSelect);
+    } else if (column.source === 'database') {
+      connection.textContent = String(state.reportBuilderDatabases.find((database) =>
+        database.id === column.database_id)?.name || column.database_id || '');
+    } else {
+      connection.textContent = column.source === 'calculated' ? 'Calculated' : String(column.connection_id || '');
+    }
     const tag = document.createElement('td');
     if (column.source === 'calculated') {
       const editFormula = document.createElement('button');
@@ -10425,6 +10474,9 @@ function renderReportBuilderColumns() {
       const schemaFields = (reportBuilderSelectedTable()?.columns || []).filter((field) => field.name !== column.field)
         .map((field) => ({ column: field.name, label: field.name }));
       const fields = profile ? profileFields : schemaFields;
+      if (column.companion_field && !fields.some((field) => field.column === column.companion_field)) {
+        fields.push({ column: column.companion_field, label: column.companion_field });
+      }
       fillSelect(companion, [{ value: '', label: 'No additional text' },
         ...fields.map((field) => ({ value: field.column, label: field.label || field.column }))], String(column.companion_field || ''));
       const placement = document.createElement('select'); placement.title = 'Text placement';
@@ -10737,9 +10789,18 @@ async function saveReportBuilderDefinition(action = 'save_draft') {
   const card = els.reportBuilderCard;
   if (card.getAttribute('aria-busy') === 'true') return;
   card.setAttribute('aria-busy', 'true');
+  const buttons = [els.reportBuilderSaveBtn, els.reportBuilderPublishBtn,
+    els.reportBuilderUnpublishBtn, els.reportBuilderDiscardDraftBtn, els.reportBuilderPreviewBtn];
+  const disabled = buttons.map((button) => button.disabled);
+  buttons.forEach((button) => { button.disabled = true; });
   try {
     const report = ['save_draft', 'publish'].includes(action) ? reportBuilderCurrentDefinition() : undefined;
-    reportBuilderSetStatus('Saving…');
+    reportBuilderSetStatus({
+      save_draft: 'Saving draft…',
+      publish: 'Publishing report…',
+      unpublish: 'Unpublishing report…',
+      discard_draft: 'Discarding draft…'
+    }[action]);
     const response = await apiPostJson('/api/reports/admin', {
       original_id: state.reportBuilderOriginalId,
       action,
@@ -10764,14 +10825,25 @@ async function saveReportBuilderDefinition(action = 'save_draft') {
       els.reportBuilderDeleteBtn.disabled = !savedPermissions.manage;
     }
     reportBuilderSetStatus({
-      save_draft: 'Draft saved.',
+      save_draft: response.report.published ? 'Draft saved. The live report is unchanged.' : 'Draft saved. This report is unpublished.',
       publish: 'Report published.',
       unpublish: 'Report unpublished.',
       discard_draft: 'Draft discarded.'
     }[action]);
     return response.report;
+  } catch (err) {
+    const failure = {
+      save_draft: 'Could not save draft.',
+      publish: 'Could not publish report.',
+      unpublish: 'Could not unpublish report.',
+      discard_draft: 'Could not discard draft.'
+    }[action];
+    reportBuilderSetStatus(`${failure} ${err.message || err}`, { error: true });
   } finally {
     card.removeAttribute('aria-busy');
+    buttons.forEach((button, index) => { button.disabled = disabled[index]; });
+    const current = state.reportBuilderReports.find((report) => report.id === state.reportBuilderOriginalId);
+    els.reportBuilderPublishBtn.disabled = current ? !reportPermissions(current).manage : disabled[1];
   }
 }
 
@@ -10963,7 +11035,15 @@ function wireReportBuilderUi() {
   });
   if (els.reportBuilderLayout) els.reportBuilderLayout.addEventListener('change', renderReportBuilderSourceUi);
   if (els.reportBuilderDatabase) els.reportBuilderDatabase.addEventListener('change', () => {
+    renderReportBuilderDatabaseMismatch();
     loadReportBuilderDatabaseSchema().catch(() => {});
+  });
+  els.reportBuilderRebindDatabaseBtn.addEventListener('click', () => {
+    const databaseId = els.reportBuilderDatabase?.value;
+    if (!databaseId || !canChangeReportColumnDatabase()) return;
+    reportBuilderColumnsOnOtherDatabases(databaseId).forEach((column) => { column.database_id = databaseId; });
+    renderReportBuilderColumns();
+    reportBuilderSetStatus('Columns updated for the selected database. Preview the draft to verify the mappings.');
   });
   if (els.reportBuilderDataSource) els.reportBuilderDataSource.addEventListener('change', () => {
     const source = selectedReportDataSource();
@@ -11180,11 +11260,11 @@ function wireReportBuilderUi() {
   publicationActions.forEach(([button, action, confirmation]) => {
     button.addEventListener('click', () => {
       if (confirmation && !window.confirm(confirmation)) return;
-      saveReportBuilderDefinition(action).catch((err) => reportBuilderSetStatus(err.message || err));
+      saveReportBuilderDefinition(action);
     });
   });
   if (els.reportBuilderSaveBtn) els.reportBuilderSaveBtn.addEventListener('click', () => {
-    saveReportBuilderDefinition().catch((err) => reportBuilderSetStatus(err.message || err));
+    saveReportBuilderDefinition();
   });
   if (els.reportBuilderPreviewBtn) els.reportBuilderPreviewBtn.addEventListener('click', async () => {
     try {
