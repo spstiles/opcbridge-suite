@@ -433,6 +433,7 @@
   reportBuilderLayoutPlacedCellsWrap: document.getElementById('reportBuilderLayoutPlacedCellsWrap'),
   reportBuilderLayoutPlacedCells: document.getElementById('reportBuilderLayoutPlacedCells'),
   reportBuilderLayoutPreview: document.getElementById('reportBuilderLayoutPreview'),
+  reportBuilderTemplatePicker: document.getElementById('reportBuilderTemplatePicker'),
   reportBuilderTemplateEnabled: document.getElementById('reportBuilderTemplateEnabled'),
   reportBuilderTemplateInfo: document.getElementById('reportBuilderTemplateInfo'),
   reportBuilderTemplateFile: document.getElementById('reportBuilderTemplateFile'),
@@ -1347,6 +1348,8 @@ const state = {
   publishedReportCustomRange: false,
   publishedReportPreviewRequest: 0,
   reportBuilderReports: [],
+  reportBuilderTemplates: [],
+  reportBuilderTemplateListRequest: 0,
   reportBuilderOriginalId: '',
   reportBuilderColumns: [],
   reportBuilderSummaries: [],
@@ -9747,7 +9750,10 @@ function setReportBuilderTab(name) {
     button.classList.toggle('active', active);
     button.setAttribute('aria-selected', active ? 'true' : 'false');
   });
-  if (name === 'layout') renderReportBuilderLayout();
+  if (name === 'layout') {
+    renderReportBuilderLayout();
+    refreshReportBuilderTemplates().catch(() => {});
+  }
 }
 
 function reportBuilderLayoutColumnIndex(column, visibleIndex) {
@@ -9756,9 +9762,45 @@ function reportBuilderLayoutColumnIndex(column, visibleIndex) {
   return spreadsheetColumnIndex(els.reportBuilderLayoutTableColumn?.value || 'A') + visibleIndex + 1;
 }
 
+function reportTemplateKey(template) {
+  return template?.stored_id ? `${template.stored_id}.${template.format || 'xlsx'}` : '';
+}
+
+async function refreshReportBuilderTemplates() {
+  const picker = els.reportBuilderTemplatePicker;
+  const reportId = state.reportBuilderOriginalId;
+  const request = ++state.reportBuilderTemplateListRequest;
+  state.reportBuilderTemplates = [];
+  renderReportBuilderTemplateControls();
+  const report = state.reportBuilderReports.find((item) => item.id === reportId);
+  if (!picker || (reportId ? !reportPermissions(report).manage : !canCreateReports())) return;
+  try {
+    const result = await apiGet(`/api/reports/admin/templates?id=${encodeURIComponent(reportId)}`);
+    if (request !== state.reportBuilderTemplateListRequest || reportId !== state.reportBuilderOriginalId) return;
+    state.reportBuilderTemplates = Array.isArray(result.templates) ? result.templates : [];
+    renderReportBuilderTemplateControls();
+  } catch (error) {
+    if (request === state.reportBuilderTemplateListRequest && reportId === state.reportBuilderOriginalId) {
+      picker.options[0].textContent = `Could not load templates. ${error.message || error}`;
+    }
+  }
+}
+
 function renderReportBuilderTemplateControls() {
   const template = state.reportBuilderTemplate;
   const hasTemplate = Boolean(template?.stored_id);
+  if (els.reportBuilderTemplatePicker) {
+    const choices = state.reportBuilderTemplates.map((item) => ({
+      value: reportTemplateKey(item),
+      label: item.filename + (item.uploaded_at ? ` · ${new Date(item.uploaded_at).toLocaleString()}` : '')
+    }));
+    const selected = reportTemplateKey(template);
+    if (selected && !choices.some((item) => item.value === selected)) {
+      choices.unshift({ value: selected, label: template.filename });
+    }
+    fillSelect(els.reportBuilderTemplatePicker, [{ value: '', label: 'Choose a template' }, ...choices], selected);
+    els.reportBuilderTemplatePicker.disabled = state.reportBuilderTemplates.length === 0;
+  }
   if (els.reportBuilderTemplateEnabled) {
     els.reportBuilderTemplateEnabled.disabled = !hasTemplate;
     els.reportBuilderTemplateEnabled.checked = hasTemplate && template.enabled === true;
@@ -10705,6 +10747,8 @@ function renderReportPublicationControls(report) {
 }
 
 function loadReportBuilderDefinition(report) {
+  ++state.reportBuilderTemplateListRequest;
+  state.reportBuilderTemplates = [];
   renderReportPublicationControls(report);
   const value = report || {
     id: '', name: '', description: '', timezone: browserTimezone(),
@@ -10869,6 +10913,7 @@ async function saveReportBuilderDefinition(action = 'save_draft') {
       renderPublishedReportSelection();
     }
     loadReportBuilderDefinition(response.report);
+    if (state.reportBuilderActiveTab === 'layout') refreshReportBuilderTemplates().catch(() => {});
     if (els.reportBuilderTitle) els.reportBuilderTitle.textContent = `Edit ${response.report.name || 'Report'}`;
     const savedPermissions = reportPermissions(response.report);
     if (els.reportBuilderDuplicateBtn) {
@@ -10972,6 +11017,20 @@ function wireReportBuilderUi() {
   els.reportBuilderLayoutIncludeHeader?.addEventListener('change', () => {
     if (state.reportBuilderActiveTab === 'layout') renderReportBuilderLayoutPreview();
   });
+  els.reportBuilderTemplatePicker?.addEventListener('change', () => {
+    const template = state.reportBuilderTemplates.find((item) =>
+      reportTemplateKey(item) === els.reportBuilderTemplatePicker.value);
+    if (!template) {
+      renderReportBuilderTemplateControls();
+      return;
+    }
+    state.reportBuilderTemplate = { ...template, enabled: true };
+    state.reportBuilderTemplatePreview = null;
+    renderReportBuilderTemplateControls();
+    renderReportBuilderLayoutPreview();
+    refreshReportBuilderTemplatePreview().catch(() => {});
+    reportBuilderSetStatus('Template selected. Save Draft to keep it.');
+  });
   els.reportBuilderTemplateEnabled?.addEventListener('change', () => {
     if (state.reportBuilderTemplate) state.reportBuilderTemplate.enabled = els.reportBuilderTemplateEnabled.checked;
     renderReportBuilderLayoutPreview();
@@ -10986,10 +11045,6 @@ function wireReportBuilderUi() {
       return;
     }
     const reportId = state.reportBuilderOriginalId || String(els.reportBuilderId?.value || '').trim();
-    if (!reportId) {
-      if (els.reportBuilderTemplateStatus) els.reportBuilderTemplateStatus.textContent = 'Enter a report name before uploading a template.';
-      return;
-    }
     els.reportBuilderTemplateUploadBtn.disabled = true;
     if (els.reportBuilderTemplateStatus) els.reportBuilderTemplateStatus.textContent = 'Uploading template…';
     try {
@@ -11011,7 +11066,8 @@ function wireReportBuilderUi() {
       renderReportBuilderTemplateControls();
       if (!state.reportBuilderTemplatePreview) await refreshReportBuilderTemplatePreview();
       else renderReportBuilderLayoutPreview();
-      if (els.reportBuilderTemplateStatus) els.reportBuilderTemplateStatus.textContent = 'Template staged. Save the report to make it active.';
+      if (els.reportBuilderTemplateStatus) els.reportBuilderTemplateStatus.textContent = 'Template uploaded. Save Draft to attach it to this report.';
+      refreshReportBuilderTemplates().catch(() => {});
     } catch (err) {
       if (els.reportBuilderTemplateStatus) els.reportBuilderTemplateStatus.textContent = `Upload failed: ${err.message || err}`;
     } finally {

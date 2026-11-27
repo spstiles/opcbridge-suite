@@ -16,10 +16,11 @@ test('report drafts stay private until publish and can be previewed or discarded
     server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
   const auth = http.createServer((req, res) => {
     const editor = req.headers.cookie === 'role=editor';
+    const admin = req.headers.cookie === 'role=admin';
     res.end(JSON.stringify({ user: {
-      username: editor ? 'editor' : 'viewer',
+      username: editor ? 'editor' : admin ? 'admin' : 'viewer',
       groups: editor ? ['editors'] : ['viewers'],
-      permissions: ['reports.access', ...(editor ? ['reports.create'] : [])]
+      permissions: ['reports.access', ...(editor ? ['reports.create'] : []), ...(admin ? ['reports.administer'] : [])]
     } }));
   });
   const corePort = await listen(auth);
@@ -32,10 +33,12 @@ test('report drafts stay private until publish and can be previewed or discarded
   fs.writeFileSync(generator, `#!${process.execPath}
 const fs = require('node:fs');
 const file = process.argv[process.argv.indexOf('--definitions') + 1];
-console.log(JSON.stringify({ name: JSON.parse(fs.readFileSync(file)).reports[0].name }));
+console.log(JSON.stringify(process.argv[2] === 'template-preview'
+  ? { worksheet: 'Template' } : { name: JSON.parse(fs.readFileSync(file)).reports[0].name }));
 `, { mode: 0o700 });
   const server = spawn(process.execPath, [path.join(__dirname, '../server.js')], {
-    env: { ...process.env, OPCBRIDGE_SCADA_CONFIG: config, OPCBRIDGE_REPORT_DEFINITIONS: definitions, OPCBRIDGE_REPORT_BIN: generator },
+    env: { ...process.env, OPCBRIDGE_SCADA_CONFIG: config, OPCBRIDGE_REPORT_DEFINITIONS: definitions,
+      OPCBRIDGE_REPORT_BIN: generator, OPCBRIDGE_REPORT_TEMPLATE_DIR: path.join(dir, 'templates') },
     stdio: 'ignore'
   });
   t.after(async () => {
@@ -122,5 +125,25 @@ console.log(JSON.stringify({ name: JSON.parse(fs.readFileSync(file)).reports[0].
   assert.equal(updatedSources.data_source.database_id, 'another');
   assert.equal(updatedSources.columns[0].database_id, undefined);
   assert.equal(updatedSources.columns[1].database_id, 'legacy');
+
+  const uploaded = await fetch(`http://127.0.0.1:${port}/api/reports/admin/template/upload`, {
+    method: 'POST', headers: { cookie: 'role=editor', 'X-File-Name': 'Runtime%20Template.xlsx' },
+    body: Buffer.from('PK mock spreadsheet')
+  });
+  assert.equal(uploaded.status, 200);
+  const { template } = await uploaded.json();
+  const library = await api(`/admin/templates?id=${draft.id}`);
+  assert.equal(library.templates[0].filename, 'Runtime Template.xlsx');
+  assert.equal(library.templates[0].stored_id, template.stored_id);
+  const legacyId = 'a'.repeat(64);
+  fs.writeFileSync(path.join(dir, 'templates', `${legacyId}.ods`), 'legacy template');
+  assert(!(await api('/admin/templates')).templates.some((item) => item.stored_id === legacyId));
+  assert((await api('/admin/templates', null, 'admin')).templates.some((item) =>
+    item.stored_id === legacyId && item.filename === 'Uploaded aaaaaaaaaa.ods'));
+  assert.equal((await api('/admin')).reports[0].template, null);
+  const templateDraft = await update('save_draft', { ...updatedSources, template: { ...library.templates[0], enabled: true } });
+  assert.equal(templateDraft.report.template.stored_id, template.stored_id);
+  assert.equal((await api('/admin')).reports[0].template.enabled, true);
+  assert.equal(JSON.parse(fs.readFileSync(definitions)).reports[0].template, null);
 
 });

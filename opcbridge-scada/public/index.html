@@ -1709,6 +1709,9 @@
 		            <div style="grid-column:1 / -1; padding:10px 12px; border:1px solid var(--border); border-radius:7px;">
 		              <label><span><input id="reportBuilderTemplateEnabled" type="checkbox" disabled> Use spreadsheet template</span></label>
 		              <div class="hint" id="reportBuilderTemplateInfo" style="margin-top:6px;">No template uploaded.</div>
+                      <label style="margin-top:8px;"><span>Uploaded templates</span>
+                        <select id="reportBuilderTemplatePicker" disabled><option value="">Choose a template</option></select>
+                      </label>
 		              <div class="row-actions" style="margin-top:10px; flex-wrap:wrap;">
 		                <input id="reportBuilderTemplateFile" type="file" accept=".xlsx,.ods,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.oasis.opendocument.spreadsheet">
 		                <button class="btn" id="reportBuilderTemplateUploadBtn" type="button">Upload Template</button>

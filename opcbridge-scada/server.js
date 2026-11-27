@@ -535,6 +535,62 @@ function readReportDefinitions() {
   return Array.isArray(root?.reports) ? root.reports.filter((report) => report && typeof report === 'object') : [];
 }
 
+const reportTemplateCatalogPath = () => path.join(REPORT_TEMPLATE_DIR, 'catalog.json');
+
+function readReportTemplateCatalog() {
+  const catalog = readJsonFileOrNull(reportTemplateCatalogPath());
+  return Array.isArray(catalog?.uploads) ? catalog.uploads : [];
+}
+
+function listReportTemplates(status, reportId, reports) {
+  const admin = authStatusHasPerm(status, 'reports.administer');
+  const username = authStatusUsername(status);
+  const available = new Map();
+  const add = (template) => {
+    const storedId = String(template?.stored_id || '').toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(storedId)) return;
+    const format = reportTemplateFormat(template);
+    if (!fs.existsSync(path.join(REPORT_TEMPLATE_DIR, `${storedId}.${format}`))) return;
+    available.set(`${storedId}.${format}`, {
+      filename: String(template.filename || `template.${format}`), format, stored_id: storedId,
+      size: Number(template.size) || 0, uploaded_at: String(template.uploaded_at || '')
+    });
+  };
+  for (const upload of readReportTemplateCatalog()) {
+    if (admin || (username && upload.username === username) || (reportId && upload.report_id === reportId)) {
+      add(upload.template);
+    }
+  }
+  for (const report of reports) {
+    if (admin || report.id === reportId || reportGrant(report, status).manage) {
+      add(report.template);
+      add(report.draft?.template);
+    }
+  }
+  // Legacy uploads made before the catalog have only their content hash on disk.
+  if (admin && fs.existsSync(REPORT_TEMPLATE_DIR)) {
+    for (const item of fs.readdirSync(REPORT_TEMPLATE_DIR)) {
+      const match = /^([a-f0-9]{64})\.(xlsx|ods)$/.exec(item);
+      if (!match || available.has(item)) continue;
+      const file = fs.statSync(path.join(REPORT_TEMPLATE_DIR, item));
+      if (!file.isFile()) continue;
+      add({ stored_id: match[1], format: match[2], filename: `Uploaded ${match[1].slice(0, 10)}.${match[2]}`,
+        size: file.size, uploaded_at: file.mtime.toISOString() });
+    }
+  }
+  return [...available.values()].sort((a, b) => b.uploaded_at.localeCompare(a.uploaded_at));
+}
+
+function reportTemplateIsSelectable(template, status, existing, reports) {
+  if (!template) return true;
+  const id = String(template.stored_id || '').toLowerCase();
+  const format = reportTemplateFormat(template);
+  const matches = (entry) => entry?.stored_id === id && reportTemplateFormat(entry) === format;
+  if (matches(existing?.template) || matches(existing?.draft?.template)) return true;
+  if (existing && !reportGrant(existing, status).manage) return false;
+  return listReportTemplates(status, existing?.id || '', reports).some(matches);
+}
+
 function reportEditorDefinition(report, status) {
   const { draft, ...saved } = report;
   return {
@@ -2505,6 +2561,7 @@ function buildProjectBackup({ includeSecrets = false, includeHistory = false, in
     .forEach((rel) => add('logger_reports', REPORTER_REPORTS_DIR, rel));
   add('report_config', path.dirname(REPORT_DEFINITIONS_PATH), path.basename(REPORT_DEFINITIONS_PATH));
   add('report_config', path.dirname(REPORT_DATA_SOURCES_PATH), path.basename(REPORT_DATA_SOURCES_PATH));
+  add('report_templates', REPORT_TEMPLATE_DIR, 'catalog.json');
   projectBackupWalkFiles(REPORT_TEMPLATE_DIR, '.', { includeExts: ['.xlsx', '.ods'] })
     .forEach((rel) => add('report_templates', REPORT_TEMPLATE_DIR, rel));
 
@@ -2696,7 +2753,7 @@ function managedBackupFileTarget(section, rel) {
     }
   }
   if (section === 'logger_reports' && /\.(?:jsonc?|sql|txt|md)$/i.test(rel)) return path.join(REPORTER_REPORTS_DIR, rel);
-  if (section === 'report_templates' && /\.(?:xlsx|ods)$/i.test(rel)) return path.join(REPORT_TEMPLATE_DIR, rel);
+  if (section === 'report_templates' && (rel === 'catalog.json' || /\.(?:xlsx|ods)$/i.test(rel))) return path.join(REPORT_TEMPLATE_DIR, rel);
   return '';
 }
 
@@ -6020,6 +6077,10 @@ const server = http.createServer(async (req, res) => {
         );
         source.id = existing ? sanitizeId(existing.id) : uniqueOpaqueId('report', usedIds);
         source.published = action === 'publish';
+        if (!reportTemplateIsSelectable(source.template, reportStatus, existing, reports)) {
+          sendJson(res, 403, { ok: false, error: 'The selected report template is unavailable.' });
+          return;
+        }
         const report = normalizeReportDefinition(source, { draft: action === 'save_draft' });
         const saved = action === 'save_draft' && existing?.published
           ? { ...existing, draft: report }
@@ -6180,6 +6241,26 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === '/api/reports/admin/templates') {
+    const status = await requireReportsPerm();
+    if (!status) return;
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    const reportId = sanitizeId(url.searchParams.get('id') || '');
+    const reports = readReportDefinitions();
+    const existing = reports.find((report) => report.id === reportId);
+    const canManage = existing ? reportGrant(existing, status).manage :
+      authStatusHasPerm(status, 'reports.create') || authStatusHasPerm(status, 'reports.administer');
+    if ((reportId && !existing) || !canManage) {
+      sendJson(res, 403, { ok: false, error: 'Manage access is required to choose a report template.' });
+      return;
+    }
+    sendJson(res, 200, { ok: true, templates: listReportTemplates(status, reportId, reports) });
+    return;
+  }
+
   if (url.pathname === '/api/reports/admin/template/upload') {
     const reportStatus = await requireReportsPerm();
     if (!reportStatus) return;
@@ -6189,7 +6270,6 @@ const server = http.createServer(async (req, res) => {
     }
     try {
       const id = sanitizeId(url.searchParams.get('id') || '');
-      if (!id) throw new Error('A report id is required.');
       const existing = readReportDefinitions().find((report) => sanitizeId(report?.id) === id);
       const allowed = existing
         ? reportGrant(existing, reportStatus).manage
@@ -6232,6 +6312,19 @@ const server = http.createServer(async (req, res) => {
         size: body.length,
         uploaded_at: new Date().toISOString()
       };
+      const username = authStatusUsername(reportStatus);
+      const uploads = readReportTemplateCatalog().filter((entry) =>
+        !(entry.username === username && entry.report_id === id &&
+          entry.template?.stored_id === storedId && entry.template?.format === format));
+      uploads.push({ username, report_id: id, template });
+      const catalog = reportTemplateCatalogPath();
+      const temporary = `${catalog}.${crypto.randomUUID()}.tmp`;
+      try {
+        fs.writeFileSync(temporary, JSON.stringify({ uploads }), { mode: 0o640, flag: 'wx' });
+        fs.renameSync(temporary, catalog);
+      } finally {
+        fs.rmSync(temporary, { force: true });
+      }
       sendJson(res, 200, { ok: true, template, preview });
     } catch (err) {
       sendJson(res, 400, { ok: false, error: String(err.message || err) });
@@ -6250,19 +6343,21 @@ const server = http.createServer(async (req, res) => {
     try {
       const id = sanitizeId(url.searchParams.get('id') || '');
       const storedId = String(url.searchParams.get('stored_id') || '').trim().toLowerCase();
-      if (!id || !/^[a-f0-9]{64}$/.test(storedId)) throw new Error('A valid report and template are required.');
+      if (!/^[a-f0-9]{64}$/.test(storedId)) throw new Error('A valid report and template are required.');
       const existing = readReportDefinitions().find((report) => sanitizeId(report?.id) === id);
       const grant = existing ? reportGrant(existing, reportStatus) : null;
       const editorTemplate = (existing?.draft || existing)?.template;
       const currentStoredId = String(editorTemplate?.stored_id || '').trim().toLowerCase();
-      const allowed = existing
-        ? Boolean(grant?.manage || (grant?.edit && storedId === currentStoredId))
-        : (authStatusHasPerm(reportStatus, 'reports.create') || authStatusHasPerm(reportStatus, 'reports.administer'));
+      const libraryAllowed = existing ? grant?.manage :
+        authStatusHasPerm(reportStatus, 'reports.create') || authStatusHasPerm(reportStatus, 'reports.administer');
+      const requestedFormat = reportTemplateFormat({ format: url.searchParams.get('format'), filename: url.searchParams.get('filename') });
+      const allowed = (grant?.edit && storedId === currentStoredId) ||
+        (libraryAllowed && listReportTemplates(reportStatus, existing?.id || '', readReportDefinitions())
+          .some((template) => template.stored_id === storedId && template.format === requestedFormat));
       if (!allowed) {
         sendJson(res, 403, { ok: false, error: 'This user cannot access the selected report template.' });
         return;
       }
-      const requestedFormat = reportTemplateFormat({ format: url.searchParams.get('format'), filename: url.searchParams.get('filename') });
       const currentFormat = reportTemplateFormat(editorTemplate);
       const format = grant?.manage || !existing ? requestedFormat : currentFormat;
       const templatePath = path.join(REPORT_TEMPLATE_DIR, `${storedId}.${format}`);
@@ -6351,7 +6446,8 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = JSON.parse((await readBody(req, 2 * 1024 * 1024)).toString('utf8') || '{}');
       const requestedId = sanitizeId(body.id);
-      const saved = requestedId && readReportDefinitions().find((item) => sanitizeId(item?.id) === requestedId);
+      const reports = readReportDefinitions();
+      const saved = requestedId && reports.find((item) => sanitizeId(item?.id) === requestedId);
       if (requestedId && !saved) throw new Error(`Report not found: ${requestedId}`);
       if (saved ? !canAccessReport(saved, reportStatus, 'edit') :
           !authStatusHasPerm(reportStatus, 'reports.create') && !authStatusHasPerm(reportStatus, 'reports.administer')) {
@@ -6359,6 +6455,10 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const id = requestedId || 'draft-preview';
+      if (!reportTemplateIsSelectable(body.report?.template, reportStatus, saved, reports)) {
+        sendJson(res, 403, { ok: false, error: 'The selected report template is unavailable.' });
+        return;
+      }
       const report = body.report
         ? normalizeReportDefinition({ ...body.report, id, published: false })
         : saved?.draft || saved;
