@@ -298,7 +298,7 @@ function validate_report(array $report): array
         $occupiedColumns[$sheetColumnNumber] = true;
         $visibleIndex++;
     }
-    $summaryCalculations = ['none', 'sum', 'avg', 'min', 'max', 'first', 'last', 'count', 'missing', 'formula'];
+    $summaryCalculations = ['none', 'sum', 'avg', 'min', 'max', 'first', 'last', 'count', 'missing', 'formula', 'text'];
     $summaries = is_array($report['summaries'] ?? null) ? array_slice($report['summaries'], 0, 20) : [];
     foreach ($summaries as $index => &$summary) {
         if (!is_array($summary) || trim((string)($summary['label'] ?? '')) === '') {
@@ -1075,6 +1075,8 @@ function calculate_summary_rows(array $report, array $rows): array
             $value = null;
             if (in_array($calculation, ['count', 'missing', 'first', 'last', 'sum', 'avg', 'min', 'max'], true)) {
                 $value = summary_statistic_value($calculation, $stats);
+            } elseif ($calculation === 'text') {
+                $value = (string)($summary['texts'][$columnIndex] ?? '');
             } elseif ($calculation === 'formula') {
                 $formula = (string)($summary['formulas'][$columnIndex] ?? '');
                 try {
@@ -1410,6 +1412,10 @@ function write_spreadsheet(
         foreach ($row['values'] as $index => $value) {
             if ($value === null) continue;
             $cell = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($columnIndexes[$index]) . $rowNumber;
+            if (is_string($value)) {
+                $sheet->setCellValueExplicit($cell, $value, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+                continue;
+            }
             $sheet->setCellValue($cell, $value);
             $precision = $row['precisions'][$index] ?? null;
             $precision = $precision === null

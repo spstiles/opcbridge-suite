@@ -64,7 +64,8 @@ console.log(JSON.stringify({ name: JSON.parse(fs.readFileSync(file)).reports[0].
   const report = {
     name: 'Live report', hmi_enabled: true,
     access: [{ group_id: 'viewers', view: true }],
-    columns: [{ source: 'historian', connection_id: 'PLC', tag_name: 'Value' }]
+    columns: [{ source: 'historian', connection_id: 'PLC', tag_name: 'Value' }],
+    summaries: [{ label: 'Summary', calculations: ['text'], texts: ['005'] }]
   };
   const draft = (await api('/admin', { report: { name: 'Work in progress' } })).report;
   assert.equal(draft.has_draft, true);
@@ -72,7 +73,10 @@ console.log(JSON.stringify({ name: JSON.parse(fs.readFileSync(file)).reports[0].
   assert.equal((await api('/hmi')).reports.length, 0);
 
   const update = (action, fields) => api('/admin', { original_id: draft.id, action, report: fields });
-  assert.equal((await update('publish', report)).report.published, true);
+  const published = (await update('publish', report)).report;
+  assert.equal(published.published, true);
+  assert.deepEqual(published.summaries[0].calculations, ['text']);
+  assert.deepEqual(published.summaries[0].texts, ['005']);
   const edited = { ...report, name: 'Draft change', hmi_enabled: false };
   assert.equal((await update('save_draft', edited)).report.has_draft, true);
   assert.equal((await api('/admin')).reports[0].name, 'Draft change');

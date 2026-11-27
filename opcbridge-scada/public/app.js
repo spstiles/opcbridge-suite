@@ -8902,10 +8902,11 @@ function renderPublishedReportPreview(preview) {
     (row.values || []).forEach((value, index) => {
       if (value === null || value === undefined) return;
       const precision = row.precisions?.[index] ?? columns[index]?.precision ?? 2;
-      put(outputRow, placements[index], Number(value).toLocaleString(undefined, {
+      const text = typeof value === 'number' ? value.toLocaleString(undefined, {
         minimumFractionDigits: precision,
         maximumFractionDigits: precision
-      }), previewClass('layout-summary'));
+      }) : String(value);
+      put(outputRow, placements[index], text, previewClass('layout-summary'));
     });
   });
   let layoutRow = Math.max(tableRow, Number(templatePreview?.max_row || 0),
@@ -9635,6 +9636,7 @@ function reportBuilderCurrentDefinition() {
         String(summary.calculations?.[index] || 'none')),
       formulas: state.reportBuilderColumns.map((_, index) =>
         String(summary.formulas?.[index] || '').trim()),
+      texts: state.reportBuilderColumns.map((_, index) => String(summary.texts?.[index] ?? '')),
       precisions: state.reportBuilderColumns.map((_, index) => {
         const value = summary.precisions?.[index];
         return value === null || value === undefined || value === '' ? null : Math.max(0, Math.min(10, Math.trunc(Number(value))));
@@ -9951,7 +9953,12 @@ function renderReportBuilderLayoutPreview() {
     put(row, tableColumn, String(summary.label || 'Summary'), 'layout-summary');
     visibleColumns.forEach((column, visibleIndex) => {
       const columnIndex = state.reportBuilderColumns.indexOf(column);
-      if (String(summary.calculations?.[columnIndex] || 'none') === 'none') return;
+      const calculation = summary.calculations?.[columnIndex] || 'none';
+      if (calculation === 'none') return;
+      if (calculation === 'text') {
+        put(row, placements[visibleIndex], String(summary.texts?.[columnIndex] ?? ''), 'layout-summary');
+        return;
+      }
       const precision = summary.precisions?.[columnIndex] ?? column.precision ?? 2;
       put(row, placements[visibleIndex], (300 + visibleIndex + 0.5).toFixed(precision), 'layout-summary');
     });
@@ -10187,11 +10194,31 @@ function reorderReportBuilderSummaryColumns(fromIndex, toIndex) {
     const [movedFormula] = formulas.splice(fromIndex, 1);
     formulas.splice(toIndex, 0, movedFormula || '');
     summary.formulas = formulas;
+    const texts = state.reportBuilderColumns.map((_, index) => summary.texts?.[index] ?? '');
+    const [movedText] = texts.splice(fromIndex, 1);
+    texts.splice(toIndex, 0, movedText ?? '');
     const precisions = Array.isArray(summary.precisions) ? summary.precisions : [];
     const [movedPrecision] = precisions.splice(fromIndex, 1);
     precisions.splice(toIndex, 0, movedPrecision ?? null);
     summary.precisions = precisions;
   });
+}
+
+function openReportSummaryTextDialog(summary, columnIndex) {
+  const dialog = document.getElementById('reportSummaryTextDialog');
+  const input = document.getElementById('reportSummaryTextValue');
+  dialog.returnValue = '';
+  input.value = String(summary.texts?.[columnIndex] ?? '');
+  dialog.addEventListener('close', () => {
+    if (dialog.returnValue === 'save') {
+      const texts = summary.texts ??= [];
+      texts[columnIndex] = input.value;
+      summary.calculations[columnIndex] = 'text';
+    }
+    renderReportBuilderSummaries();
+    renderReportBuilderLayout();
+  }, { once: true });
+  dialog.showModal();
 }
 
 function renderReportBuilderSummaries() {
@@ -10214,7 +10241,7 @@ function renderReportBuilderSummaries() {
   const choices = [
     ['none', 'Blank'], ['sum', 'Total'], ['avg', 'Average'], ['min', 'Minimum'],
     ['max', 'Maximum'], ['first', 'First'], ['last', 'Last'],
-    ['count', 'Sample count'], ['missing', 'Missing count'], ['formula', 'Formula…']
+    ['count', 'Sample count'], ['missing', 'Missing count'], ['text', 'Text'], ['formula', 'Formula…']
   ];
   state.reportBuilderSummaries.forEach((summary, summaryIndex) => {
     if (!Array.isArray(summary.calculations)) summary.calculations = [];
@@ -10289,10 +10316,17 @@ function renderReportBuilderSummaries() {
       const editFormula = document.createElement('button');
       editFormula.className = 'btn report-summary-formula-button';
       editFormula.type = 'button';
-      editFormula.textContent = summary.formulas[columnIndex] ? 'Edit Formula' : 'Set Formula';
-      editFormula.hidden = select.value !== 'formula';
-      editFormula.addEventListener('click', () => openReportSummaryFormulaModal(summaryIndex, columnIndex));
+      editFormula.textContent = select.value === 'text' ? 'Edit Text' : (summary.formulas[columnIndex] ? 'Edit Formula' : 'Set Formula');
+      editFormula.hidden = !['formula', 'text'].includes(select.value);
+      editFormula.addEventListener('click', () => {
+        if (select.value === 'text') openReportSummaryTextDialog(summary, columnIndex);
+        else openReportSummaryFormulaModal(summaryIndex, columnIndex);
+      });
       select.addEventListener('change', () => {
+        if (select.value === 'text') {
+          openReportSummaryTextDialog(summary, columnIndex);
+          return;
+        }
         summary.calculations[columnIndex] = select.value;
         if (select.value === 'formula') openReportSummaryFormulaModal(summaryIndex, columnIndex);
         else renderReportBuilderSummaries();
@@ -10609,6 +10643,7 @@ function renderReportBuilderColumns() {
       state.reportBuilderColumns.splice(index, 1);
       state.reportBuilderSummaries.forEach((summary) => summary.calculations?.splice(index, 1));
       state.reportBuilderSummaries.forEach((summary) => summary.formulas?.splice(index, 1));
+      state.reportBuilderSummaries.forEach((summary) => summary.texts?.splice(index, 1));
       state.reportBuilderSummaries.forEach((summary) => summary.precisions?.splice(index, 1));
       renderReportBuilderColumns();
     });
@@ -10658,6 +10693,7 @@ function loadReportBuilderDefinition(report) {
         label: String(summary?.label || ''),
         calculations: Array.isArray(summary?.calculations) ? [...summary.calculations] : [],
         formulas: Array.isArray(summary?.formulas) ? [...summary.formulas] : [],
+        texts: state.reportBuilderColumns.map((_, index) => String(summary?.texts?.[index] ?? '')),
         precisions: Array.isArray(summary?.precisions) ? [...summary.precisions] : []
       })) : [];
   state.reportBuilderAccess = Array.isArray(value.access) ? value.access.map((grant) => ({ ...grant })) : [];
@@ -10981,6 +11017,7 @@ function wireReportBuilderUi() {
       label: 'Summary',
       calculations: state.reportBuilderColumns.map(() => 'none'),
       formulas: state.reportBuilderColumns.map(() => ''),
+      texts: state.reportBuilderColumns.map(() => ''),
       precisions: state.reportBuilderColumns.map(() => null)
     });
     renderReportBuilderSummaries();
@@ -11174,6 +11211,7 @@ function wireReportBuilderUi() {
     state.reportBuilderColumns.push(column);
     state.reportBuilderSummaries.forEach((summary) => summary.calculations?.push('none'));
     state.reportBuilderSummaries.forEach((summary) => summary.formulas?.push(''));
+    state.reportBuilderSummaries.forEach((summary) => summary.texts?.push(''));
     state.reportBuilderSummaries.forEach((summary) => summary.precisions?.push(null));
     renderReportBuilderColumns();
     openReportFormulaModal(state.reportBuilderColumns.length - 1);

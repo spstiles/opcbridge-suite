@@ -2078,6 +2078,15 @@ details.advanced summary {
   overflow: hidden;
 }
 
+#reportSummaryTextDialog {
+  color: var(--text);
+  padding: 0;
+}
+
+#reportSummaryTextDialog::backdrop {
+  background: #0009;
+}
+
 .modal-titlebar {
   display: flex;
   align-items: center;

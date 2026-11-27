@@ -2613,6 +2613,20 @@
     </div>
   </div>
 
+  <dialog class="modal" id="reportSummaryTextDialog" aria-labelledby="reportSummaryTextTitle" style="max-width: 480px;">
+    <form method="dialog">
+      <div class="modal-titlebar"><div class="modal-title" id="reportSummaryTextTitle">Summary Cell Text</div></div>
+      <div class="modal-body">
+        <label for="reportSummaryTextValue">Text</label>
+        <input type="text" id="reportSummaryTextValue" maxlength="2000" style="width: 100%;" autofocus>
+        <div class="row-actions" style="margin-top: 14px;">
+          <button class="btn primary" value="save">Use Text</button>
+          <button class="btn" value="cancel">Cancel</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
   <div class="modal-overlay" id="reportFormulaModal" style="display:none;">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="reportFormulaModalTitle" style="max-width: 900px;">
       <div class="modal-titlebar">

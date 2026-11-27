@@ -887,7 +887,7 @@ function normalizeReportDefinition(value, { draft = false } = {}) {
   if (!draft && !columns.some((column) => column.visible !== false)) {
     throw new Error('At least one report column must be shown.');
   }
-  const summaryCalculations = new Set(['none', 'sum', 'avg', 'min', 'max', 'first', 'last', 'count', 'missing', 'formula']);
+  const summaryCalculations = new Set(['none', 'sum', 'avg', 'min', 'max', 'first', 'last', 'count', 'missing', 'formula', 'text']);
   const summaries = (Array.isArray(source.summaries) ? source.summaries : []).slice(0, 20).map((summary, index) => {
     const item = summary && typeof summary === 'object' ? summary : {};
     const label = String(item.label || '').trim().slice(0, 191);
@@ -908,7 +908,8 @@ function normalizeReportDefinition(value, { draft = false } = {}) {
         throw new Error(`Summary row ${index + 1} requires a formula.`);
       }
     });
-    return { label, calculations, formulas, precisions };
+    const texts = columns.map((_, columnIndex) => String(item.texts?.[columnIndex] ?? '').slice(0, 2000));
+    return { label, calculations, formulas, texts, precisions };
   });
   const accessByGroup = new Map();
   (Array.isArray(source.access) ? source.access : []).forEach((entry) => {
