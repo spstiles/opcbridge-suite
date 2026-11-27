@@ -3206,7 +3206,7 @@ function collectLoggerReportHistorianPanelEntries() {
   const out = [];
   const seen = new Set();
   rows.forEach((row) => {
-    const connectionId = String(row.querySelector('[data-logger-historian-connection="1"]')?.value || '').trim();
+    const connectionId = readLoggerConnectionInput(row.querySelector('[data-logger-historian-connection="1"]'));
     const tagName = String(row.querySelector('[data-logger-historian-tag="1"]')?.value || '').trim();
     const range = String(row.querySelector('[data-logger-historian-range="1"]')?.value || '1h').trim() || '1h';
     const statistic = String(row.querySelector('[data-logger-historian-statistic="1"]')?.value || 'avg').trim().toLowerCase() || 'avg';
@@ -3331,6 +3331,7 @@ function renderLoggerReportHistorianPanel(report, entriesOverride = null) {
 
     const connInput = mkInput('loggerHistorianConnection', entry.connection_id, 'PLC1');
     connInput.dataset.loggerHistorianConnection = '1';
+    setLoggerConnectionInput(connInput, entry.connection_id);
     const tagInput = mkInput('loggerHistorianTag', entry.tag_name, 'Flow');
     tagInput.dataset.loggerHistorianTag = '1';
     const rangeInput = mkInput('loggerHistorianRange', entry.range || '1h', '1h');
@@ -4035,24 +4036,35 @@ function displayConnectionName(connectionId, runtimeName = '') {
 function loggerConnectionId(text) {
   if (!text) return '';
   const ids = new Set((state.connFiles || []).map((file) => connectionIdForConnFilePath(String(file?.path || ''))));
+  Object.keys(state.healthLast?.connections || {}).forEach((id) => ids.add(id));
   ids.add(MEMORY_CONNECTION_ID);
   ids.add('_system');
   if (ids.has(text)) return text;
-  const matches = Array.from(ids).filter((id) => id && displayConnectionName(id) === text);
+  const matches = Array.from(ids).filter((id) => id && loggerConnectionName(id) === text);
   return matches.length === 1 ? matches[0] : text;
+}
+
+function loggerConnectionName(id) {
+  const configured = displayConnectionName(id);
+  return configured !== id ? configured : displayConnectionName(id, state.healthLast?.connections?.[id]?.connection_name);
 }
 
 function setLoggerConnectionInput(input, connectionId) {
   input.dataset.connectionId = String(connectionId || '').trim();
-  input.value = displayConnectionName(input.dataset.connectionId);
+  input.value = loggerConnectionName(input.dataset.connectionId);
   input.defaultValue = input.value;
 }
 
 function readLoggerConnectionInput(input) {
   if (!input) return '';
-  return loggerConnectionId(input.value === input.defaultValue
-    ? input.dataset.connectionId
-    : input.value.trim());
+  return input.value === input.defaultValue ? input.dataset.connectionId : loggerConnectionId(input.value.trim());
+}
+
+function refreshLoggerConnectionLabels() {
+  els.loggerReportDetails?.querySelectorAll('[data-logger-tag-connection="1"], [data-logger-historian-connection="1"]').forEach((input) => {
+    if (input === document.activeElement || input.value !== input.defaultValue) return;
+    setLoggerConnectionInput(input, input.dataset.connectionId);
+  });
 }
 
 function displaySystemTagName(tagName) {
@@ -5826,7 +5838,7 @@ function applyLoggerTagPickerSelectionToTextarea() {
     const tagInput = row?.querySelector('[data-logger-historian-tag="1"]');
     const parts = loggerTagSpecParts(selected);
     if (connInput && tagInput && parts.connection_id && parts.tag_name) {
-      connInput.value = parts.connection_id;
+      setLoggerConnectionInput(connInput, parts.connection_id);
       tagInput.value = parts.tag_name;
       const next = collectLoggerReportHistorianPanelEntries();
       const rid = getSelectedReportId();
@@ -5846,7 +5858,7 @@ function applyLoggerTagPickerSelectionToTextarea() {
     }
     const rows = Array.from(els.loggerReportDetails?.querySelectorAll('[data-logger-historian-row="1"]') || []);
     const readRow = (row) => ({
-      connection_id: String(row.querySelector('[data-logger-historian-connection="1"]')?.value || '').trim(),
+      connection_id: readLoggerConnectionInput(row.querySelector('[data-logger-historian-connection="1"]')),
       tag_name: String(row.querySelector('[data-logger-historian-tag="1"]')?.value || '').trim(),
       range: String(row.querySelector('[data-logger-historian-range="1"]')?.value || '1h').trim() || '1h',
       statistic: String(row.querySelector('[data-logger-historian-statistic="1"]')?.value || 'avg').trim().toLowerCase() || 'avg',
@@ -7756,6 +7768,7 @@ async function watchReporterReportRun(id, beforeRuns) {
 
 async function refreshReporterAll() {
   loggerSetStatus('Loading…');
+  loadOpcbridgeHealth().then(() => refreshLoggerConnectionLabels()).catch(() => {});
   const out = { ok: true };
 
   try {
@@ -18312,10 +18325,7 @@ async function loadConnectionsList({ throwOnError = false } = {}) {
       // cached so internal connection IDs are replaced by friendly names.
       if (state.liveTagsLast) renderLiveTags(state.liveTagsLast);
       if (state.healthLast) renderOverviewHealth(state.healthLast, state.metricsLast);
-      els.loggerReportDetails?.querySelectorAll('[data-logger-tag-connection="1"]').forEach((input) => {
-        if (input === document.activeElement || input.value !== input.defaultValue) return;
-        setLoggerConnectionInput(input, input.dataset.connectionId);
-      });
+      refreshLoggerConnectionLabels();
       if (els.loggerTagPickerModal?.style.display === 'block') renderLoggerTagPickerTable();
     }).catch(() => {});
   } catch (err) {
