@@ -1293,6 +1293,25 @@ pre.mono { margin: 0; padding: 12px; overflow: auto; }
   border-radius: 8px;
   background: #121820;
 }
+#publishedReportsStatus:is(.is-loading-report-list, .is-loading-report-preview)::before,
+#reportBuilderStatus.is-loading-report-preview::before {
+  content: "";
+  display: inline-block;
+  width: .9em;
+  height: .9em;
+  margin-right: .55em;
+  vertical-align: -.15em;
+  border: 2px solid var(--border);
+  border-top-color: #72bcff;
+  border-radius: 50%;
+  animation: workspace-loading-spin .8s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #publishedReportsStatus::before,
+  #reportBuilderStatus::before { animation: none; }
+}
+
 .workspace-loading-spinner {
   width: 24px;
   height: 24px;

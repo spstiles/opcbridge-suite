@@ -1347,6 +1347,7 @@ const state = {
   publishedReportPeriodKey: "",
   publishedReportCustomRange: false,
   publishedReportPreviewRequest: 0,
+  publishedReportListRequest: 0,
   reportBuilderReports: [],
   reportBuilderTemplates: [],
   reportBuilderTemplateListRequest: 0,
@@ -8817,7 +8818,10 @@ async function fetchReportView(request) {
 }
 
 async function refreshPublishedReports(loadPreview = true) {
-  if (els.publishedReportsStatus) els.publishedReportsStatus.textContent = 'Loading…';
+  const request = ++state.publishedReportListRequest;
+  const status = els.publishedReportsStatus;
+  status?.classList.add('is-loading-report-list');
+  if (status) status.textContent = 'Loading reports…';
   try {
     const [response, editableResponse] = await Promise.all([
       fetchReportView(() => apiGet('/api/reports')),
@@ -8825,6 +8829,7 @@ async function refreshPublishedReports(loadPreview = true) {
         ? apiGet('/api/reports/admin').catch(() => ({ reports: [] }))
         : Promise.resolve({ reports: [] })
     ]);
+    if (request !== state.publishedReportListRequest) return;
     const reportsById = new Map();
     (Array.isArray(response?.reports) ? response.reports : []).forEach((report) => {
       const id = String(report?.id || '').trim();
@@ -8848,9 +8853,12 @@ async function refreshPublishedReports(loadPreview = true) {
     }
     if (loadPreview && selectedPublishedReport()) await previewPublishedReport();
   } catch (err) {
+    if (request !== state.publishedReportListRequest) return;
     state.publishedReports = [];
     renderPublishedReportSelection();
     if (els.publishedReportsStatus) els.publishedReportsStatus.textContent = `Could not load report list. ${err.message || err}`;
+  } finally {
+    if (request === state.publishedReportListRequest) status?.classList.remove('is-loading-report-list');
   }
 }
 
@@ -9032,13 +9040,16 @@ async function previewPublishedReport() {
   const report = selectedPublishedReport();
   const range = publishedReportRangePayload();
   const request = ++state.publishedReportPreviewRequest;
+  const status = els.publishedReportsStatus;
+  status?.classList.remove('is-loading-report-preview');
   if (!report) return;
   if (!range) {
     els.publishedReportPreviewWrap.style.display = 'none';
     els.publishedReportsStatus.textContent = 'Select a valid report date range.';
     return;
   }
-  if (els.publishedReportsStatus) els.publishedReportsStatus.textContent = 'Loading report…';
+  status?.classList.add('is-loading-report-preview');
+  if (status) status.textContent = 'Loading report…';
   try {
     const preview = await fetchReportView(() =>
       apiPostJson('/api/reports/preview', { id: report.id, ...range }, { timeoutMs: 120000 }));
@@ -9060,6 +9071,8 @@ async function previewPublishedReport() {
     if (request !== state.publishedReportPreviewRequest) return;
     if (els.publishedReportPreviewWrap) els.publishedReportPreviewWrap.style.display = 'none';
     if (els.publishedReportsStatus) els.publishedReportsStatus.textContent = `Could not load report preview. ${err.message || err}`;
+  } finally {
+    if (request === state.publishedReportPreviewRequest) status?.classList.remove('is-loading-report-preview');
   }
 }
 
@@ -11460,6 +11473,9 @@ function wireReportBuilderUi() {
     saveReportBuilderDefinition();
   });
   if (els.reportBuilderPreviewBtn) els.reportBuilderPreviewBtn.addEventListener('click', async () => {
+    const status = els.reportBuilderStatus;
+    if (status?.classList.contains('is-loading-report-preview')) return;
+    status?.classList.add('is-loading-report-preview');
     try {
       const report = reportBuilderCurrentDefinition();
       reportBuilderSetStatus('Generating preview…');
@@ -11479,7 +11495,9 @@ function wireReportBuilderUi() {
         ? `Preview reached the ${Number(preview.row_limit || 250000).toLocaleString()}-row limit; narrow the date range to inspect all samples.`
         : (preview.summary_moved ? 'Preview ready. The summary moved below the table for this custom range.' : 'Preview ready.'));
     } catch (err) {
-      reportBuilderSetStatus(err.message || err);
+      reportBuilderSetStatus(err.message || err, { error: true });
+    } finally {
+      status?.classList.remove('is-loading-report-preview');
     }
   });
   if (els.reportBuilderDuplicateBtn) els.reportBuilderDuplicateBtn.addEventListener('click', async () => {
