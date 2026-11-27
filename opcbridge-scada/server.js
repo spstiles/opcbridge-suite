@@ -516,6 +516,7 @@ function publicReport(report) {
     period: String(report.period || 'month').trim(),
     week_start: String(report.week_start || 'sunday') === 'monday' ? 'monday' : 'sunday',
     interval_minutes: normalizeIntRange(report.interval_minutes, 60, 1, 60),
+    rolling_days: normalizeIntRange(report.rolling_days, 7, 1, 366),
     group_by: String(report.group_by || 'day').trim(),
     timezone: String(report.timezone || 'UTC').trim(),
     published: report.published === true,
@@ -1094,7 +1095,8 @@ function normalizeReportDefinition(value, { draft = false } = {}) {
     hmi_enabled: normalizeBool(source.hmi_enabled, false),
     public_access: normalizeBool(source.public_access, false),
     timezone,
-    period: ['daily', 'weekly', 'month', 'yearly', 'custom'].includes(String(source.period || 'month')) ? String(source.period || 'month') : 'month',
+    period: ['daily', 'weekly', 'month', 'yearly', 'custom', 'rolling'].includes(String(source.period || 'month')) ? String(source.period || 'month') : 'month',
+    rolling_days: normalizeIntRange(source.rolling_days, 7, 1, 366),
     week_start: String(source.week_start || 'sunday') === 'monday' ? 'monday' : 'sunday',
     interval_minutes: [1, 5, 10, 15, 30, 60].includes(Math.trunc(Number(source.interval_minutes)))
       ? Math.trunc(Number(source.interval_minutes)) : 60,
@@ -1127,8 +1129,15 @@ function reportCliRangeArgs(report, values) {
     }
     return { args: ['--range-mode', 'custom', '--start-date', start, '--end-date', end], label: `${start}-to-${end}` };
   }
-  const value = read('period_value') || read('month');
-  const valid = ['daily', 'weekly'].includes(period) ? /^\d{4}-\d{2}-\d{2}$/.test(value)
+  let value = read('period_value') || read('month');
+  if (period === 'rolling' && !value) {
+    const parts = new Intl.DateTimeFormat('en', {
+      timeZone: report?.timezone || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit'
+    }).formatToParts(new Date());
+    const get = (type) => parts.find((part) => part.type === type).value;
+    value = `${get('year')}-${get('month')}-${get('day')}`;
+  }
+  const valid = ['daily', 'weekly', 'rolling'].includes(period) ? /^\d{4}-\d{2}-\d{2}$/.test(value)
     : period === 'yearly' ? /^\d{4}$/.test(value)
       : /^\d{4}-(0[1-9]|1[0-2])$/.test(value);
   if (!valid) throw new Error(`A valid ${period} report period is required.`);
@@ -6507,18 +6516,20 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (url.pathname === '/api/reports/preview' || url.pathname === '/api/reports/public/preview') {
-    const publicRequest = url.pathname === '/api/reports/public/preview';
+    const publicOnly = url.pathname === '/api/reports/public/preview';
+    let publicRequest = publicOnly;
     if (req.method !== 'POST') {
       sendJson(res, 405, { ok: false, error: 'Method not allowed' });
       return;
     }
-    const reportStatus = publicRequest ? null : await requireReportsPerm();
-    if (!publicRequest && !reportStatus) return;
     let publicDir;
     try {
       const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
       const id = sanitizeId(body.id);
       const report = readReportDefinitions().find((item) => sanitizeId(item?.id) === id);
+      publicRequest = publicOnly || Boolean(report && isPublicPublishedReport(report));
+      const reportStatus = publicRequest ? null : await requireReportsPerm();
+      if (!publicRequest && !reportStatus) return;
       const grant = report && !publicRequest ? reportGrant(report, reportStatus) : null;
       if (!report || (publicRequest ? !isPublicPublishedReport(report) :
           !grant?.view || (report.published !== true && !grant.edit && !grant.manage))) {
@@ -6612,18 +6623,17 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 405, { ok: false, error: 'Method not allowed' });
       return;
     }
-    const reportStatus = await requireReportsPerm();
-    if (!reportStatus) return;
-    const reports = readReportDefinitions()
-      .filter((report) => {
-        const grant = reportGrant(report, reportStatus);
-        return grant.view && (report.published === true || grant.edit || grant.manage);
-      })
-      .map((report) => ({
-        ...publicReport(report),
-        permissions: reportGrant(report, reportStatus)
-      }))
-      .filter((report) => report.id && report.name);
+    const status = req.headers.cookie ? await fetchOpcbridgeAuthStatus(req, cfg).catch(() => null) : null;
+    const hasReportsAccess = ['reports.access', 'reports.create', 'reports.administer']
+      .some((permission) => authStatusHasPerm(status, permission));
+    const reports = readReportDefinitions().flatMap((report) => {
+      const grant = hasReportsAccess ? reportGrant(report, status) : {};
+      if (isPublicPublishedReport(report)) {
+        return [{ ...publicReport(report), permissions: { ...grant, view: true, download: true } }];
+      }
+      return grant.view && (report.published === true || grant.edit || grant.manage)
+        ? [{ ...publicReport(report), permissions: grant }] : [];
+    }).filter((report) => report.id && report.name);
     sendJson(res, 200, {
       ok: true,
       reports
@@ -6652,9 +6662,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     const hmiRequest = url.pathname === '/api/reports/hmi/download';
-    const publicRequest = url.pathname === '/api/reports/public/download';
-    const reportStatus = hmiRequest || publicRequest ? null : await requireReportsPerm();
-    if (!hmiRequest && !publicRequest && !reportStatus) return;
+    const publicOnly = url.pathname === '/api/reports/public/download';
 
     const id = sanitizeId(url.searchParams.get('id'));
     const format = String(url.searchParams.get('format') || 'xlsx').trim().toLowerCase();
@@ -6663,6 +6671,9 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     const rawReport = readReportDefinitions().find((item) => sanitizeId(item?.id) === id);
+    const publicRequest = publicOnly || (!hmiRequest && Boolean(rawReport && isPublicPublishedReport(rawReport)));
+    const reportStatus = hmiRequest || publicRequest ? null : await requireReportsPerm();
+    if (!hmiRequest && !publicRequest && !reportStatus) return;
     const grant = rawReport && !hmiRequest && !publicRequest ? reportGrant(rawReport, reportStatus) : null;
     if (!rawReport || rawReport.published !== true || (publicRequest ? !isPublicPublishedReport(rawReport) : hmiRequest ? rawReport.hmi_enabled !== true : !grant?.download)) {
       sendJson(res, 404, { ok: false, error: `Published report not found: ${id}` });

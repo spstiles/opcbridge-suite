@@ -75,6 +75,7 @@ function public_report(array $report): array
         'period' => (string)($report['period'] ?? 'month'),
         'week_start' => (string)($report['week_start'] ?? 'sunday'),
         'interval_minutes' => (int)($report['interval_minutes'] ?? 60),
+        'rolling_days' => max(1, min(366, (int)($report['rolling_days'] ?? 7))),
         'group_by' => (string)($report['group_by'] ?? 'day'),
         'timezone' => (string)($report['timezone'] ?? 'UTC'),
         'formats' => array_values(array_intersect(
@@ -90,7 +91,7 @@ function validate_report(array $report): array
     if ($id === '' || !preg_match('/^[A-Za-z0-9][A-Za-z0-9_.-]*$/', $id)) {
         fail('Report id is missing or invalid');
     }
-    if (!in_array(($report['period'] ?? 'month'), ['daily', 'weekly', 'month', 'yearly', 'custom'], true)) {
+    if (!in_array(($report['period'] ?? 'month'), ['daily', 'weekly', 'month', 'yearly', 'custom', 'rolling'], true)) {
         fail("Report '{$id}' uses an unsupported period");
     }
     $intervalMinutes = (int)($report['interval_minutes'] ?? 60);
@@ -372,6 +373,14 @@ function report_range(array $report, array $options): array
             default => 'day',
         };
         return [$start, $endDay->modify('+1 day'), $group, "{$startValue}-to-{$endValue}"];
+    }
+    if ($period === 'rolling') {
+        $value = $value !== '' ? $value : (new DateTimeImmutable('today', $tz))->format('Y-m-d');
+        $endDay = DateTimeImmutable::createFromFormat('!Y-m-d', $value, $tz);
+        if (!$endDay || $endDay->format('Y-m-d') !== $value) fail('--period-value must use a valid YYYY-MM-DD date', 2);
+        $days = max(1, min(366, (int)($report['rolling_days'] ?? 7)));
+        $start = $endDay->modify('-' . ($days - 1) . ' days');
+        return [$start, $endDay->modify('+1 day'), 'day', $start->format('Y-m-d') . '-to-' . $value];
     }
     if ($period === 'daily') {
         if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) fail('--period-value must use YYYY-MM-DD', 2);
@@ -1687,6 +1696,7 @@ if ($command === 'preview') {
         'description' => (string)($report['description'] ?? ''),
         'period' => (string)($report['period'] ?? 'month'),
         'interval_minutes' => (int)($report['interval_minutes'] ?? 60),
+        'rolling_days' => max(1, min(366, (int)($report['rolling_days'] ?? 7))),
         'period_label' => $periodLabel,
         'start_date' => $start->format('Y-m-d'),
         'end_date' => $end->modify('-1 day')->format('Y-m-d'),

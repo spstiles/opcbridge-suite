@@ -327,7 +327,6 @@
   publishedReportDescription: document.getElementById('publishedReportDescription'),
   publishedReportsRefreshBtn: document.getElementById('publishedReportsRefreshBtn'),
   publishedReportDownloadBtn: document.getElementById('publishedReportDownloadBtn'),
-  publishedReportCopyLinkBtn: document.getElementById('publishedReportCopyLinkBtn'),
   publishedReportsStatus: document.getElementById('publishedReportsStatus'),
   publishedReportTitle: document.getElementById('publishedReportTitle'),
   publishedReportPreviewWrap: document.getElementById('publishedReportPreviewWrap'),
@@ -345,6 +344,8 @@
   reportBuilderId: document.getElementById('reportBuilderId'),
   reportBuilderName: document.getElementById('reportBuilderName'),
   reportBuilderDescription: document.getElementById('reportBuilderDescription'),
+  reportBuilderRollingDays: document.getElementById('reportBuilderRollingDays'),
+  reportBuilderRollingDaysLabel: document.getElementById('reportBuilderRollingDaysLabel'),
   reportBuilderPeriod: document.getElementById('reportBuilderPeriod'),
   reportBuilderPublicAccess: document.getElementById('reportBuilderPublicAccess'),
   reportBuilderHmiEnabled: document.getElementById('reportBuilderHmiEnabled'),
@@ -8672,9 +8673,9 @@ function configurePublishedReportPeriod(report, reset = false) {
     return;
   }
   if (!els.publishedReportMonth) return;
-  const labels = { daily: 'Report date', weekly: 'Week containing', month: 'Report month', yearly: 'Report year' };
-  const units = { daily: 'day', weekly: 'week', month: 'month', yearly: 'year' };
-  const usesDate = ['daily', 'weekly'].includes(period);
+  const labels = { daily: 'Report date', weekly: 'Week containing', rolling: 'Ending date', month: 'Report month', yearly: 'Report year' };
+  const units = { daily: 'day', weekly: 'week', rolling: 'day', month: 'month', yearly: 'year' };
+  const usesDate = ['daily', 'weekly', 'rolling'].includes(period);
   els.publishedReportPeriodLabel.textContent = labels[period] || labels.month;
   els.publishedReportMonth.type = usesDate ? 'date' : (period === 'yearly' ? 'number' : 'month');
   els.publishedReportMonth.removeAttribute('min');
@@ -8705,7 +8706,7 @@ function publishedReportRangePayload() {
       ? { range_mode: 'custom', start_date, end_date } : null;
   }
   const value = String(els.publishedReportMonth?.value || '').trim();
-  const valid = ['daily', 'weekly'].includes(period) ? /^\d{4}-\d{2}-\d{2}$/.test(value)
+  const valid = ['daily', 'weekly', 'rolling'].includes(period) ? /^\d{4}-\d{2}-\d{2}$/.test(value)
     : period === 'yearly' ? /^\d{4}$/.test(value)
       : /^\d{4}-\d{2}$/.test(value);
   return valid ? { period_value: value } : null;
@@ -8715,7 +8716,7 @@ function shiftPublishedReportPeriod(direction) {
   const period = String(selectedPublishedReport()?.period || 'month');
   const value = String(els.publishedReportMonth?.value || '').trim();
   let next = '';
-  if (['daily', 'weekly'].includes(period) && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+  if (['daily', 'weekly', 'rolling'].includes(period) && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
     const date = new Date(`${value}T12:00:00`);
     date.setDate(date.getDate() + direction * (period === 'weekly' ? 7 : 1));
     next = localIsoDate(date);
@@ -8785,9 +8786,6 @@ function renderPublishedReportSelection() {
   if (els.publishedReportPreviewWrap && !report) {
     els.publishedReportPreviewWrap.style.display = 'none';
   }
-  if (els.publishedReportCopyLinkBtn) {
-    els.publishedReportCopyLinkBtn.hidden = PUBLIC_REPORT_ID || !report?.published || !report?.public_access;
-  }
   const permissions = reportPermissions(report);
   if (els.publishedReportDownloadBtn) {
     els.publishedReportDownloadBtn.disabled = !report || report.published === false || !permissions.download;
@@ -8800,7 +8798,8 @@ function renderPublishedReportSelection() {
   if (els.publishedReportEmpty && !report) {
     els.publishedReportEmpty.textContent = canCreate
       ? 'No reports are available. Select New Report to create the first one.'
-      : 'No reports are available through your groups.';
+      : (state.opcbridgeAuthStatus?.user_logged_in ? 'No reports are available through your groups.' :
+        'No reports are available. Sign in to see reports you have permission to view.');
   }
   if (els.reportBuilderEditBtn) {
     els.reportBuilderEditBtn.style.display = report && permissions.edit ? '' : 'none';
@@ -8863,7 +8862,7 @@ async function refreshPublishedReports(loadPreview = true) {
     if (request !== state.publishedReportListRequest) return;
     state.publishedReports = [];
     renderPublishedReportSelection();
-    if (els.publishedReportsStatus) els.publishedReportsStatus.textContent = `Could not load report list. ${err.message || err}`;
+    if (status) status.textContent = `Could not load report list. ${err.message || err}`;
   } finally {
     if (request === state.publishedReportListRequest) status?.classList.remove('is-loading-report-list');
   }
@@ -9137,18 +9136,6 @@ async function downloadPublishedReport() {
 }
 
 function wirePublishedReportsUi() {
-  els.publishedReportCopyLinkBtn?.addEventListener('click', async () => {
-    const report = selectedPublishedReport();
-    if (!report?.published || !report.public_access) return;
-    const link = new URL('/reports', window.location.origin);
-    link.searchParams.set('report', report.id);
-    try {
-      await copyTextToClipboardSafe(link.href);
-      els.publishedReportsStatus.textContent = 'Public report link copied.';
-    } catch {
-      els.publishedReportsStatus.textContent = link.href;
-    }
-  });
   if (els.publishedReportMonth && !els.publishedReportMonth.value) {
     const now = new Date();
     els.publishedReportMonth.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -9699,6 +9686,7 @@ function reportBuilderCurrentDefinition() {
     description: String(els.reportBuilderDescription?.value || '').trim(),
     timezone: String(els.reportBuilderTimezone?.value || 'UTC').trim(),
     period: String(els.reportBuilderPeriod?.value || 'month'),
+    rolling_days: Number(els.reportBuilderRollingDays?.value || 7),
     hmi_enabled: Boolean(els.reportBuilderHmiEnabled?.checked),
     public_access: Boolean(els.reportBuilderPublicAccess?.checked),
     week_start: String(els.reportBuilderWeekStart?.value || 'sunday'),
@@ -10903,6 +10891,8 @@ function loadReportBuilderDefinition(report) {
   if (els.reportBuilderName) els.reportBuilderName.value = String(value.name || '');
   if (els.reportBuilderDescription) els.reportBuilderDescription.value = String(value.description || '');
   if (els.reportBuilderPeriod) els.reportBuilderPeriod.value = String(value.period || 'month');
+  if (els.reportBuilderRollingDays) els.reportBuilderRollingDays.value = String(value.rolling_days || 7);
+  if (els.reportBuilderRollingDaysLabel) els.reportBuilderRollingDaysLabel.style.display = value.period === 'rolling' ? '' : 'none';
   if (els.reportBuilderHmiEnabled) els.reportBuilderHmiEnabled.checked = value.hmi_enabled === true;
   if (els.reportBuilderPublicAccess) els.reportBuilderPublicAccess.checked = value.public_access === true;
   if (els.reportBuilderWeekStart) els.reportBuilderWeekStart.value = String(value.week_start || 'sunday');
@@ -11225,6 +11215,9 @@ function wireReportBuilderUi() {
     renderReportBuilderSummaries();
   });
   if (els.reportBuilderPeriod) els.reportBuilderPeriod.addEventListener('change', () => {
+    if (els.reportBuilderRollingDaysLabel) {
+      els.reportBuilderRollingDaysLabel.style.display = els.reportBuilderPeriod.value === 'rolling' ? '' : 'none';
+    }
     if (els.reportBuilderIntervalLabel) {
       els.reportBuilderIntervalLabel.style.display = els.reportBuilderPeriod.value === 'daily' ? '' : 'none';
     }

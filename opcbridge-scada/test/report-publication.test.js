@@ -172,7 +172,27 @@ if (process.argv[2] === 'template-preview') {
   assert.equal(guestPreview.name, 'Public report');
   assert.deepEqual(guestPreview.columns[0], { heading: 'Total' });
   assert.equal(await (await downloadGuest()).text(), 'Public report');
+
+  const privateReport = (await api('/admin', {
+    action: 'publish', report: { ...report, name: 'Private report', period: 'rolling', rolling_days: 30 }
+  })).report;
+  assert.equal(privateReport.period, 'rolling');
+  assert.equal(privateReport.rolling_days, 30);
+  const listedForHmi = (await api('/hmi')).reports.find((item) => item.id === privateReport.id);
+  assert.equal(listedForHmi.rolling_days, 30);
+  const guestList = await (await guest('')).json();
+  assert.deepEqual(guestList.reports.map((item) => item.name), ['Public report']);
+  assert.deepEqual((await api('', null, 'viewer')).reports.map((item) => item.name), ['Public report', 'Private report']);
+  const standardPreview = (id) => guest('/preview', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...period, id })
+  });
+  const standardDownload = (id) => guest(`/download?${new URLSearchParams({ ...period, id, format: 'xlsx' })}`);
+  assert.equal((await (await standardPreview(draft.id)).json()).name, 'Public report');
+  assert.equal(await (await standardDownload(draft.id)).text(), 'Public report');
+  assert.equal((await standardPreview(privateReport.id)).status, 403);
+  assert.equal((await standardDownload(privateReport.id)).status, 403);
   await update('publish', { ...updatedSources, public_access: false });
+  assert.deepEqual((await (await guest('')).json()).reports, []);
   assert.equal((await guest(link)).status, 404);
   assert.equal((await previewGuest()).status, 404);
   assert.equal((await downloadGuest()).status, 404);

@@ -14997,14 +14997,32 @@ const reportTableIsoDate = (date = new Date()) => {
   return `${year}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 };
 
-const getReportTableAnchor = (obj) => {
+const reportTableDateFormatters = new Map();
+const reportTableToday = (report) => {
+  const zone = String(report?.timezone || 'UTC');
+  try {
+    if (!reportTableDateFormatters.has(zone)) {
+      reportTableDateFormatters.set(zone, new Intl.DateTimeFormat('en', {
+        timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit'
+      }));
+    }
+    const parts = reportTableDateFormatters.get(zone).formatToParts(new Date());
+    const get = (type) => parts.find((part) => part.type === type).value;
+    return `${get('year')}-${get('month')}-${get('day')}`;
+  } catch {
+    return reportTableIsoDate();
+  }
+};
+
+const getReportTableAnchor = (obj, report) => {
   if (!obj || typeof obj !== "object") return reportTableIsoDate();
   if (!isEditMode) {
     const runtimeAnchor = reportTableRuntimeAnchors.get(obj);
     return /^\d{4}-\d{2}-\d{2}$/.test(String(runtimeAnchor || ""))
       ? runtimeAnchor
-      : reportTableIsoDate();
+      : (report?.period === 'rolling' ? reportTableToday(report) : reportTableIsoDate());
   }
+  if (report?.period === 'rolling') return reportTableToday(report);
   return /^\d{4}-\d{2}-\d{2}$/.test(String(obj.reportAnchor || ""))
     ? String(obj.reportAnchor)
     : reportTableIsoDate();
@@ -15033,7 +15051,7 @@ const loadHmiReports = async () => {
 };
 
 const reportTableRangeBody = (obj, report) => {
-  const anchor = getReportTableAnchor(obj);
+  const anchor = getReportTableAnchor(obj, report);
   if (obj.reportRangeMode === "last7") return { range_mode: "last7", period_value: anchor };
   if (report?.period === "yearly") return { period_value: anchor.slice(0, 4) };
   if (report?.period === "month") return { period_value: anchor.slice(0, 7) };
@@ -15550,7 +15568,7 @@ const renderObjectContentInto = (parent, obj, inheritedGroupColorOverrides = nul
 	      const controls = document.createElementNS(xhtml, "span"); controls.className = "hmi-report-table-controls";
 	      ["pointerdown", "mousedown", "touchstart", "click"].forEach((eventName) => controls.addEventListener(eventName, (event) => event.stopPropagation(), { passive: true }));
 	      const shift = (direction) => {
-	        const anchor = new Date(`${getReportTableAnchor(obj)}T12:00:00`);
+	        const anchor = new Date(`${getReportTableAnchor(obj, report)}T12:00:00`);
 	        const days = obj.reportRangeMode === "last7" || report?.period === "weekly" ? 7 : (report?.period === "daily" ? 1 : 0);
 	        if (report?.period === "yearly" && obj.reportRangeMode !== "last7") anchor.setFullYear(anchor.getFullYear() + direction);
 	        else if (report?.period === "month" && obj.reportRangeMode !== "last7") anchor.setMonth(anchor.getMonth() + direction);
@@ -15563,7 +15581,7 @@ const renderObjectContentInto = (parent, obj, inheritedGroupColorOverrides = nul
 	        previous.addEventListener("click", (event) => { event.stopPropagation(); shift(-1); });
 	        controls.appendChild(previous);
 	        const picker = document.createElementNS(xhtml, "input");
-	        const anchorValue = getReportTableAnchor(obj);
+	        const anchorValue = getReportTableAnchor(obj, report);
 	        const pickerPeriod = obj.reportRangeMode === "last7" ? "daily" : String(report?.period || "daily");
 	        picker.type = pickerPeriod === "month" ? "month" : (pickerPeriod === "yearly" ? "number" : "date");
 	        if (pickerPeriod === "yearly") {
@@ -15584,6 +15602,16 @@ const renderObjectContentInto = (parent, obj, inheritedGroupColorOverrides = nul
 	        next.title = "Next period";
 	        next.addEventListener("click", (event) => { event.stopPropagation(); shift(1); });
 	        controls.appendChild(next);
+          if (report?.period === "rolling" && reportTableRuntimeAnchors.has(obj)) {
+            const today = document.createElementNS(xhtml, "button");
+            today.textContent = "Today";
+            today.addEventListener("click", (event) => {
+              event.stopPropagation();
+              reportTableRuntimeAnchors.delete(obj);
+              renderScreen();
+            });
+            controls.appendChild(today);
+          }
 	      }
 	      if (obj.showDownload !== false && report) {
 	        const button = document.createElementNS(xhtml, "button"); button.textContent = "Download";
