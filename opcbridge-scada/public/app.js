@@ -10810,14 +10810,14 @@ function renderReportBuilderTags() {
     });
 }
 
-async function refreshReportBuilder() {
+async function refreshReportBuilder({ throwOnError = false } = {}) {
   if (!canAccessReportsTab()) {
     if (els.reportBuilderCard) els.reportBuilderCard.style.display = 'none';
     return;
   }
   try {
     const [definitions, tags, sources, dataSources] = await Promise.all([
-      apiGet('/api/reports/admin'),
+      fetchReportView(() => apiGet('/api/reports/admin')),
       apiGet('/api/historian/tags').catch(() => ({ tags: [] })),
       apiGet('/api/reports/admin/sources').catch(() => ({ databases: [] })),
       apiGet('/api/reports/data-sources').catch(() => ({ sources: [] }))
@@ -10829,7 +10829,9 @@ async function refreshReportBuilder() {
     renderReportBuilderDatabaseSources(els.reportBuilderDatabase?.value || '');
     renderReportBuilderDataSources(els.reportBuilderDataSource?.value || '');
     renderReportBuilderTags();
+    return state.reportBuilderReports;
   } catch (err) {
+    if (throwOnError) throw err;
     reportBuilderSetStatus(err.message || err);
   }
 }
@@ -11063,10 +11065,23 @@ function wireReportBuilderUi() {
     }
   });
   if (els.reportBuilderNewBtn) els.reportBuilderNewBtn.addEventListener('click', () => showReportBuilder(null));
-  if (els.reportBuilderEditBtn) els.reportBuilderEditBtn.addEventListener('click', () => {
+  if (els.reportBuilderEditBtn) els.reportBuilderEditBtn.addEventListener('click', async () => {
     const selected = selectedPublishedReport();
-    const report = state.reportBuilderReports.find((item) => item.id === selected?.id) || selected;
-    if (report) showReportBuilder(report);
+    if (!selected || !reportPermissions(selected).edit) return;
+    els.reportBuilderEditBtn.disabled = true;
+    try {
+      const reports = await refreshReportBuilder({ throwOnError: true });
+      if (selectedPublishedReport()?.id !== selected.id || !isPanelActive('tab-reports')) return;
+      const report = reports?.find((item) => item.id === selected.id);
+      if (!report) throw new Error('The editable report is unavailable.');
+      showReportBuilder(report);
+    } catch (error) {
+      if (selectedPublishedReport()?.id === selected.id && els.publishedReportsStatus) {
+        els.publishedReportsStatus.textContent = `Could not load the report draft. ${error.message || error}`;
+      }
+    } finally {
+      els.reportBuilderEditBtn.disabled = !reportPermissions(selectedPublishedReport()).edit;
+    }
   });
   if (els.reportBuilderBackBtn) els.reportBuilderBackBtn.addEventListener('click', () => {
     showReportsLanding();
