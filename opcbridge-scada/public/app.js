@@ -9471,8 +9471,12 @@ function syncReportBuilderCategorySelections() {
   });
 }
 
+function reportBuilderCategoryLabel(value) {
+  return String(value ?? '').replace(/^(?:\uFEFF|ï»¿|Ã¯Â»Â¿)+/u, '');
+}
+
 function reportBuilderCategoryMatches(value, filter) {
-  const text = String(value || '').toLowerCase();
+  const text = reportBuilderCategoryLabel(value).toLowerCase();
   const alternatives = String(filter || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
   if (!alternatives.length) return true;
   return alternatives.some((alternative) => {
@@ -9495,11 +9499,17 @@ function renderReportBuilderCategoryItems(preserveVisibleSelections = true) {
   const filter = String(els.reportBuilderCategoryFilter?.value || '');
   const visible = state.reportBuilderCategoryItems.filter((value) =>
     reportBuilderCategoryMatches(value, filter));
+  const labels = new Map();
+  visible.forEach((value) => {
+    const label = reportBuilderCategoryLabel(value);
+    labels.set(label, (labels.get(label) || 0) + 1);
+  });
   els.reportBuilderCategoryValues.textContent = '';
   visible.forEach((value) => {
     const option = document.createElement('option');
     option.value = value;
-    option.textContent = value;
+    const label = reportBuilderCategoryLabel(value);
+    option.textContent = labels.get(label) > 1 && label !== value ? `${label} (stored with BOM)` : label;
     option.selected = state.reportBuilderSelectedCategoryItems.has(value);
     els.reportBuilderCategoryValues.appendChild(option);
   });
@@ -10609,7 +10619,7 @@ function renderReportBuilderColumns() {
       editFormula.addEventListener('click', () => openReportFormulaModal(index));
       tag.appendChild(editFormula);
     } else if (column.source === 'database' && column.layout === 'category') {
-      tag.textContent = `${String(column.category_value ?? '')} (value: ${String(column.field || '')})`;
+      tag.textContent = `${reportBuilderCategoryLabel(column.category_value)} (value: ${String(column.field || '')})`;
     } else {
       tag.textContent = column.source === 'database'
         ? String(column.field || '')
@@ -11320,8 +11330,8 @@ function wireReportBuilderUi() {
     const sourceField = selectedReportDataSource()?.value_fields?.find((field) => field.column === valueField);
     state.reportBuilderSelectedCategoryItems.forEach((itemName) => {
       state.reportBuilderColumns.push({
-        id: newReportColumnId(itemName),
-        heading: itemName,
+        id: newReportColumnId(reportBuilderCategoryLabel(itemName)),
+        heading: reportBuilderCategoryLabel(itemName),
         source: 'database',
         table: String(els.reportBuilderTable?.value || '').trim(),
         time_column: String(els.reportBuilderTimeColumn?.value || '').trim(),
