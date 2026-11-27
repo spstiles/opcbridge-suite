@@ -1372,7 +1372,8 @@ function write_spreadsheet(
         if (count($parts) === 2 && $parts[0] !== $parts[1]) $sheet->mergeCells($target);
         if (($placed['is_date'] ?? false) && $placed['value'] instanceof DateTimeInterface) {
             $sheet->setCellValue($cell, \PhpOffice\PhpSpreadsheet\Shared\Date::PHPToExcel($placed['value']));
-            $sheet->getStyle($cell)->getNumberFormat()->setFormatCode((string)($placed['date_format'] ?: 'mm/dd/yyyy'));
+            $defaultFormat = ($placed['system_value'] ?? '') === 'generated_at' ? 'mm/dd/yyyy hh:mm:ss' : 'mm/dd/yyyy';
+            $sheet->getStyle($cell)->getNumberFormat()->setFormatCode((string)($placed['date_format'] ?: $defaultFormat));
         } elseif (($placed['type'] ?? '') === 'text' || is_string($placed['value'] ?? null)) {
             $sheet->setCellValueExplicit($cell, (string)($placed['value'] ?? ''), \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
         } else {

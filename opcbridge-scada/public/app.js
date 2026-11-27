@@ -8846,7 +8846,7 @@ function formatPlacedReportDate(value, format = '') {
   if (!match) return String(value ?? '');
   const [, year, month, day, hours = '00', minutes = '00', seconds = '00'] = match;
   const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
-  const pattern = format.trim() || 'mm/dd/yyyy';
+  const pattern = format.trim() || (match[4] === undefined ? 'mm/dd/yyyy' : 'mm/dd/yyyy hh:mm:ss');
   const tokens = pattern.match(/"[^"]*"|\\.|am\/pm|a\/p|yyyy|yy|mmmm|mmm|mm|m|dddd|ddd|dd|d|hh|h|ss|s|./gi) || [];
   const twelveHour = tokens.some((token) => /^(am\/pm|a\/p)$/i.test(token));
   const hour = twelveHour ? Number(hours) % 12 || 12 : Number(hours);
@@ -9965,7 +9965,8 @@ function renderReportBuilderLayout() {
     });
     renderValue();
     const formatTd = document.createElement('td');
-    const format = document.createElement('input'); format.type = 'text'; format.placeholder = 'mm/dd/yyyy';
+    const format = document.createElement('input'); format.type = 'text';
+    format.placeholder = item.value === 'generated_at' ? 'mm/dd/yyyy hh:mm:ss' : 'mm/dd/yyyy';
     format.value = String(item.date_format || '');
     const dateValue = item.type === 'system' && ['start_date', 'end_date', 'generated_at'].includes(item.value);
     format.disabled = !dateValue;
