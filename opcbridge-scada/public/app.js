@@ -8944,6 +8944,7 @@ function renderPublishedReportPreview(preview) {
       if (mergeRow !== startRow || mergeColumn !== startColumn) mergedCells.add(`${mergeRow}:${mergeColumn}`);
     }
   });
+  const summaryLastColumn = Math.max(tableColumn, ...placements);
   for (let row = 1; row <= maxRow; row++) {
     const tr = document.createElement('tr');
     const height = Number(templatePreview?.row_heights?.[String(row)] || 0);
@@ -8951,6 +8952,8 @@ function renderPublishedReportPreview(preview) {
     for (let column = 1; column <= maxColumn; column++) {
       if (mergedCells.has(`${row}:${column}`)) continue;
       const td = document.createElement('td');
+      if (!templatePreview && row >= summaryStart && row <= summaryEndRow &&
+          column >= tableColumn && column <= summaryLastColumn) td.classList.add('layout-summary');
       const merge = mergeAnchors.get(`${row}:${column}`);
       if (merge) { td.rowSpan = merge.rowspan; td.colSpan = merge.colspan; }
       const content = cells.get(`${row}:${column}`);
@@ -10009,6 +10012,8 @@ function renderReportBuilderLayoutPreview() {
       }
     }
   });
+  const summaryEndRow = summaryStart + state.reportBuilderSummaries.length - 1;
+  const summaryLastColumn = Math.max(tableColumn, ...placements);
   for (let row = 1; row <= maxRow; row++) {
     const tr = document.createElement('tr');
     const templateHeight = Number(templatePreview?.row_heights?.[String(row)] || 0);
@@ -10019,6 +10024,8 @@ function renderReportBuilderLayoutPreview() {
     for (let column = 1; column <= maxColumn; column++) {
       if (mergedCells.has(`${row}:${column}`)) continue;
       const td = document.createElement('td');
+      if (row >= summaryStart && row <= summaryEndRow &&
+          column >= tableColumn && column <= summaryLastColumn) td.classList.add('layout-summary');
       const merge = mergeAnchors.get(`${row}:${column}`);
       if (merge) {
         td.rowSpan = merge.rowspan;
