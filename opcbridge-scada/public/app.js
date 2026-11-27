@@ -1373,6 +1373,7 @@ const state = {
   reportBuilderLayoutPlacedCells: [],
   reportBuilderTemplate: null,
   reportBuilderTemplatePreview: null,
+  reportBuilderLayoutPreviewTimer: 0,
   reportBuilderActiveTab: 'report',
   dataEntryForms: [], dataEntryTargets: [], dataEntrySources: [], dataEntrySchema: [], dataEntryBuilderFields: [], dataEntryInsertValues: [], dataEntryLoadedValues: {}, dataEntryDeletedFields: new Set(),
   logsLast: [], logsRequestSeq: 0,
@@ -8840,6 +8841,38 @@ async function refreshPublishedReports(loadPreview = true) {
   }
 }
 
+function formatPlacedReportDate(value, format = '') {
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?$/.exec(String(value));
+  if (!match) return String(value ?? '');
+  const [, year, month, day, hours = '00', minutes = '00', seconds = '00'] = match;
+  const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+  const pattern = format.trim() || 'mm/dd/yyyy';
+  const tokens = pattern.match(/"[^"]*"|\\.|am\/pm|a\/p|yyyy|yy|mmmm|mmm|mm|m|dddd|ddd|dd|d|hh|h|ss|s|./gi) || [];
+  const twelveHour = tokens.some((token) => /^(am\/pm|a\/p)$/i.test(token));
+  const hour = twelveHour ? Number(hours) % 12 || 12 : Number(hours);
+  const name = (kind, width) => new Intl.DateTimeFormat('en-US', {
+    [kind]: width, timeZone: 'UTC'
+  }).format(date);
+  const values = {
+    yyyy: year, yy: year.slice(-2), mmmm: name('month', 'long'), mmm: name('month', 'short'),
+    dddd: name('weekday', 'long'), ddd: name('weekday', 'short'), dd: day, d: Number(day),
+    hh: String(hour).padStart(2, '0'), h: hour, ss: seconds, s: Number(seconds),
+    'am/pm': Number(hours) < 12 ? 'AM' : 'PM', 'a/p': Number(hours) < 12 ? 'A' : 'P'
+  };
+  return tokens.map((token, index) => {
+    if (token.startsWith('"') && token.endsWith('"')) return token.slice(1, -1);
+    if (token.startsWith('\\')) return token.slice(1);
+    const key = token.toLowerCase();
+    if (key === 'm' || key === 'mm') {
+      const previous = tokens.slice(0, index).reverse().find((part) => /^(?:h{1,2}|m{1,4}|s{1,2}|d{1,4}|y{2,4})$/i.test(part));
+      const next = tokens.slice(index + 1).find((part) => /^(?:h{1,2}|m{1,4}|s{1,2}|d{1,4}|y{2,4})$/i.test(part));
+      const component = /^h{1,2}$/i.test(previous || '') || /^s{1,2}$/i.test(next || '') ? minutes : month;
+      return key === 'mm' ? component : Number(component);
+    }
+    return values[key] ?? token;
+  }).join('');
+}
+
 function renderPublishedReportPreview(preview) {
   if (!els.publishedReportPreviewHead || !els.publishedReportPreviewBody || !els.publishedReportPreviewWrap) return;
   els.publishedReportPreviewHead.textContent = '';
@@ -8872,6 +8905,7 @@ function renderPublishedReportPreview(preview) {
   (preview.placed_cells || []).forEach((item) => {
     const target = spreadsheetRangeParts(item?.target)?.start;
     let value = item?.value ?? '';
+    if (item?.is_date) value = formatPlacedReportDate(value, item.date_format);
     if (item?.type === 'formula' && typeof value === 'number') {
       const precision = Math.max(0, Math.min(10, Math.trunc(Number(item.precision ?? 2))));
       value = value.toLocaleString(undefined, { minimumFractionDigits: precision, maximumFractionDigits: precision });
@@ -9864,7 +9898,7 @@ function renderReportBuilderLayout() {
     input.style.width = '90px';
     input.addEventListener('input', () => {
       column.sheet_column = normalizeSpreadsheetColumn(input.value);
-      renderReportBuilderLayoutPreview();
+      scheduleReportBuilderLayoutPreview();
     });
     placement.appendChild(input);
     tr.append(heading, placement);
@@ -9885,7 +9919,7 @@ function renderReportBuilderLayout() {
     cell.value = String(item.target || '');
     cell.placeholder = 'A1 or A1:F1';
     cell.style.width = '130px';
-    cell.addEventListener('input', () => { item.target = cell.value; renderReportBuilderLayoutPreview(); });
+    cell.addEventListener('input', () => { item.target = cell.value; scheduleReportBuilderLayoutPreview(); });
     cellTd.appendChild(cell);
     const typeTd = document.createElement('td');
     const type = document.createElement('select');
@@ -9908,7 +9942,7 @@ function renderReportBuilderLayout() {
         const property = item.type === 'formula' ? 'expression' : 'text';
         control.value = String(item[property] || '');
         control.placeholder = item.type === 'formula' ? 'sum([column_id])' : 'Text to display';
-        control.addEventListener('input', () => { item[property] = control.value; renderReportBuilderLayoutPreview(); });
+        control.addEventListener('input', () => { item[property] = control.value; scheduleReportBuilderLayoutPreview(); });
         if (item.type === 'formula') {
           const controls = document.createElement('div');
           controls.className = 'row-actions';
@@ -9935,7 +9969,7 @@ function renderReportBuilderLayout() {
     format.value = String(item.date_format || '');
     const dateValue = item.type === 'system' && ['start_date', 'end_date', 'generated_at'].includes(item.value);
     format.disabled = !dateValue;
-    format.addEventListener('input', () => { item.date_format = format.value; });
+    format.addEventListener('input', () => { item.date_format = format.value; scheduleReportBuilderLayoutPreview(); });
     formatTd.appendChild(format);
     const actionTd = document.createElement('td');
     const remove = document.createElement('button');
@@ -9950,7 +9984,19 @@ function renderReportBuilderLayout() {
   renderReportBuilderLayoutPreview();
 }
 
+function scheduleReportBuilderLayoutPreview() {
+  window.clearTimeout(state.reportBuilderLayoutPreviewTimer);
+  state.reportBuilderLayoutPreviewTimer = window.setTimeout(() => {
+    state.reportBuilderLayoutPreviewTimer = 0;
+    if (state.reportBuilderActiveTab === 'layout' && document.body.classList.contains('reports-builder-active')) {
+      renderReportBuilderLayoutPreview();
+    }
+  }, 350);
+}
+
 function renderReportBuilderLayoutPreview() {
+  window.clearTimeout(state.reportBuilderLayoutPreviewTimer);
+  state.reportBuilderLayoutPreviewTimer = 0;
   const table = els.reportBuilderLayoutPreview;
   if (!table) return;
   const tableRow = Math.max(1, Math.min(200, Math.trunc(Number(els.reportBuilderLayoutTableRow?.value || 5))));
@@ -9980,13 +10026,16 @@ function renderReportBuilderLayoutPreview() {
   const systemSamples = {
     report_name: String(els.reportBuilderName?.value || 'Report Title'),
     report_description: String(els.reportBuilderDescription?.value || 'Report description'),
-    period_label: 'Selected reporting period', start_date: 'Beginning date', end_date: 'Ending date',
-    generated_at: 'Generated date/time', timezone: String(els.reportBuilderTimezone?.value || browserTimezone())
+    period_label: 'Selected reporting period', start_date: '2026-11-01', end_date: '2026-11-30',
+    generated_at: '2026-11-30 08:30:00', timezone: String(els.reportBuilderTimezone?.value || browserTimezone())
   };
   state.reportBuilderLayoutPlacedCells.forEach((item) => {
     const target = spreadsheetRangeParts(item.target)?.start;
     if (!target) return;
-    const text = item.type === 'system' ? systemSamples[item.value]
+    const text = item.type === 'system'
+      ? (['start_date', 'end_date', 'generated_at'].includes(item.value)
+          ? formatPlacedReportDate(systemSamples[item.value], item.date_format)
+          : systemSamples[item.value])
       : (item.type === 'formula' ? Number(123.456).toFixed(Math.max(0, Math.min(10, Math.trunc(Number(item.precision ?? 2)))) ) : item.text);
     put(target.row, target.column, String(text || ''), item.value === 'report_name' ? 'layout-title' : 'layout-fixed');
   });
@@ -10038,7 +10087,7 @@ function renderReportBuilderLayoutPreview() {
     Number(templatePreview?.max_row || 0), ...used.map(([row]) => row), ...placedRanges.map((range) => range.end.row)));
   const maxColumn = Math.min(100, Math.max(tableColumn, ...placements, Number(templatePreview?.max_column || 0),
     ...used.map(([, column]) => column), ...placedRanges.map((range) => range.end.column)));
-  table.textContent = '';
+  const preview = document.createDocumentFragment();
   const colgroup = document.createElement('colgroup');
   const rowHeaderColumn = document.createElement('col');
   rowHeaderColumn.style.width = '46px';
@@ -10049,7 +10098,7 @@ function renderReportBuilderLayoutPreview() {
     if (templateWidth > 0) col.style.width = `${Math.max(40, Math.min(420, templateWidth * 7))}px`;
     colgroup.appendChild(col);
   }
-  table.appendChild(colgroup);
+  preview.appendChild(colgroup);
   const header = document.createElement('tr');
   header.appendChild(document.createElement('th'));
   for (let column = 1; column <= maxColumn; column++) {
@@ -10057,7 +10106,7 @@ function renderReportBuilderLayoutPreview() {
     th.textContent = spreadsheetColumnLabel(column);
     header.appendChild(th);
   }
-  table.appendChild(header);
+  preview.appendChild(header);
   const mergeAnchors = new Map();
   const mergedCells = new Set();
   const previewMerges = [...(templatePreview?.merges || []), ...placedRanges.filter((range) => range.range.includes(':')).map((range) => ({
@@ -10113,8 +10162,9 @@ function renderReportBuilderLayoutPreview() {
       }
       tr.appendChild(td);
     }
-    table.appendChild(tr);
+    preview.appendChild(tr);
   }
+  table.replaceChildren(preview);
 }
 
 function closeReportFormulaModal() {
@@ -11010,7 +11060,7 @@ function wireReportBuilderUi() {
     els.reportBuilderLayoutSummaryGap, els.reportBuilderLayoutSummaryPlacement, els.reportBuilderLayoutSummaryRow,
     els.reportBuilderName, els.reportBuilderDescription].forEach((input) => {
     input?.addEventListener('input', () => {
-      if (state.reportBuilderActiveTab === 'layout') renderReportBuilderLayoutPreview();
+      if (state.reportBuilderActiveTab === 'layout') scheduleReportBuilderLayoutPreview();
     });
   });
   els.reportBuilderLayoutDateFormat?.addEventListener('change', renderReportBuilderLayoutPreview);
