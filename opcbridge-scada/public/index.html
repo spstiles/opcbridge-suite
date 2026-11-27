@@ -1523,6 +1523,10 @@
 		                <button class="btn" id="publishedReportCustomNextBtn" type="button" aria-label="Next date range" title="Next date range">→</button>
 		              </div>
 		            </div>
+                    <div class="report-view-field">
+                      <span class="report-view-label" aria-hidden="true">&nbsp;</span>
+                      <button class="btn" id="publishedReportRangeModeBtn" type="button" hidden>Custom Range</button>
+                    </div>
 		            <label class="report-view-field">
 		              <span class="report-view-label">Download format</span>
 		              <select id="publishedReportFormat"></select>
@@ -1575,7 +1579,7 @@
 		          <input id="reportBuilderId" type="hidden">
 		          <label style="grid-column: 1 / -1;"><span>Name</span><input id="reportBuilderName" type="text" placeholder="Monthly Flow Report"></label>
 		          <label style="grid-column: 1 / -1;"><span>Description</span><textarea id="reportBuilderDescription" rows="2"></textarea></label>
-		          <label><span>Report type</span>
+		          <label><span>Report Type</span>
 		            <select id="reportBuilderPeriod">
 		              <option value="daily">Daily (configurable row interval)</option>
 		              <option value="weekly">Weekly (daily rows)</option>

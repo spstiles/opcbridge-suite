@@ -347,6 +347,24 @@ function report_range(array $report, array $options): array
         $start = $endDay->modify('-6 days');
         return [$start, $endDay->modify('+1 day'), 'day', $start->format('Y-m-d') . '-to-' . $endDay->format('Y-m-d')];
     }
+    if ($period === 'custom' || option($options, 'range-mode', '') === 'custom') {
+        $startValue = option($options, 'start-date');
+        $endValue = option($options, 'end-date');
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $startValue) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $endValue)) {
+            fail('--start-date and --end-date must use YYYY-MM-DD', 2);
+        }
+        $start = new DateTimeImmutable("{$startValue} 00:00:00", $tz);
+        $endDay = new DateTimeImmutable("{$endValue} 00:00:00", $tz);
+        if ($endDay < $start) fail('--end-date must not be earlier than --start-date', 2);
+        $group = match ($period) {
+            'daily' => 'minute:' . (int)($report['interval_minutes'] ?? 60),
+            'yearly' => 'month',
+            'custom' => in_array(($report['group_by'] ?? 'day'), ['hour', 'day', 'month', 'raw'], true)
+                ? (string)$report['group_by'] : 'day',
+            default => 'day',
+        };
+        return [$start, $endDay->modify('+1 day'), $group, "{$startValue}-to-{$endValue}"];
+    }
     if ($period === 'daily') {
         if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) fail('--period-value must use YYYY-MM-DD', 2);
         $start = new DateTimeImmutable("{$value} 00:00:00", $tz);
@@ -367,19 +385,6 @@ function report_range(array $report, array $options): array
         if (!preg_match('/^\d{4}$/', $value)) fail('--period-value must use YYYY', 2);
         $start = new DateTimeImmutable("{$value}-01-01 00:00:00", $tz);
         return [$start, $start->modify('+1 year'), 'month', $value];
-    }
-    if ($period === 'custom') {
-        $startValue = option($options, 'start-date');
-        $endValue = option($options, 'end-date');
-        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $startValue) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $endValue)) {
-            fail('--start-date and --end-date must use YYYY-MM-DD', 2);
-        }
-        $start = new DateTimeImmutable("{$startValue} 00:00:00", $tz);
-        $endDay = new DateTimeImmutable("{$endValue} 00:00:00", $tz);
-        if ($endDay < $start) fail('--end-date must not be earlier than --start-date', 2);
-        $group = in_array(($report['group_by'] ?? 'day'), ['hour', 'day', 'month', 'raw'], true)
-            ? (string)$report['group_by'] : 'day';
-        return [$start, $endDay->modify('+1 day'), $group, "{$startValue}-to-{$endValue}"];
     }
     if (!preg_match('/^(\d{4})-(\d{2})$/', $value, $matches)) fail('--period-value must use YYYY-MM', 2);
     $year = (int)$matches[1];

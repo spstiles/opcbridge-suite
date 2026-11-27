@@ -314,6 +314,7 @@
   publishedReportSelect: document.getElementById('publishedReportSelect'),
   publishedReportMonth: document.getElementById('publishedReportMonth'),
   publishedReportSinglePeriod: document.getElementById('publishedReportSinglePeriod'),
+  publishedReportRangeModeBtn: document.getElementById('publishedReportRangeModeBtn'),
   publishedReportCustomPeriod: document.getElementById('publishedReportCustomPeriod'),
   publishedReportStartDate: document.getElementById('publishedReportStartDate'),
   publishedReportEndDate: document.getElementById('publishedReportEndDate'),
@@ -1341,6 +1342,9 @@ const state = {
   authAdminLoadInFlight: false,
 
   publishedReports: [],
+  publishedReportPeriodKey: "",
+  publishedReportCustomRange: false,
+  publishedReportPreviewRequest: 0,
   reportBuilderReports: [],
   reportBuilderOriginalId: '',
   reportBuilderColumns: [],
@@ -8612,36 +8616,53 @@ function localIsoDate(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
-function configurePublishedReportPeriod(report) {
+function reportToday(report) {
+  try {
+    const parts = new Intl.DateTimeFormat('en', {
+      timeZone: report?.timezone || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit'
+    }).formatToParts(new Date());
+    const get = (type) => parts.find((part) => part.type === type).value;
+    return `${get('year')}-${get('month')}-${get('day')}`;
+  } catch {
+    return localIsoDate();
+  }
+}
+
+function configurePublishedReportPeriod(report, reset = false) {
   const period = String(report?.period || 'month');
-  const custom = period === 'custom';
+  const key = JSON.stringify([report?.id, period, report?.timezone]);
+  if (state.publishedReportPeriodKey !== key) {
+    state.publishedReportPeriodKey = key;
+    state.publishedReportCustomRange = false;
+    reset = true;
+  }
+  const custom = period === 'custom' || state.publishedReportCustomRange;
+  if (els.publishedReportRangeModeBtn) {
+    els.publishedReportRangeModeBtn.hidden = !report || period === 'custom';
+    els.publishedReportRangeModeBtn.textContent = custom ? 'Back to Default' : 'Custom Range';
+  }
   if (els.publishedReportSinglePeriod) els.publishedReportSinglePeriod.style.display = custom ? 'none' : '';
   if (els.publishedReportCustomPeriod) els.publishedReportCustomPeriod.style.display = custom ? '' : 'none';
-  const now = new Date();
+  const today = reportToday(report);
   if (custom) {
-    if (els.publishedReportStartDate && !els.publishedReportStartDate.value) {
-      els.publishedReportStartDate.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
-    }
-    if (els.publishedReportEndDate && !els.publishedReportEndDate.value) {
-      els.publishedReportEndDate.value = localIsoDate(now);
-    }
+    if (reset || !els.publishedReportStartDate.value) els.publishedReportStartDate.value = today.slice(0, 7) + '-01';
+    if (reset || !els.publishedReportEndDate.value) els.publishedReportEndDate.value = today;
     return;
   }
   if (!els.publishedReportMonth) return;
   const labels = { daily: 'Report date', weekly: 'Week containing', month: 'Report month', yearly: 'Report year' };
   const units = { daily: 'day', weekly: 'week', month: 'month', yearly: 'year' };
+  const usesDate = ['daily', 'weekly'].includes(period);
   els.publishedReportPeriodLabel.textContent = labels[period] || labels.month;
-  els.publishedReportMonth.type = ['daily', 'weekly'].includes(period) ? 'date' : (period === 'yearly' ? 'number' : 'month');
+  els.publishedReportMonth.type = usesDate ? 'date' : (period === 'yearly' ? 'number' : 'month');
   els.publishedReportMonth.removeAttribute('min');
   els.publishedReportMonth.removeAttribute('max');
-  if (['daily', 'weekly'].includes(period) && !/^\d{4}-\d{2}-\d{2}$/.test(els.publishedReportMonth.value)) {
-    els.publishedReportMonth.value = localIsoDate(now);
-  } else if (period === 'yearly') {
+  if (period === 'yearly') {
     els.publishedReportMonth.min = '2000';
     els.publishedReportMonth.max = '2100';
-    if (!/^\d{4}$/.test(els.publishedReportMonth.value)) els.publishedReportMonth.value = String(now.getFullYear());
-  } else if (period === 'month' && !/^\d{4}-\d{2}$/.test(els.publishedReportMonth.value)) {
-    els.publishedReportMonth.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  }
+  if (reset || !els.publishedReportMonth.value) {
+    els.publishedReportMonth.value = usesDate ? today : today.slice(0, period === 'yearly' ? 4 : 7);
   }
   const unit = units[period] || 'month';
   [els.publishedReportPreviousBtn, els.publishedReportNextBtn].forEach((button, index) => {
@@ -8655,11 +8676,11 @@ function configurePublishedReportPeriod(report) {
 function publishedReportRangePayload() {
   const report = selectedPublishedReport();
   const period = String(report?.period || 'month');
-  if (period === 'custom') {
+  if (period === 'custom' || state.publishedReportCustomRange) {
     const start_date = String(els.publishedReportStartDate?.value || '');
     const end_date = String(els.publishedReportEndDate?.value || '');
-    return /^\d{4}-\d{2}-\d{2}$/.test(start_date) && /^\d{4}-\d{2}-\d{2}$/.test(end_date)
-      ? { start_date, end_date } : null;
+    return /^\d{4}-\d{2}-\d{2}$/.test(start_date) && /^\d{4}-\d{2}-\d{2}$/.test(end_date) && start_date <= end_date
+      ? { range_mode: 'custom', start_date, end_date } : null;
   }
   const value = String(els.publishedReportMonth?.value || '').trim();
   const valid = ['daily', 'weekly'].includes(period) ? /^\d{4}-\d{2}-\d{2}$/.test(value)
@@ -8955,11 +8976,18 @@ function renderPublishedReportPreview(preview) {
 async function previewPublishedReport() {
   const report = selectedPublishedReport();
   const range = publishedReportRangePayload();
-  if (!report || !range) return;
+  const request = ++state.publishedReportPreviewRequest;
+  if (!report) return;
+  if (!range) {
+    els.publishedReportPreviewWrap.style.display = 'none';
+    els.publishedReportsStatus.textContent = 'Select a valid report date range.';
+    return;
+  }
   if (els.publishedReportsStatus) els.publishedReportsStatus.textContent = 'Loading report…';
   try {
     const preview = await fetchReportView(() =>
       apiPostJson('/api/reports/preview', { id: report.id, ...range }, { timeoutMs: 120000 }));
+    if (request !== state.publishedReportPreviewRequest) return;
     renderPublishedReportPreview(preview);
     if (els.publishedReportsStatus) {
       els.publishedReportsStatus.textContent = preview.template_preview_error
@@ -8971,6 +8999,7 @@ async function previewPublishedReport() {
             : 'Report ready.');
     }
   } catch (err) {
+    if (request !== state.publishedReportPreviewRequest) return;
     if (els.publishedReportPreviewWrap) els.publishedReportPreviewWrap.style.display = 'none';
     if (els.publishedReportsStatus) els.publishedReportsStatus.textContent = `Could not load report preview. ${err.message || err}`;
   }
@@ -9038,6 +9067,11 @@ function wirePublishedReportsUi() {
       previewPublishedReport().catch(() => {});
     });
   }
+  els.publishedReportRangeModeBtn?.addEventListener('click', () => {
+    state.publishedReportCustomRange = !state.publishedReportCustomRange;
+    configurePublishedReportPeriod(selectedPublishedReport(), true);
+    previewPublishedReport().catch(() => {});
+  });
   if (els.publishedReportMonth) {
     els.publishedReportMonth.addEventListener('change', () => previewPublishedReport().catch(() => {}));
   }
@@ -11156,7 +11190,7 @@ function wireReportBuilderUi() {
     try {
       const report = reportBuilderCurrentDefinition();
       reportBuilderSetStatus('Generating preview…');
-      const today = localIsoDate(new Date());
+      const today = reportToday(report);
       const currentPeriod = selectedPublishedReport()?.period;
       const range = (report.period === currentPeriod && publishedReportRangePayload()) ||
         (report.period === 'custom' ? { start_date: today.slice(0, 7) + '-01', end_date: today } :

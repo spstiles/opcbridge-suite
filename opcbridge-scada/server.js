@@ -1046,13 +1046,13 @@ function reportCliRangeArgs(report, values) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new Error('A valid last-seven-days ending date is required.');
     return { args: ['--range-mode', 'last7', '--period-value', value], label: value };
   }
-  if (period === 'custom') {
+  if (period === 'custom' || read('range_mode') === 'custom') {
     const start = read('start_date');
     const end = read('end_date');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end) || end < start) {
       throw new Error('Valid start_date and end_date are required.');
     }
-    return { args: ['--start-date', start, '--end-date', end], label: `${start}-to-${end}` };
+    return { args: ['--range-mode', 'custom', '--start-date', start, '--end-date', end], label: `${start}-to-${end}` };
   }
   const value = read('period_value') || read('month');
   const valid = ['daily', 'weekly'].includes(period) ? /^\d{4}-\d{2}-\d{2}$/.test(value)
