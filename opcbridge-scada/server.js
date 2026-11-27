@@ -980,6 +980,8 @@ function normalizeReportDefinition(value, { draft = false } = {}) {
     table_start_row: normalizeIntRange(layoutInput.table_start_row, 5, 1, 10000),
     table_start_column: normalizeSpreadsheetColumn(layoutInput.table_start_column, 'A'),
     include_header_row: normalizeBool(layoutInput.include_header_row, true),
+    date_column_format: ['yyyy-mm-dd', 'mm/dd/yyyy', 'mm/dd', 'd', 'mmm yyyy', 'hh:mm', 'yyyy-mm-dd hh:mm', 'yyyy-mm-dd hh:mm:ss']
+      .find((format) => layoutInput.date_column_format === format) || '',
     summary_gap_rows: normalizeIntRange(layoutInput.summary_gap_rows, 0, 0, 100),
     summary_placement: String(layoutInput.summary_placement || 'after_data') === 'fixed' ? 'fixed' : 'after_data',
     summary_start_row: normalizeIntRange(layoutInput.summary_start_row, 40, 1, 10000),

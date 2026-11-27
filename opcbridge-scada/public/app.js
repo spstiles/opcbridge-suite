@@ -421,6 +421,7 @@
   reportBuilderLayoutWorksheet: document.getElementById('reportBuilderLayoutWorksheet'),
   reportBuilderLayoutTableRow: document.getElementById('reportBuilderLayoutTableRow'),
   reportBuilderLayoutTableColumn: document.getElementById('reportBuilderLayoutTableColumn'),
+  reportBuilderLayoutDateFormat: document.getElementById('reportBuilderLayoutDateFormat'),
   reportBuilderLayoutIncludeHeader: document.getElementById('reportBuilderLayoutIncludeHeader'),
   reportBuilderLayoutSummaryGap: document.getElementById('reportBuilderLayoutSummaryGap'),
   reportBuilderLayoutSummaryPlacement: document.getElementById('reportBuilderLayoutSummaryPlacement'),
@@ -8883,7 +8884,7 @@ function renderPublishedReportPreview(preview) {
   }
   (preview.rows || []).forEach((row, rowIndex) => {
     const outputRow = tableRow + headerRows + rowIndex;
-    put(outputRow, tableColumn, String(row.date || ''), previewClass('layout-data'));
+    put(outputRow, tableColumn, String(row.display_date ?? row.date ?? ''), previewClass('layout-data'));
     (row.values || []).forEach((value, index) => {
       const precision = columns[index]?.precision ?? 2;
       const text = value === null || value === undefined ? '—' : Number(value).toLocaleString(undefined, {
@@ -9001,6 +9002,9 @@ async function previewPublishedReport() {
         : (report.published === false
             ? 'Draft preview — publish this report to enable downloads.'
             : 'Report ready.');
+      if (preview.summary_moved) {
+        els.publishedReportsStatus.textContent += ' The custom range reaches the fixed summary row, so the summary appears below the table.';
+      }
     }
   } catch (err) {
     if (request !== state.publishedReportPreviewRequest) return;
@@ -9615,6 +9619,7 @@ function reportBuilderCurrentDefinition() {
       table_start_row: Math.max(1, Math.min(10000, Math.trunc(Number(els.reportBuilderLayoutTableRow?.value || 5)))),
       table_start_column: normalizeSpreadsheetColumn(els.reportBuilderLayoutTableColumn?.value || 'A') || 'A',
       include_header_row: Boolean(els.reportBuilderLayoutIncludeHeader?.checked),
+      date_column_format: String(els.reportBuilderLayoutDateFormat?.value || ''),
       summary_gap_rows: Math.max(0, Math.min(100, Math.trunc(Number(els.reportBuilderLayoutSummaryGap?.value || 0)))),
       summary_placement: String(els.reportBuilderLayoutSummaryPlacement?.value || 'after_data'),
       summary_start_row: Math.max(1, Math.min(10000, Math.trunc(Number(els.reportBuilderLayoutSummaryRow?.value || 40)))),
@@ -9945,7 +9950,22 @@ function renderReportBuilderLayoutPreview() {
   }
   for (let rowOffset = 1; rowOffset <= sampleRows; rowOffset++) {
     const outputRow = tableRow + headerRows + rowOffset - 1;
-    put(outputRow, tableColumn, `Day ${rowOffset}`, 'layout-data');
+    const format = els.reportBuilderLayoutDateFormat?.value || '';
+    const period = els.reportBuilderPeriod?.value;
+    const minuteOffset = (rowOffset - 1) * Number(els.reportBuilderInterval?.value || 60);
+    const day = String(['daily', 'yearly'].includes(period) ? 1 : rowOffset).padStart(2, '0');
+    const month = period === 'yearly' ? String(rowOffset).padStart(2, '0') : '11';
+    const time = period === 'daily'
+      ? `${String(Math.floor(minuteOffset / 60)).padStart(2, '0')}:${String(minuteOffset % 60).padStart(2, '0')}` : '00:00';
+    const date = `2026-${month}-${day}`;
+    const automatic = period === 'daily' ? `${date} ${time}` : period === 'yearly' ? date.slice(0, 7) : date;
+    const samples = {
+      'yyyy-mm-dd': date, 'mm/dd/yyyy': `${month}/${day}/2026`,
+      'mm/dd': `${month}/${day}`, d: String(Number(day)),
+      'mmm yyyy': `${period === 'yearly' ? ['Jan', 'Feb', 'Mar'][rowOffset - 1] : 'Nov'} 2026`,
+      'hh:mm': time, 'yyyy-mm-dd hh:mm': `${date} ${time}`, 'yyyy-mm-dd hh:mm:ss': `${date} ${time}:00`
+    };
+    put(outputRow, tableColumn, samples[format] || automatic, 'layout-data');
     visibleColumns.forEach((column, index) => {
       const precision = Math.max(0, Math.min(10, Math.trunc(Number(column.precision ?? 2))));
       put(outputRow, placements[index], (100 * rowOffset + index + 0.25).toFixed(precision), 'layout-data');
@@ -10744,6 +10764,7 @@ function loadReportBuilderDefinition(report) {
   if (els.reportBuilderLayoutTableRow) els.reportBuilderLayoutTableRow.value = String(layout.table_start_row || 5);
   if (els.reportBuilderLayoutTableColumn) els.reportBuilderLayoutTableColumn.value = String(layout.table_start_column || 'A');
   if (els.reportBuilderLayoutIncludeHeader) els.reportBuilderLayoutIncludeHeader.checked = layout.include_header_row !== false;
+  if (els.reportBuilderLayoutDateFormat) els.reportBuilderLayoutDateFormat.value = layout.date_column_format || '';
   if (els.reportBuilderLayoutSummaryGap) els.reportBuilderLayoutSummaryGap.value = String(layout.summary_gap_rows || 0);
   if (els.reportBuilderLayoutSummaryPlacement) els.reportBuilderLayoutSummaryPlacement.value = String(layout.summary_placement || 'after_data');
   if (els.reportBuilderLayoutSummaryRow) els.reportBuilderLayoutSummaryRow.value = String(layout.summary_start_row || 40);
@@ -10891,7 +10912,7 @@ function renderReportBuilderPreview(preview) {
   els.reportBuilderPreviewHead.appendChild(headerRow);
   (preview.rows || []).forEach((row) => {
     const tr = document.createElement('tr');
-    const cells = [row.date, ...(row.values || [])];
+    const cells = [row.display_date ?? row.date, ...(row.values || [])];
     cells.forEach((value, index) => {
       const td = document.createElement('td');
       if (value === null || value === undefined) td.textContent = '—';
@@ -10941,6 +10962,7 @@ function wireReportBuilderUi() {
       if (state.reportBuilderActiveTab === 'layout') renderReportBuilderLayoutPreview();
     });
   });
+  els.reportBuilderLayoutDateFormat?.addEventListener('change', renderReportBuilderLayoutPreview);
   els.reportBuilderLayoutIncludeHeader?.addEventListener('change', () => {
     if (state.reportBuilderActiveTab === 'layout') renderReportBuilderLayoutPreview();
   });
@@ -11306,7 +11328,7 @@ function wireReportBuilderUi() {
       renderReportBuilderPreview(preview);
       reportBuilderSetStatus(preview.truncated
         ? `Preview reached the ${Number(preview.row_limit || 250000).toLocaleString()}-row limit; narrow the date range to inspect all samples.`
-        : 'Preview ready.');
+        : (preview.summary_moved ? 'Preview ready. The summary moved below the table for this custom range.' : 'Preview ready.'));
     } catch (err) {
       reportBuilderSetStatus(err.message || err);
     }

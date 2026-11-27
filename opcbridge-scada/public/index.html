@@ -1720,9 +1720,22 @@
 		            <label><span>Table starting row</span><input id="reportBuilderLayoutTableRow" type="number" min="1" max="10000" value="5"></label>
 		            <label><span>Table starting column</span><input id="reportBuilderLayoutTableColumn" type="text" value="A" maxlength="3"></label>
 		            <label class="grid-check" style="grid-column:1 / -1;"><span><input id="reportBuilderLayoutIncludeHeader" type="checkbox" checked> Include table header row</span></label>
-		            <label><span>Summary placement</span><select id="reportBuilderLayoutSummaryPlacement"><option value="after_data">At bottom of table</option><option value="fixed">Start at fixed row</option></select></label>
+                    <label><span>First column date/time format</span>
+                      <select id="reportBuilderLayoutDateFormat">
+                        <option value="">Automatic</option>
+                        <option value="yyyy-mm-dd">2026-11-03</option>
+                        <option value="mm/dd/yyyy">11/03/2026</option>
+                        <option value="mm/dd">11/03</option>
+                        <option value="d">3 (day of month)</option>
+                        <option value="mmm yyyy">Nov 2026</option>
+                        <option value="hh:mm">08:30</option>
+                        <option value="yyyy-mm-dd hh:mm">2026-11-03 08:30</option>
+                        <option value="yyyy-mm-dd hh:mm:ss">2026-11-03 08:30:00</option>
+                      </select>
+                    </label>
+		            <label><span>Summary placement</span><select id="reportBuilderLayoutSummaryPlacement"><option value="after_data">After table</option><option value="fixed">Start at fixed row</option></select></label>
 		            <label id="reportBuilderLayoutSummaryGapLabel"><span>Blank rows before summaries</span><input id="reportBuilderLayoutSummaryGap" type="number" min="0" max="100" value="0"></label>
-		            <label id="reportBuilderLayoutSummaryRowLabel" style="display:none;"><span>Summary starting row</span><input id="reportBuilderLayoutSummaryRow" type="number" min="1" max="10000" value="40"></label>
+		            <label id="reportBuilderLayoutSummaryRowLabel" style="display:none;"><span>Summary starting row</span><input id="reportBuilderLayoutSummaryRow" type="number" min="1" max="10000" value="40"><small class="hint">If a custom range reaches this row, the summary moves below the table for that run.</small></label>
 		          </div>
 		          <h4 style="margin-top:18px;">Placed Cells</h4>
 		          <div class="hint">Place report properties, dates, custom text, or formulas in a cell or merged range such as A1:F1. Formulas use column IDs, for example <code>sum([flow_total])</code>.</div>

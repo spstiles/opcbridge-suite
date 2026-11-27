@@ -4,6 +4,12 @@ declare(strict_types=1);
 
 const OPCBRIDGE_REPORT_FORMATS = ['xlsx', 'ods', 'csv'];
 
+const REPORT_DATE_COLUMN_FORMATS = [
+    'yyyy-mm-dd' => 'Y-m-d', 'mm/dd/yyyy' => 'm/d/Y', 'mm/dd' => 'm/d',
+    'd' => 'j', 'mmm yyyy' => 'M Y', 'hh:mm' => 'H:i',
+    'yyyy-mm-dd hh:mm' => 'Y-m-d H:i', 'yyyy-mm-dd hh:mm:ss' => 'Y-m-d H:i:s',
+];
+
 function fail(string $message, int $code = 1): never
 {
     fwrite(STDERR, "opcbridge-report: {$message}\n");
@@ -191,6 +197,8 @@ function validate_report(array $report): array
         'table_start_row' => max(1, min(10000, (int)($layout['table_start_row'] ?? 5))),
         'table_start_column' => $validColumn($layout['table_start_column'] ?? 'A', 'A'),
         'include_header_row' => ($layout['include_header_row'] ?? true) !== false,
+        'date_column_format' => isset(REPORT_DATE_COLUMN_FORMATS[(string)($layout['date_column_format'] ?? '')])
+            ? (string)$layout['date_column_format'] : '',
         'summary_gap_rows' => max(0, min(100, (int)($layout['summary_gap_rows'] ?? 0))),
         'summary_placement' => (string)($layout['summary_placement'] ?? 'after_data') === 'fixed' ? 'fixed' : 'after_data',
         'summary_start_row' => max(1, min(10000, (int)($layout['summary_start_row'] ?? 40))),
@@ -1270,6 +1278,21 @@ function project_report_rows(array $rows, array $indexes, string $labelKey = 'da
     );
 }
 
+function report_row_date(string $label): ?DateTimeImmutable
+{
+    $formats = [7 => '!Y-m', 10 => '!Y-m-d', 16 => '!Y-m-d H:i', 19 => '!Y-m-d H:i:s', 23 => '!Y-m-d H:i:s.v'];
+    $format = $formats[strlen($label)] ?? null;
+    if ($format === null) return null;
+    $date = DateTimeImmutable::createFromFormat($format, $label, new DateTimeZone('UTC'));
+    return $date ?: null;
+}
+
+function format_report_row_date(string $label, string $format): string
+{
+    $pattern = REPORT_DATE_COLUMN_FORMATS[$format] ?? null;
+    return $pattern ? (report_row_date($label)?->format($pattern) ?? $label) : $label;
+}
+
 function write_csv(string $output, array $report, array $rows, array $summaryRows): void
 {
     $handle = fopen($output, 'wb');
@@ -1283,7 +1306,8 @@ function write_csv(string $output, array $report, array $rows, array $summaryRow
         array_map(fn(array $column): string => (string)($column['heading'] ?? $column['tag_name']), $report['columns'])
     ));
     foreach ($rows as $row) {
-        fputcsv($handle, array_merge([$row['date']], $row['values']));
+        $date = format_report_row_date((string)$row['date'], (string)($report['layout']['date_column_format'] ?? ''));
+        fputcsv($handle, array_merge([$date], $row['values']));
     }
     foreach ($summaryRows as $row) {
         fputcsv($handle, array_merge([$row['label']], $row['values']));
@@ -1372,11 +1396,14 @@ function write_spreadsheet(
     }
 
     $rowNumber = $tableStartRow + ($includeHeaderRow ? 1 : 0);
+    $dateFormat = (string)($layout['date_column_format'] ?? '');
     foreach ($rows as $row) {
-        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)$row['date'])) {
-            $date = DateTimeImmutable::createFromFormat('!Y-m-d', $row['date']);
+        $label = (string)$row['date'];
+        $cellFormat = $dateFormat ?: (strlen($label) === 10 ? 'mm/dd/yyyy' : '');
+        $date = $cellFormat !== '' ? report_row_date($label) : null;
+        if ($date) {
             $sheet->setCellValue("{$firstColumn}{$rowNumber}", \PhpOffice\PhpSpreadsheet\Shared\Date::PHPToExcel($date));
-            $sheet->getStyle("{$firstColumn}{$rowNumber}")->getNumberFormat()->setFormatCode('mm/dd/yyyy');
+            $sheet->getStyle("{$firstColumn}{$rowNumber}")->getNumberFormat()->setFormatCode($cellFormat);
         } else {
             $sheet->setCellValueExplicit(
                 "{$firstColumn}{$rowNumber}",
@@ -1626,11 +1653,16 @@ try {
 $summaryRows = calculate_summary_rows($report, $rows);
 $placedCells = calculate_placed_cells($report, $rows, $periodLabel, $start, $end);
 $reportLayout = is_array($report['layout'] ?? null) ? $report['layout'] : [];
+$summaryMoved = false;
 if ($summaryRows && ($reportLayout['summary_placement'] ?? 'after_data') === 'fixed') {
     $headerRows = ($reportLayout['include_header_row'] ?? true) !== false ? 1 : 0;
     $lastDataRow = (int)($reportLayout['table_start_row'] ?? 5) + $headerRows + count($rows) - 1;
     if ((int)($reportLayout['summary_start_row'] ?? 40) <= $lastDataRow) {
-        fail('Fixed summary starting row overlaps report table data');
+        if (($report['period'] ?? '') !== 'custom' && option($options, 'range-mode', '') !== 'custom') {
+            fail('Fixed summary starting row overlaps report table data');
+        }
+        $report['layout']['summary_placement'] = 'after_data';
+        $summaryMoved = true;
     }
 }
 $visibleIndexes = visible_column_indexes($report);
@@ -1640,6 +1672,13 @@ $outputRows = project_report_rows(apply_companion_display($report, $rows), $visi
 $outputSummaryRows = project_report_rows($summaryRows, $visibleIndexes, 'label');
 
 if ($command === 'preview') {
+    $dateFormat = (string)($report['layout']['date_column_format'] ?? '');
+    if ($dateFormat !== '') {
+        foreach ($outputRows as &$row) {
+            $row['display_date'] = format_report_row_date((string)$row['date'], $dateFormat);
+        }
+        unset($row);
+    }
     echo json_encode([
         'ok' => true,
         'id' => $id,
@@ -1653,6 +1692,7 @@ if ($command === 'preview') {
         'group_by' => $group,
         'timezone' => (string)($report['timezone'] ?? 'UTC'),
         'layout' => $report['layout'] ?? [],
+        'summary_moved' => $summaryMoved,
         'placed_cells' => array_map(static function(array $item): array {
             $value = $item['value'] ?? null;
             if ($value instanceof DateTimeInterface) $value = $value->format(($item['system_value'] ?? '') === 'generated_at' ? 'Y-m-d H:i:s' : 'Y-m-d');
