@@ -77,9 +77,18 @@ console.log(JSON.stringify({ name: JSON.parse(fs.readFileSync(file)).reports[0].
   assert.equal(published.published, true);
   assert.deepEqual(published.summaries[0].calculations, ['text']);
   assert.deepEqual(published.summaries[0].texts, ['005']);
-  const edited = { ...report, name: 'Draft change', hmi_enabled: false };
+  const draftLayout = {
+    worksheet: 'Draft Layout', table_start_row: 12, table_start_column: 'C',
+    include_header_row: false, date_column_format: 'mm/dd',
+    summary_placement: 'fixed', summary_start_row: 55, summary_gap_rows: 2,
+    placed_cells: [{ target: 'A1', type: 'text', text: 'Draft heading' }]
+  };
+  const edited = { ...report, name: 'Draft change', hmi_enabled: false, layout: draftLayout };
   assert.equal((await update('save_draft', edited)).report.has_draft, true);
-  assert.equal((await api('/admin')).reports[0].name, 'Draft change');
+  const reopened = (await api('/admin')).reports[0];
+  assert.equal(reopened.name, 'Draft change');
+  assert.deepEqual(reopened.layout, draftLayout);
+  assert.equal(JSON.parse(fs.readFileSync(definitions)).reports[0].layout.worksheet, 'Report');
   assert.equal((await api('', null, 'viewer')).reports[0].name, 'Live report');
   assert.equal((await api('/hmi')).reports[0].name, 'Live report');
   const preview = await api('/admin/preview', {

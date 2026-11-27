@@ -9783,15 +9783,19 @@ async function refreshReportBuilderTemplatePreview() {
   const reportId = state.reportBuilderOriginalId || String(els.reportBuilderId?.value || '').trim();
   const worksheet = String(els.reportBuilderLayoutWorksheet?.value || 'Report').trim();
   const query = new URLSearchParams({ id: reportId, stored_id: template.stored_id, worksheet, format: template.format || 'xlsx' });
+  const stillCurrent = () => state.reportBuilderTemplate === template &&
+    String(els.reportBuilderLayoutWorksheet?.value || 'Report').trim() === worksheet;
   try {
     const response = await apiGet(`/api/reports/admin/template/preview?${query.toString()}`);
+    if (!stillCurrent()) return;
     state.reportBuilderTemplatePreview = response?.preview || null;
-    if (state.reportBuilderTemplatePreview?.worksheet &&
-        state.reportBuilderTemplatePreview.worksheet !== worksheet && els.reportBuilderLayoutWorksheet) {
-      els.reportBuilderLayoutWorksheet.value = state.reportBuilderTemplatePreview.worksheet;
+    if (els.reportBuilderTemplateStatus) {
+      const previewWorksheet = state.reportBuilderTemplatePreview?.worksheet;
+      els.reportBuilderTemplateStatus.textContent = previewWorksheet && previewWorksheet !== worksheet
+        ? `Template preview shows ${previewWorksheet}. Your worksheet setting is ${worksheet}.` : '';
     }
-    if (els.reportBuilderTemplateStatus) els.reportBuilderTemplateStatus.textContent = '';
   } catch (err) {
+    if (!stillCurrent()) return;
     state.reportBuilderTemplatePreview = null;
     if (els.reportBuilderTemplateStatus) els.reportBuilderTemplateStatus.textContent = `Template preview unavailable: ${err.message || err}`;
   }
