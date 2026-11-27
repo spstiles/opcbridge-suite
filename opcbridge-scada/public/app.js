@@ -327,6 +327,7 @@
   publishedReportDescription: document.getElementById('publishedReportDescription'),
   publishedReportsRefreshBtn: document.getElementById('publishedReportsRefreshBtn'),
   publishedReportDownloadBtn: document.getElementById('publishedReportDownloadBtn'),
+  publishedReportCopyLinkBtn: document.getElementById('publishedReportCopyLinkBtn'),
   publishedReportsStatus: document.getElementById('publishedReportsStatus'),
   publishedReportTitle: document.getElementById('publishedReportTitle'),
   publishedReportPreviewWrap: document.getElementById('publishedReportPreviewWrap'),
@@ -345,6 +346,7 @@
   reportBuilderName: document.getElementById('reportBuilderName'),
   reportBuilderDescription: document.getElementById('reportBuilderDescription'),
   reportBuilderPeriod: document.getElementById('reportBuilderPeriod'),
+  reportBuilderPublicAccess: document.getElementById('reportBuilderPublicAccess'),
   reportBuilderHmiEnabled: document.getElementById('reportBuilderHmiEnabled'),
   reportBuilderWeekStart: document.getElementById('reportBuilderWeekStart'),
   reportBuilderWeekStartLabel: document.getElementById('reportBuilderWeekStartLabel'),
@@ -1506,6 +1508,7 @@ function hasPerm(permId) {
 }
 
 const REPORTS_PORTAL_MODE = window.location.pathname.replace(/\/+$/, '') === '/reports';
+const PUBLIC_REPORT_ID = REPORTS_PORTAL_MODE ? new URLSearchParams(window.location.search).get('report') || '' : '';
 const SCADA_IMPLIED_PERMISSIONS = new Set([
   'hmi.edit_screens',
   'opcbridge.write_tags',
@@ -8782,6 +8785,9 @@ function renderPublishedReportSelection() {
   if (els.publishedReportPreviewWrap && !report) {
     els.publishedReportPreviewWrap.style.display = 'none';
   }
+  if (els.publishedReportCopyLinkBtn) {
+    els.publishedReportCopyLinkBtn.hidden = PUBLIC_REPORT_ID || !report?.published || !report?.public_access;
+  }
   const permissions = reportPermissions(report);
   if (els.publishedReportDownloadBtn) {
     els.publishedReportDownloadBtn.disabled = !report || report.published === false || !permissions.download;
@@ -8824,8 +8830,9 @@ async function refreshPublishedReports(loadPreview = true) {
   if (status) status.textContent = 'Loading reports…';
   try {
     const [response, editableResponse] = await Promise.all([
-      fetchReportView(() => apiGet('/api/reports')),
-      canCreateReports()
+      fetchReportView(() => apiGet(PUBLIC_REPORT_ID
+        ? `/api/reports/public?id=${encodeURIComponent(PUBLIC_REPORT_ID)}` : '/api/reports')),
+      !PUBLIC_REPORT_ID && canCreateReports()
         ? apiGet('/api/reports/admin').catch(() => ({ reports: [] }))
         : Promise.resolve({ reports: [] })
     ]);
@@ -9052,7 +9059,8 @@ async function previewPublishedReport() {
   if (status) status.textContent = 'Loading report…';
   try {
     const preview = await fetchReportView(() =>
-      apiPostJson('/api/reports/preview', { id: report.id, ...range }, { timeoutMs: 120000 }));
+      apiPostJson(PUBLIC_REPORT_ID ? '/api/reports/public/preview' : '/api/reports/preview',
+        { id: report.id, ...range }, { timeoutMs: 120000 }));
     if (request !== state.publishedReportPreviewRequest) return;
     renderPublishedReportPreview(preview);
     if (els.publishedReportsStatus) {
@@ -9088,7 +9096,8 @@ async function downloadPublishedReport() {
   if (els.publishedReportDownloadBtn) els.publishedReportDownloadBtn.disabled = true;
   if (els.publishedReportsStatus) els.publishedReportsStatus.textContent = 'Generating…';
   try {
-    const response = await fetch(`/api/reports/download?${query.toString()}`, {
+    const endpoint = PUBLIC_REPORT_ID ? '/api/reports/public/download' : '/api/reports/download';
+    const response = await fetch(`${endpoint}?${query.toString()}`, {
       method: 'GET',
       credentials: 'same-origin',
       cache: 'no-store'
@@ -9128,6 +9137,18 @@ async function downloadPublishedReport() {
 }
 
 function wirePublishedReportsUi() {
+  els.publishedReportCopyLinkBtn?.addEventListener('click', async () => {
+    const report = selectedPublishedReport();
+    if (!report?.published || !report.public_access) return;
+    const link = new URL('/reports', window.location.origin);
+    link.searchParams.set('report', report.id);
+    try {
+      await copyTextToClipboardSafe(link.href);
+      els.publishedReportsStatus.textContent = 'Public report link copied.';
+    } catch {
+      els.publishedReportsStatus.textContent = link.href;
+    }
+  });
   if (els.publishedReportMonth && !els.publishedReportMonth.value) {
     const now = new Date();
     els.publishedReportMonth.value = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -9208,6 +9229,7 @@ function showReportBuilder(report) {
     els.reportBuilderAccessSection.style.display = (!report || permissions.manage) ? '' : 'none';
   }
 
+  if (els.reportBuilderPublicAccess) els.reportBuilderPublicAccess.disabled = Boolean(report) && !permissions.manage;
   if (els.reportBuilderHmiEnabled) {
     els.reportBuilderHmiEnabled.disabled = Boolean(report) && !permissions.manage;
     els.reportBuilderHmiEnabled.title = els.reportBuilderHmiEnabled.disabled
@@ -9678,6 +9700,7 @@ function reportBuilderCurrentDefinition() {
     timezone: String(els.reportBuilderTimezone?.value || 'UTC').trim(),
     period: String(els.reportBuilderPeriod?.value || 'month'),
     hmi_enabled: Boolean(els.reportBuilderHmiEnabled?.checked),
+    public_access: Boolean(els.reportBuilderPublicAccess?.checked),
     week_start: String(els.reportBuilderWeekStart?.value || 'sunday'),
     interval_minutes: Math.trunc(Number(els.reportBuilderInterval?.value || 60) || 60),
     group_by: String(els.reportBuilderGroupBy?.value || 'day'),
@@ -10881,6 +10904,7 @@ function loadReportBuilderDefinition(report) {
   if (els.reportBuilderDescription) els.reportBuilderDescription.value = String(value.description || '');
   if (els.reportBuilderPeriod) els.reportBuilderPeriod.value = String(value.period || 'month');
   if (els.reportBuilderHmiEnabled) els.reportBuilderHmiEnabled.checked = value.hmi_enabled === true;
+  if (els.reportBuilderPublicAccess) els.reportBuilderPublicAccess.checked = value.public_access === true;
   if (els.reportBuilderWeekStart) els.reportBuilderWeekStart.value = String(value.week_start || 'sunday');
   if (els.reportBuilderWeekStartLabel) els.reportBuilderWeekStartLabel.style.display = String(value.period || 'month') === 'weekly' ? '' : 'none';
   if (els.reportBuilderInterval) els.reportBuilderInterval.value = String(value.interval_minutes || 60);
@@ -30236,6 +30260,13 @@ document.getElementById('workspaceTagAuditBtn')?.addEventListener('click', () =>
 async function main() {
   wireThemeUi();
   applyPortalPresentation();
+  if (PUBLIC_REPORT_ID) {
+    if (els.authLine) els.authLine.hidden = true;
+    if (els.publishedReportSelect) els.publishedReportSelect.hidden = true;
+    wirePublishedReportsUi();
+    await refreshPublishedReports();
+    return;
+  }
   if (!REPORTS_PORTAL_MODE) setTab('overview');
   else if (els.authLine) els.authLine.innerHTML = '<span class="status">Checking session…</span>';
   updateConfigureTabVisibility();

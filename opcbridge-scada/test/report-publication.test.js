@@ -15,6 +15,7 @@ test('report drafts stay private until publish and can be previewed or discarded
   const listen = server => new Promise(resolve =>
     server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
   const auth = http.createServer((req, res) => {
+    if (!req.headers.cookie) return res.end('{}');
     const editor = req.headers.cookie === 'role=editor';
     const admin = req.headers.cookie === 'role=admin';
     res.end(JSON.stringify({ user: {
@@ -33,8 +34,13 @@ test('report drafts stay private until publish and can be previewed or discarded
   fs.writeFileSync(generator, `#!${process.execPath}
 const fs = require('node:fs');
 const file = process.argv[process.argv.indexOf('--definitions') + 1];
-console.log(JSON.stringify(process.argv[2] === 'template-preview'
-  ? { worksheet: 'Template' } : { name: JSON.parse(fs.readFileSync(file)).reports[0].name }));
+if (process.argv[2] === 'template-preview') {
+  console.log(JSON.stringify({ worksheet: 'Template' }));
+} else {
+  const report = JSON.parse(fs.readFileSync(file)).reports[0];
+  if (process.argv[2] === 'generate') fs.writeFileSync(process.argv[process.argv.indexOf('--output') + 1], report.name);
+  console.log(JSON.stringify({ name: report.name, columns: [{ heading: 'Total', connection_id: 'PLC', tag_name: 'Internal.Tag' }] }));
+}
 `, { mode: 0o700 });
   const server = spawn(process.execPath, [path.join(__dirname, '../server.js')], {
     env: { ...process.env, OPCBRIDGE_SCADA_CONFIG: config, OPCBRIDGE_REPORT_DEFINITIONS: definitions,
@@ -146,4 +152,28 @@ console.log(JSON.stringify(process.argv[2] === 'template-preview'
   assert.equal((await api('/admin')).reports[0].template.enabled, true);
   assert.equal(JSON.parse(fs.readFileSync(definitions)).reports[0].template, null);
 
+  const guest = (route, opts) => fetch(`http://127.0.0.1:${port}/api/reports${route}`, opts);
+  const link = `/public?id=${draft.id}`;
+  const period = { id: draft.id, period_value: '2026-11' };
+  const previewGuest = () => guest('/public/preview', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(period)
+  });
+  const downloadGuest = () => guest(`/public/download?${new URLSearchParams({ ...period, format: 'xlsx' })}`);
+  assert.equal((await guest(link)).status, 404);
+  assert.equal((await previewGuest()).status, 404);
+  assert.equal((await downloadGuest()).status, 404);
+  await update('save_draft', { ...updatedSources, public_access: true, name: 'Draft public' });
+  assert.equal((await guest(link)).status, 404);
+  await update('publish', { ...updatedSources, public_access: true, name: 'Public report' });
+  await update('save_draft', { ...updatedSources, public_access: false, name: 'Private draft' });
+  assert.equal((await (await guest(link)).json()).reports[0].name, 'Public report');
+  assert.equal((await guest('/admin')).status, 403);
+  const guestPreview = await (await previewGuest()).json();
+  assert.equal(guestPreview.name, 'Public report');
+  assert.deepEqual(guestPreview.columns[0], { heading: 'Total' });
+  assert.equal(await (await downloadGuest()).text(), 'Public report');
+  await update('publish', { ...updatedSources, public_access: false });
+  assert.equal((await guest(link)).status, 404);
+  assert.equal((await previewGuest()).status, 404);
+  assert.equal((await downloadGuest()).status, 404);
 });

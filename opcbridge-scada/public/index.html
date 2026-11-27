@@ -1502,6 +1502,7 @@
 		          <button class="btn primary" id="reportBuilderNewBtn" type="button" style="display:none;">New Report</button>
 		          <button class="btn" id="reportBuilderManageDataSourcesBtn" type="button" style="display:none;">Manage Data Sources</button>
 		          <button class="btn" id="publishedReportsRefreshBtn" type="button">Refresh</button>
+                  <button class="btn" id="publishedReportCopyLinkBtn" type="button" hidden>Copy Public Link</button>
 		        </div>
 		        <div class="card" style="margin-top: 16px;">
 		          <div class="row-actions report-view-toolbar">
@@ -1614,6 +1615,9 @@
 		          <label><span><input id="reportBuilderOds" type="checkbox"> OpenDocument (.ods)</span></label>
 		          <label><span><input id="reportBuilderCsv" type="checkbox" checked> CSV (.csv)</span></label>
 		          <label><span><input id="reportBuilderHmiEnabled" type="checkbox"> Allow HMI display</span></label>
+                  <label><span><input id="reportBuilderPublicAccess" type="checkbox"> Public link</span>
+                    <small class="hint">Anyone with the link can view and download the published report without signing in.</small>
+                  </label>
 		        </div>
 		        <h4 style="margin-top: 18px;">Data Source</h4>
 		        <div class="grid2">

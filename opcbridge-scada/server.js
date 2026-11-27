@@ -494,6 +494,17 @@ function canAccessReport(report, status, action) {
   return Boolean(reportGrant(report, status)[action]);
 }
 
+function isPublicPublishedReport(report) {
+  return report.published === true && report.public_access === true;
+}
+
+function writePublicReportSnapshot(directory, report) {
+  const { draft, ...published } = report;
+  const definitions = path.join(directory, 'reports.json');
+  fs.writeFileSync(definitions, JSON.stringify({ reports: [published] }), { mode: 0o600 });
+  return definitions;
+}
+
 function publicReport(report) {
   return {
     id: sanitizeId(report.id),
@@ -501,6 +512,7 @@ function publicReport(report) {
     description: String(report.description || '').trim(),
     published: report.published === true,
     hmi_enabled: report.hmi_enabled === true,
+    public_access: report.public_access === true,
     period: String(report.period || 'month').trim(),
     week_start: String(report.week_start || 'sunday') === 'monday' ? 'monday' : 'sunday',
     interval_minutes: normalizeIntRange(report.interval_minutes, 60, 1, 60),
@@ -1080,6 +1092,7 @@ function normalizeReportDefinition(value, { draft = false } = {}) {
     created_by: String(source.created_by || '').trim().slice(0, 191),
     published: normalizeBool(source.published, false),
     hmi_enabled: normalizeBool(source.hmi_enabled, false),
+    public_access: normalizeBool(source.public_access, false),
     timezone,
     period: ['daily', 'weekly', 'month', 'yearly', 'custom'].includes(String(source.period || 'month')) ? String(source.period || 'month') : 'month',
     week_start: String(source.week_start || 'sunday') === 'monday' ? 'monday' : 'sunday',
@@ -6065,6 +6078,7 @@ const server = http.createServer(async (req, res) => {
           const editable = existing.draft || existing;
           source.access = editable.access;
           source.hmi_enabled = editable.hmi_enabled;
+          source.public_access = editable.public_access;
         }
         source.created_by = existing
           ? (String(existing.created_by || '').trim() || authStatusUsername(reportStatus))
@@ -6426,6 +6440,7 @@ const server = http.createServer(async (req, res) => {
       copy.created_by = authStatusUsername(reportStatus);
       if (!copy.created_by) throw new Error('An authenticated creator is required.');
       copy.published = false;
+      copy.public_access = false;
       reports.push(copy);
       writeReportDefinitions(reports);
       sendJson(res, 200, { ok: true, report: reportEditorDefinition(copy, reportStatus) });
@@ -6491,27 +6506,35 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (url.pathname === '/api/reports/preview') {
+  if (url.pathname === '/api/reports/preview' || url.pathname === '/api/reports/public/preview') {
+    const publicRequest = url.pathname === '/api/reports/public/preview';
     if (req.method !== 'POST') {
       sendJson(res, 405, { ok: false, error: 'Method not allowed' });
       return;
     }
-    const reportStatus = await requireReportsPerm();
-    if (!reportStatus) return;
+    const reportStatus = publicRequest ? null : await requireReportsPerm();
+    if (!publicRequest && !reportStatus) return;
+    let publicDir;
     try {
       const body = JSON.parse((await readBody(req)).toString('utf8') || '{}');
       const id = sanitizeId(body.id);
       const report = readReportDefinitions().find((item) => sanitizeId(item?.id) === id);
-      const grant = report ? reportGrant(report, reportStatus) : null;
-      if (!report || !grant?.view || (report.published !== true && !grant.edit && !grant.manage)) {
+      const grant = report && !publicRequest ? reportGrant(report, reportStatus) : null;
+      if (!report || (publicRequest ? !isPublicPublishedReport(report) :
+          !grant?.view || (report.published !== true && !grant.edit && !grant.manage))) {
         sendJson(res, 404, { ok: false, error: `Accessible report not found: ${id}` });
         return;
       }
       const range = reportCliRangeArgs(report, body);
+      let definitions = REPORT_DEFINITIONS_PATH;
+      if (publicRequest) {
+        publicDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opcbridge-public-report-'));
+        definitions = writePublicReportSnapshot(publicDir, report);
+      }
       const result = await new Promise((resolve) => {
         child_process.execFile(REPORT_BIN, [
           'preview',
-          '--definitions', REPORT_DEFINITIONS_PATH,
+          '--definitions', definitions,
           '--id', id,
           ...range.args,
           '--historian-url', REPORT_HISTORIAN_URL,
@@ -6520,12 +6543,22 @@ const server = http.createServer(async (req, res) => {
         ], { encoding: 'utf8', timeout: 120000, maxBuffer: 20 * 1024 * 1024 },
         (error, stdout, stderr) => resolve({ error, stdout, stderr }));
       });
-      if (result.error) throw new Error(String(result.stderr || result.error.message || result.error).trim());
+      if (result.error) throw new Error(publicRequest ? 'Report preview failed.' : String(result.stderr || result.error.message || result.error).trim());
       const preview = JSON.parse(result.stdout);
       await addReportTemplatePreview(preview, report);
+      if (publicRequest) {
+        for (const column of preview.columns || []) {
+          delete column.connection_id;
+          delete column.tag_name;
+        }
+        if (preview.layout) delete preview.layout.placed_cells;
+        if (preview.template_preview_error) preview.template_preview_error = 'Template preview unavailable.';
+      }
       sendJson(res, 200, preview);
     } catch (err) {
-      sendJson(res, 400, { ok: false, error: String(err.message || err) });
+      sendJson(res, 400, { ok: false, error: publicRequest ? 'Could not generate this public report preview.' : String(err.message || err) });
+    } finally {
+      if (publicDir) fs.rmSync(publicDir, { recursive: true, force: true });
     }
     return;
   }
@@ -6556,6 +6589,21 @@ const server = http.createServer(async (req, res) => {
     } catch (err) {
       sendJson(res, 400, { ok: false, error: String(err.message || err) });
     }
+    return;
+  }
+
+  if (url.pathname === '/api/reports/public') {
+    if (req.method !== 'GET') {
+      sendJson(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    const id = sanitizeId(url.searchParams.get('id'));
+    const report = readReportDefinitions().find((item) => item.id === id && isPublicPublishedReport(item));
+    if (!report) {
+      sendJson(res, 404, { ok: false, error: 'This public report is unavailable.' });
+      return;
+    }
+    sendJson(res, 200, { ok: true, reports: [{ ...publicReport(report), permissions: { view: true, download: true } }] });
     return;
   }
 
@@ -6597,14 +6645,16 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (url.pathname === '/api/reports/download' || url.pathname === '/api/reports/hmi/download') {
+  if (url.pathname === '/api/reports/download' || url.pathname === '/api/reports/hmi/download' ||
+      url.pathname === '/api/reports/public/download') {
     if (req.method !== 'GET') {
       sendJson(res, 405, { ok: false, error: 'Method not allowed' });
       return;
     }
     const hmiRequest = url.pathname === '/api/reports/hmi/download';
-    const reportStatus = hmiRequest ? null : await requireReportsPerm();
-    if (!hmiRequest && !reportStatus) return;
+    const publicRequest = url.pathname === '/api/reports/public/download';
+    const reportStatus = hmiRequest || publicRequest ? null : await requireReportsPerm();
+    if (!hmiRequest && !publicRequest && !reportStatus) return;
 
     const id = sanitizeId(url.searchParams.get('id'));
     const format = String(url.searchParams.get('format') || 'xlsx').trim().toLowerCase();
@@ -6613,8 +6663,8 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     const rawReport = readReportDefinitions().find((item) => sanitizeId(item?.id) === id);
-    const grant = rawReport && !hmiRequest ? reportGrant(rawReport, reportStatus) : null;
-    if (!rawReport || rawReport.published !== true || (hmiRequest ? rawReport.hmi_enabled !== true : !grant?.download)) {
+    const grant = rawReport && !hmiRequest && !publicRequest ? reportGrant(rawReport, reportStatus) : null;
+    if (!rawReport || rawReport.published !== true || (publicRequest ? !isPublicPublishedReport(rawReport) : hmiRequest ? rawReport.hmi_enabled !== true : !grant?.download)) {
       sendJson(res, 404, { ok: false, error: `Published report not found: ${id}` });
       return;
     }
@@ -6638,10 +6688,11 @@ const server = http.createServer(async (req, res) => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opcbridge-report-'));
     const outputPath = path.join(tempDir, `${id}.${format}`);
     try {
+      const definitions = publicRequest ? writePublicReportSnapshot(tempDir, rawReport) : REPORT_DEFINITIONS_PATH;
       const result = await new Promise((resolve) => {
         child_process.execFile(REPORT_BIN, [
           'generate',
-          '--definitions', REPORT_DEFINITIONS_PATH,
+          '--definitions', definitions,
           '--id', id,
           ...range.args,
           '--format', format,
@@ -6655,7 +6706,7 @@ const server = http.createServer(async (req, res) => {
         }, (error, stdout, stderr) => resolve({ error, stdout, stderr }));
       });
       if (result.error) {
-        const detail = String(result.stderr || result.error.message || result.error).trim();
+        const detail = publicRequest ? '' : String(result.stderr || result.error.message || result.error).trim();
         sendJson(res, 502, { ok: false, error: detail || 'Report generation failed.' });
         return;
       }
@@ -6674,10 +6725,9 @@ const server = http.createServer(async (req, res) => {
         'Cache-Control': 'no-store'
       }, body);
     } catch (err) {
-      sendJson(res, 500, { ok: false, error: String(err.message || err) });
+      sendJson(res, 500, { ok: false, error: publicRequest ? 'Report generation failed.' : String(err.message || err) });
     } finally {
-      try { if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath); } catch { /* ignore */ }
-      try { fs.rmdirSync(tempDir); } catch { /* ignore */ }
+      fs.rmSync(tempDir, { recursive: true, force: true });
     }
     return;
   }
@@ -6808,7 +6858,7 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/reports/') {
     send(res, 302, {
-      Location: '/reports',
+      Location: '/reports' + url.search,
       'Cache-Control': 'no-store'
     }, '');
     return;
