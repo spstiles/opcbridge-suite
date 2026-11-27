@@ -819,7 +819,8 @@ function normalizeReportDefinition(value, { draft = false } = {}) {
       return { ...common, source: 'calculated', expression };
     }
     if (itemSource === 'database') {
-      const databaseId = sanitizeId(item.database_id || dataSource.database_id);
+      const databaseOverride = sanitizeId(item.database_id);
+      const databaseId = databaseOverride || dataSource.database_id;
       const table = String(item.table || dataSource.table || '').trim().slice(0, 255);
       const timeColumn = String(item.time_column || dataSource.time_column || '').trim().slice(0, 255);
       const layout = String(item.layout || dataSource.layout || 'wide').trim() === 'category' ? 'category' : 'wide';
@@ -847,7 +848,7 @@ function normalizeReportDefinition(value, { draft = false } = {}) {
         ...common,
         heading: String(item.heading || item.category_value || field).trim().slice(0, 191) || field,
         source: 'database',
-        database_id: databaseId,
+        ...(databaseOverride ? { database_id: databaseOverride, database_mode: 'override' } : {}),
         table,
         time_column: timeColumn,
         layout,

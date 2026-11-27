@@ -382,8 +382,6 @@
   reportBuilderDatabaseActions: document.getElementById('reportBuilderDatabaseActions'),
   reportBuilderDatabaseField: document.getElementById('reportBuilderDatabaseField'),
   reportBuilderAddDatabaseFieldBtn: document.getElementById('reportBuilderAddDatabaseFieldBtn'),
-  reportBuilderRebindDatabaseBtn: document.getElementById('reportBuilderRebindDatabaseBtn'),
-  reportBuilderDatabaseMismatch: document.getElementById('reportBuilderDatabaseMismatch'),
   reportBuilderLoadCategoriesBtn: document.getElementById('reportBuilderLoadCategoriesBtn'),
   reportBuilderCategoryPicker: document.getElementById('reportBuilderCategoryPicker'),
   reportBuilderCategoryFilter: document.getElementById('reportBuilderCategoryFilter'),
@@ -9474,7 +9472,6 @@ function renderReportBuilderSourceUi() {
   if (els.reportBuilderDatabaseField) els.reportBuilderDatabaseField.style.display = categoryMode ? 'none' : '';
   if (els.reportBuilderAddDatabaseFieldBtn) els.reportBuilderAddDatabaseFieldBtn.style.display = categoryMode ? 'none' : '';
   if (els.reportBuilderCategoryPicker && !categoryMode) els.reportBuilderCategoryPicker.style.display = 'none';
-  renderReportBuilderDatabaseMismatch();
   if (els.reportBuilderPreviewBtn) {
     els.reportBuilderPreviewBtn.disabled = false;
     els.reportBuilderPreviewBtn.title = '';
@@ -9486,25 +9483,6 @@ function renderReportBuilderSourceUi() {
     els.reportBuilderHmiEnabled.disabled = !canManage;
     els.reportBuilderHmiEnabled.title = canManage ? '' : 'Manage access is required to allow or prevent HMI display.';
   }
-}
-
-function reportBuilderColumnsOnOtherDatabases(databaseId) {
-  return state.reportBuilderColumns.filter((column) =>
-    column.source === 'database' && column.database_id && column.database_id !== databaseId);
-}
-
-function canChangeReportColumnDatabase() {
-  const current = state.reportBuilderReports.find((report) => report.id === state.reportBuilderOriginalId);
-  return hasPerm('reports.administer') || Boolean(current && !current.data_source?.source_id);
-}
-
-function renderReportBuilderDatabaseMismatch() {
-  const databaseId = els.reportBuilderDatabase?.value;
-  const count = databaseId ? reportBuilderColumnsOnOtherDatabases(databaseId).length : 0;
-  els.reportBuilderRebindDatabaseBtn.hidden = count === 0 || !canChangeReportColumnDatabase();
-  els.reportBuilderDatabaseMismatch.textContent = count === 1
-    ? '1 report column uses a different database.'
-    : count > 1 ? `${count} report columns use a different database.` : '';
 }
 
 async function loadReportBuilderDatabaseSchema(selection = {}) {
@@ -10364,9 +10342,11 @@ function renderReportBuilderSummaries() {
 }
 
 function renderReportBuilderColumns() {
-  renderReportBuilderDatabaseMismatch();
   if (!els.reportBuilderColumns) return;
   els.reportBuilderColumns.textContent = '';
+  const reportDatabase = reportBuilderDataSourceDefinition().database_id || '';
+  const databases = state.reportBuilderDatabases.map((database) => ({ value: database.id, label: database.name || database.id }));
+  const databaseLabel = (id) => databases.find((database) => database.value === id)?.label || id;
   state.reportBuilderColumns.forEach((column, index) => {
     const tr = document.createElement('tr');
     tr.className = 'report-column-row';
@@ -10424,27 +10404,28 @@ function renderReportBuilderColumns() {
     heading.addEventListener('input', () => { column.heading = heading.value; });
     headingCell.appendChild(heading);
     const connection = document.createElement('td');
-    if (column.source === 'database' && canChangeReportColumnDatabase()) {
-      const databaseSelect = document.createElement('select');
-      databaseSelect.setAttribute('aria-label', `Database for ${column.heading || column.field || 'report column'}`);
-      databaseSelect.title = 'The selected database must contain the same table and fields.';
-      const databases = state.reportBuilderDatabases.map((database) => ({
-        value: database.id,
-        label: database.name || database.id
-      }));
-      const current = String(column.database_id || '');
-      if (!databases.some((database) => database.value === current)) {
-        databases.unshift({ value: current, label: current ? `${current} (unavailable)` : 'Select database' });
+    const databaseOverride = String(column.database_id || '');
+    const databaseId = databaseOverride || reportDatabase;
+    if (column.source === 'database') {
+      const select = document.createElement('select');
+      select.setAttribute('aria-label', `Database for ${column.heading || column.field || 'report column'}`);
+      const defaultLabel = reportDatabase ? `Use Report Database (${databaseLabel(reportDatabase)})` : 'Use Report Database';
+      const choices = [{ value: '', label: defaultLabel }, ...databases.filter((database) => database.value !== reportDatabase)];
+      if (databaseOverride && !choices.some((choice) => choice.value === databaseOverride)) {
+        choices.push({ value: databaseOverride, label: databaseLabel(databaseOverride) });
       }
-      fillSelect(databaseSelect, databases, current);
-      databaseSelect.addEventListener('change', () => {
-        column.database_id = databaseSelect.value;
+      fillSelect(select, choices, databaseOverride);
+      select.addEventListener('change', () => {
+        if (select.value) {
+          column.database_id = select.value;
+          column.database_mode = 'override';
+        } else {
+          delete column.database_id;
+          delete column.database_mode;
+        }
         renderReportBuilderColumns();
       });
-      connection.appendChild(databaseSelect);
-    } else if (column.source === 'database') {
-      connection.textContent = String(state.reportBuilderDatabases.find((database) =>
-        database.id === column.database_id)?.name || column.database_id || '');
+      connection.appendChild(select);
     } else {
       connection.textContent = column.source === 'calculated' ? 'Calculated' : String(column.connection_id || '');
     }
@@ -10467,11 +10448,12 @@ function renderReportBuilderColumns() {
     if (column.source === 'database') {
       const controls = document.createElement('div'); controls.className = 'report-companion-controls';
       const companion = document.createElement('select'); companion.title = 'Optional text field';
-      const profile = selectedReportDataSource() || state.reportBuilderDataSources.find((source) =>
-        source.database_id === column.database_id && source.table === column.table);
+      const profile = state.reportBuilderDataSources.find((source) =>
+        source.database_id === databaseId && source.table === column.table);
       const profileFields = (profile?.value_fields || []).filter((field) =>
         field.column !== column.field && String(field.type || 'numeric') === 'text');
-      const schemaFields = (reportBuilderSelectedTable()?.columns || []).filter((field) => field.name !== column.field)
+      const schemaFields = (databaseId === reportDatabase && els.reportBuilderTable?.value === column.table
+        ? reportBuilderSelectedTable()?.columns || [] : []).filter((field) => field.name !== column.field)
         .map((field) => ({ column: field.name, label: field.name }));
       const fields = profile ? profileFields : schemaFields;
       if (column.companion_field && !fields.some((field) => field.column === column.companion_field)) {
@@ -10663,11 +10645,14 @@ function loadReportBuilderDefinition(report) {
     published: false, formats: ['xlsx', 'csv'], columns: []
   };
   state.reportBuilderOriginalId = String(value.id || '');
-  state.reportBuilderColumns = Array.isArray(value.columns) ? value.columns.map((column, index) => ({
-    ...column,
-    id: String(column.id || `column_${index + 1}`),
-    visible: column.visible !== false
-  })) : [];
+  const savedDatabase = String(value.data_source?.database_id || '');
+  state.reportBuilderColumns = (Array.isArray(value.columns) ? value.columns : []).map((column, index) => {
+    const copy = { ...column, id: String(column.id || `column_${index + 1}`), visible: column.visible !== false };
+    if (copy.source === 'database' && copy.database_mode !== 'override' && copy.database_id === savedDatabase) {
+      delete copy.database_id;
+    }
+    return copy;
+  });
   state.reportBuilderSummaries = Array.isArray(value.summaries)
     ? value.summaries.map((summary) => ({
         label: String(summary?.label || ''),
@@ -11035,21 +11020,15 @@ function wireReportBuilderUi() {
   });
   if (els.reportBuilderLayout) els.reportBuilderLayout.addEventListener('change', renderReportBuilderSourceUi);
   if (els.reportBuilderDatabase) els.reportBuilderDatabase.addEventListener('change', () => {
-    renderReportBuilderDatabaseMismatch();
-    loadReportBuilderDatabaseSchema().catch(() => {});
-  });
-  els.reportBuilderRebindDatabaseBtn.addEventListener('click', () => {
-    const databaseId = els.reportBuilderDatabase?.value;
-    if (!databaseId || !canChangeReportColumnDatabase()) return;
-    reportBuilderColumnsOnOtherDatabases(databaseId).forEach((column) => { column.database_id = databaseId; });
     renderReportBuilderColumns();
-    reportBuilderSetStatus('Columns updated for the selected database. Preview the draft to verify the mappings.');
+    loadReportBuilderDatabaseSchema().catch(() => {});
   });
   if (els.reportBuilderDataSource) els.reportBuilderDataSource.addEventListener('change', () => {
     const source = selectedReportDataSource();
     if (source) applyReportDataSource(source);
     else loadReportBuilderDatabaseSchema().catch(() => {});
     renderReportBuilderSourceUi();
+    renderReportBuilderColumns();
   });
   if (els.reportBuilderManageDataSourcesBtn) els.reportBuilderManageDataSourcesBtn.addEventListener('click', openReportDataSourceModal);
   if (els.reportDataSourceCloseBtn) els.reportDataSourceCloseBtn.addEventListener('click', () => { els.reportDataSourceModal.style.display = 'none'; });
@@ -11089,7 +11068,6 @@ function wireReportBuilderUi() {
       id: newReportColumnId(field),
       heading: field,
       source: 'database',
-      database_id: databaseId,
       table: String(els.reportBuilderTable?.value || '').trim(),
       time_column: String(els.reportBuilderTimeColumn?.value || '').trim(),
       layout: 'wide',
@@ -11140,7 +11118,6 @@ function wireReportBuilderUi() {
         id: newReportColumnId(itemName),
         heading: itemName,
         source: 'database',
-        database_id: databaseId,
         table: String(els.reportBuilderTable?.value || '').trim(),
         time_column: String(els.reportBuilderTimeColumn?.value || '').trim(),
         layout: 'category',

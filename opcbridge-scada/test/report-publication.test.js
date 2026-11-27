@@ -91,4 +91,23 @@ console.log(JSON.stringify({ name: JSON.parse(fs.readFileSync(file)).reports[0].
   assert.equal((await api('/hmi')).reports.length, 0);
   assert.equal((await update('unpublish')).report.published, false);
   assert.equal((await api('', null, 'viewer')).reports.length, 0);
+
+  const databaseColumn = { source: 'database', table: 'runtime', time_column: 'time', field: 'total' };
+  const mixed = {
+    ...report,
+    data_source: { type: 'database', database_id: 'replacement' },
+    columns: [databaseColumn, { ...databaseColumn, database_id: 'legacy' }]
+  };
+  const draftSources = (await update('save_draft', mixed)).report;
+  assert.equal(draftSources.data_source.database_id, 'replacement');
+  assert.equal(draftSources.columns[0].database_id, undefined);
+  assert.equal(draftSources.columns[1].database_id, 'legacy');
+  assert.equal(draftSources.columns[1].database_mode, 'override');
+  const updatedSources = (await update('publish', {
+    ...draftSources, data_source: { ...draftSources.data_source, database_id: 'another' }
+  })).report;
+  assert.equal(updatedSources.data_source.database_id, 'another');
+  assert.equal(updatedSources.columns[0].database_id, undefined);
+  assert.equal(updatedSources.columns[1].database_id, 'legacy');
+
 });
