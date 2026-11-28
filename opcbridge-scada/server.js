@@ -1127,7 +1127,7 @@ function reportCliRangeArgs(report, values) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end) || end < start) {
       throw new Error('Valid start_date and end_date are required.');
     }
-    return { args: ['--range-mode', 'custom', '--start-date', start, '--end-date', end], label: `${start}-to-${end}` };
+    return { args: ['--range-mode', 'custom', '--start-date', start, '--end-date', end], label: `${start}-to-${end}`, custom: true };
   }
   let value = read('period_value') || read('month');
   if (period === 'rolling' && !value) {
@@ -6505,7 +6505,7 @@ const server = http.createServer(async (req, res) => {
       });
       if (result.error) throw new Error(String(result.stderr || result.error.message || result.error).trim());
       const preview = JSON.parse(result.stdout);
-      await addReportTemplatePreview(preview, report);
+      if (!range.custom) await addReportTemplatePreview(preview, report);
       sendJson(res, 200, preview);
     } catch (err) {
       sendJson(res, 400, { ok: false, error: String(err.message || err) });
@@ -6556,7 +6556,7 @@ const server = http.createServer(async (req, res) => {
       });
       if (result.error) throw new Error(publicRequest ? 'Report preview failed.' : String(result.stderr || result.error.message || result.error).trim());
       const preview = JSON.parse(result.stdout);
-      await addReportTemplatePreview(preview, report);
+      if (!range.custom) await addReportTemplatePreview(preview, report);
       if (publicRequest) {
         for (const column of preview.columns || []) {
           delete column.connection_id;

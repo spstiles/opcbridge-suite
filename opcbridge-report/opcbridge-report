@@ -1654,6 +1654,8 @@ if (!($report['published'] ?? false) && !isset($options['allow-unpublished'])) {
     fail("Report is not published: {$id}");
 }
 [$start, $end, $group, $periodLabel] = report_range($report, $options);
+$customRange = ($report['period'] ?? '') === 'custom' || option($options, 'range-mode', '') === 'custom';
+if ($customRange) $report['template'] = null;
 $rawRowLimit = $command === 'preview' ? 5000 : 250000;
 try {
     [$rows, $truncated] = build_rows($report, $historianUrl, $loggerUrl, $start, $end, $group, $rawRowLimit);
@@ -1668,7 +1670,7 @@ if ($summaryRows && ($reportLayout['summary_placement'] ?? 'after_data') === 'fi
     $headerRows = ($reportLayout['include_header_row'] ?? true) !== false ? 1 : 0;
     $lastDataRow = (int)($reportLayout['table_start_row'] ?? 5) + $headerRows + count($rows) - 1;
     if ((int)($reportLayout['summary_start_row'] ?? 40) <= $lastDataRow) {
-        if (($report['period'] ?? '') !== 'custom' && option($options, 'range-mode', '') !== 'custom') {
+        if (!$customRange) {
             fail('Fixed summary starting row overlaps report table data');
         }
         $report['layout']['summary_placement'] = 'after_data';
